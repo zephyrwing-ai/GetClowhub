@@ -1214,7 +1214,7 @@ class DashboardViewModel: ObservableObject {
         // Gateway broadcasts tick/heartbeat events regularly, so as long as the connection
         // is alive, lastMessageReceivedAt keeps updating — even when the agent is busy
         // running tools with no chat output.
-        let inactivityLimit: TimeInterval = 360  // 6 min with zero WebSocket messages → dead connection
+        let inactivityLimit: TimeInterval = 1200  // 20 min with zero WebSocket messages → dead connection
         let timeoutTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000) // check every 10s
