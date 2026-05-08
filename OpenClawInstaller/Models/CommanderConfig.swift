@@ -42,9 +42,26 @@ struct CommanderConfig: Codable, Equatable {
 
     // MARK: - Computed
 
-    /// Process-level timeout with buffer beyond agent timeout for graceful shutdown
+    /// Graceful shutdown buffer for the CLI (seconds).
+    ///
+    /// Scales with task length so long tasks have proportional cleanup time,
+    /// but bounded to prevent runaway buffers on pathological values.
+    /// Formula: 5% of agentTimeout, with a 30s floor and 300s ceiling.
+    ///
+    /// Examples:
+    ///   agentTimeout =  600s (10m)  → 30s   (floor)
+    ///   agentTimeout = 1200s (20m)  → 60s
+    ///   agentTimeout = 3600s (60m)  → 180s
+    ///   agentTimeout = 7200s (2h)   → 300s  (ceiling)
+    var gracefulBufferSeconds: Int {
+        let proportional = Int(Double(agentTimeout) * 0.05)
+        return min(max(30, proportional), 300)
+    }
+
+    /// Process-level timeout with buffer beyond agent timeout for graceful shutdown.
+    /// CLI's own --timeout fires at agentTimeout; this is the safety net before SIGTERM.
     var processTimeout: TimeInterval {
-        TimeInterval(agentTimeout + 30)
+        TimeInterval(agentTimeout + gracefulBufferSeconds)
     }
 
     /// Display string for timeout

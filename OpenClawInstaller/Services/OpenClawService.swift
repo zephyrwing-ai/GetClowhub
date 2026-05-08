@@ -489,7 +489,17 @@ class OpenClawService: ObservableObject {
                 // Wait for process exit using semaphore (blocks thread, zero CPU)
                 let semaphoreResult = exitSemaphore.wait(timeout: .now() + timeout)
                 if semaphoreResult == .timedOut && process.isRunning {
+                    // Stage 1: SIGTERM — let the process flush state and exit gracefully
                     process.terminate()
+
+                    // Wait up to 10s for graceful exit (terminationHandler signals exitSemaphore)
+                    let gracefulWait = exitSemaphore.wait(timeout: .now() + 10)
+
+                    // Stage 2: SIGKILL fallback — prevents orphan processes that ignore SIGTERM
+                    if gracefulWait == .timedOut && process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
+                        _ = exitSemaphore.wait(timeout: .now() + 2)
+                    }
                 }
 
                 // Wait for pipe read to complete (with timeout to prevent deadlock)
@@ -761,9 +771,23 @@ class OpenClawService: ObservableObject {
                 }
 
                 if !exited && process.isRunning {
+                    // Stage 1: SIGTERM — give the CLI a chance to flush state and shut down
                     process.terminate()
-                    // Wait with timeout to prevent deadlock if pipe reader is stuck
-                    let waitResult = readGroup.wait(timeout: .now() + 5)
+
+                    // Wait up to 10s for graceful exit (independent of pipe drain)
+                    let gracefulWait = exitSemaphore.wait(timeout: .now() + 10)
+
+                    // Stage 2: SIGKILL fallback — prevents orphan agents from lingering
+                    // (still consuming API tokens / budget) when SIGTERM is ignored or trapped.
+                    if gracefulWait == .timedOut && process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
+                        _ = exitSemaphore.wait(timeout: .now() + 2)
+                    }
+
+                    // Wait with timeout to prevent deadlock if pipe reader is stuck.
+                    // Bumped from 5s → 10s: long-running agents can produce a lot of
+                    // late-stage output (final progress dump) that needs to drain.
+                    let waitResult = readGroup.wait(timeout: .now() + 10)
                     if waitResult == .timedOut {
                         // Force close the pipe to unblock the reader
                         try? pipe.fileHandleForReading.close()
