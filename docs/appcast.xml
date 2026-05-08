@@ -6,20 +6,20 @@
     <description>OpenClaw Helper 版本更新</description>
     <language>zh-cn</language>
     <item>
-      <title>Version 1.1.39</title>
-      <sparkle:version>44</sparkle:version>
-      <sparkle:shortVersionString>1.1.39</sparkle:shortVersionString>
+      <title>Version 1.1.40</title>
+      <sparkle:version>45</sparkle:version>
+      <sparkle:shortVersionString>1.1.40</sparkle:shortVersionString>
       <description><![CDATA[
-        <h2>OpenClaw Helper 1.1.39</h2>
+        <h2>OpenClaw Helper 1.1.40</h2>
         <ul>
-          <li>修复 v1.1.38 安装失败问题（缺失 bundled openclaw 资源），build_dmg.sh 新增 preflight 校验</li>
+          <li>修复已安装 Homebrew/nvm Node 的用户被误报 Node 版本不兼容的诊断 bug</li>
         </ul>
       ]]></description>
-      <pubDate>Fri, 08 May 2026 18:03:01 +0800</pubDate>
-      <enclosure url="https://github.com/firewolf189/GetClowhub/releases/download/v1.1.39/GetClawHub.dmg"
-                 length="276666219"
+      <pubDate>Fri, 08 May 2026 20:50:36 +0800</pubDate>
+      <enclosure url="https://github.com/firewolf189/GetClowhub/releases/download/v1.1.40/GetClawHub.dmg"
+                 length="277784017"
                  type="application/octet-stream"
-                 sparkle:edSignature="o1RQr+2nAdhcBSWBwMUyNvRH6rQmNpSGw6YeZHmOLjjBuERebSfLEcG8o2Ofyn9Shsl1gy8SvlWH7OT+eMf9AA==" />
+                 sparkle:edSignature="YAsYDKaOda+672WBsUl/e7aa9XgaACfDww5tVco+eTfolcan7HwLOYagxBHK55UxM7nD5gIkllomHXum0ckNBA==" />
     </item>
   </channel>
 </rss>
