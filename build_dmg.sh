@@ -71,6 +71,38 @@ echo "📦 添加 Node.js 资源到应用包..."
 RESOURCES_SRC="$PROJECT_DIR/OpenClawInstaller/Resources"
 RESOURCES_DEST="$APP_PATH/Contents/Resources"
 
+# ===== Preflight: 必需的 bundled 资源 =====
+# 这些 .tar.gz 被 .gitignore 屏蔽 (因 GitHub 100MB 单文件限制)，必须手动放置。
+# 缺失时 OpenClawInstaller.swift 会抛 bundleNotFound，用户安装直接卡死，
+# 所以这里 fail-fast，绝不静默打出空壳 DMG (参见 v1.1.38 事故)。
+REQUIRED_BUNDLES=(
+    "openclaw-bundle.tar.gz"
+    "node-v24.14.0-darwin-arm64.tar.gz"
+    "node-v24.14.0-darwin-x64.tar.gz"
+)
+echo "🔍 校验必需的 bundled 资源..."
+MISSING=()
+for f in "${REQUIRED_BUNDLES[@]}"; do
+    p="$RESOURCES_SRC/$f"
+    if [ ! -f "$p" ]; then
+        MISSING+=("$f (缺失)")
+    elif [ "$(stat -f%z "$p" 2>/dev/null || echo 0)" -lt 1048576 ]; then
+        MISSING+=("$f (<1MB，疑似空文件)")
+    fi
+done
+if [ ${#MISSING[@]} -gt 0 ]; then
+    echo "❌ 必需的 bundled 资源缺失或损坏:"
+    for m in "${MISSING[@]}"; do echo "   - $m"; done
+    echo ""
+    echo "这些文件被 .gitignore 屏蔽，必须先放入 OpenClawInstaller/Resources/"
+    echo "openclaw-bundle.tar.gz 重建方式 (从已全局安装的 openclaw npm 包):"
+    echo "   cd ~/.npm-global && tar -czf openclaw-bundle.tar.gz bin/openclaw lib/node_modules/openclaw"
+    echo "Node.js tarball 下载:"
+    echo "   https://registry.npmmirror.com/-/binary/node/v24.14.0/"
+    exit 1
+fi
+echo "✅ Preflight 通过 (${#REQUIRED_BUNDLES[@]} 个必需 bundle 就位)"
+
 if [ -d "$RESOURCES_SRC" ]; then
     cp -R "$RESOURCES_SRC/"* "$RESOURCES_DEST/"
     echo "   Universal 构建，保留全部 Node.js 包"
