@@ -217,17 +217,6 @@ struct KeyBillingCard: View {
                         billingDateRow(icon: "calendar.badge.plus", label: String(localized: "billing.created", defaultValue: "Created", bundle: LanguageManager.shared.localizedBundle),
                                        date: createdAt)
                     }
-                    if let updatedAt = billing.updatedAt {
-                        billingDateRow(icon: "pencil.circle", label: String(localized: "billing.updated", defaultValue: "Updated", bundle: LanguageManager.shared.localizedBundle),
-                                       date: updatedAt)
-                    }
-                    if let expires = billing.expires {
-                        billingDateRow(icon: "calendar.badge.exclamationmark", label: String(localized: "billing.expires", defaultValue: "Expires", bundle: LanguageManager.shared.localizedBundle),
-                                       date: expires, color: .orange)
-                    } else {
-                        billingInfoRow(icon: "infinity", label: String(localized: "billing.expires", defaultValue: "Expires", bundle: LanguageManager.shared.localizedBundle),
-                                       value: String(localized: "billing.never", defaultValue: "Never", bundle: LanguageManager.shared.localizedBundle))
-                    }
                 }
 
                 Spacer()

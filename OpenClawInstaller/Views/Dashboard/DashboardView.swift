@@ -806,73 +806,81 @@ struct DetailContentView: View {
     // MARK: - Main Content
 
     private var mainContent: some View {
-        Group {
-            if viewModel.sidebarMode == .market {
-                if let agent = viewModel.selectedMarketplaceAgent {
-                    MarketplaceDetailView(
-                        agent: agent,
-                        openclawService: viewModel.openclawService,
-                        onInstalled: { agentId in
-                            // Switch to agents tab and select the newly installed agent
-                            viewModel.loadAvailableAgents()
-                            viewModel.sidebarMode = .teams
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                viewModel.selectedAgentId = agentId
-                            }
-                        },
-                        onBack: {
-                            viewModel.selectedMarketplaceAgent = nil
+        ZStack {
+            // ChatView stays alive — hidden when not active to preserve WKWebView instances
+            let showChat = (viewModel.sidebarMode == .teams)
+                || (viewModel.sidebarMode == .config && viewModel.selectedTab == .chat)
+            ChatView(viewModel: viewModel, hideAgentPicker: viewModel.sidebarMode == .teams)
+                .opacity(showChat ? 1 : 0)
+                .allowsHitTesting(showChat)
+
+            if !showChat {
+                Group {
+                    if viewModel.sidebarMode == .market {
+                        if let agent = viewModel.selectedMarketplaceAgent {
+                            MarketplaceDetailView(
+                                agent: agent,
+                                openclawService: viewModel.openclawService,
+                                onInstalled: { agentId in
+                                    viewModel.loadAvailableAgents()
+                                    viewModel.sidebarMode = .teams
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        viewModel.selectedAgentId = agentId
+                                    }
+                                },
+                                onBack: {
+                                    viewModel.selectedMarketplaceAgent = nil
+                                }
+                            )
+                            .id(agent.id)
+                        } else {
+                            MarketplaceOverviewView(onSelect: { agent in
+                                viewModel.selectedMarketplaceAgent = agent
+                            })
                         }
-                    )
-                    .id(agent.id)
-                } else {
-                    MarketplaceOverviewView(onSelect: { agent in
-                        viewModel.selectedMarketplaceAgent = agent
-                    })
+                    } else {
+                        switch viewModel.selectedTab {
+                        case .chat:
+                            EmptyView()
+                        case .status:
+                            StatusTabView(viewModel: viewModel)
+                        case .budget:
+                            BudgetTabView(viewModel: viewModel)
+                        case .billing:
+                            #if REQUIRE_LOGIN
+                            if let mm = viewModel.membershipManager {
+                                BillingTabView(viewModel: viewModel, membershipManager: mm)
+                            } else {
+                                Text("Please log in to view billing.")
+                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                            #else
+                            Text("Billing is not available in this build.")
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            #endif
+                        case .persona:
+                            PersonaTabView()
+                        case .subAgents:
+                            SubAgentsTabView(openclawService: viewModel.openclawService)
+                        case .config:
+                            ConfigTabView(viewModel: viewModel)
+                        case .skills:
+                            SkillsTabView(viewModel: viewModel)
+                        case .models:
+                            ModelsTabView(viewModel: viewModel)
+                        case .channels:
+                            ChannelsTabView(viewModel: viewModel)
+                        case .plugins:
+                            PluginsTabView(viewModel: viewModel)
+                        case .cron:
+                            CronTabView(viewModel: viewModel)
+                        case .logs:
+                            LogsTabView(viewModel: viewModel)
+                        }
+                    }
                 }
-            } else if viewModel.sidebarMode == .teams {
-                ChatView(viewModel: viewModel, hideAgentPicker: true)
-            } else {
-                switch viewModel.selectedTab {
-            case .chat:
-                ChatView(viewModel: viewModel)
-            case .status:
-                StatusTabView(viewModel: viewModel)
-            case .budget:
-                BudgetTabView(viewModel: viewModel)
-            case .billing:
-                #if REQUIRE_LOGIN
-                if let mm = viewModel.membershipManager {
-                    BillingTabView(viewModel: viewModel, membershipManager: mm)
-                } else {
-                    Text("Please log in to view billing.")
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                #else
-                Text("Billing is not available in this build.")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                #endif
-            case .persona:
-                PersonaTabView()
-            case .subAgents:
-                SubAgentsTabView(openclawService: viewModel.openclawService)
-            case .config:
-                ConfigTabView(viewModel: viewModel)
-            case .skills:
-                SkillsTabView(viewModel: viewModel)
-            case .models:
-                ModelsTabView(viewModel: viewModel)
-            case .channels:
-                ChannelsTabView(viewModel: viewModel)
-            case .plugins:
-                PluginsTabView(viewModel: viewModel)
-            case .cron:
-                CronTabView(viewModel: viewModel)
-            case .logs:
-                LogsTabView(viewModel: viewModel)
-            }
             }
         }
     }
