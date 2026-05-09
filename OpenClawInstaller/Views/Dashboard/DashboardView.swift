@@ -81,6 +81,7 @@ struct SidebarView: View {
     @State private var sessionRenameId: UUID?
     @State private var sessionRenameDraft: String = ""
     @State private var sessionDeleteId: UUID?
+    @State private var sessionSearchText: String = ""
 
     // Marketplace state
     @State private var marketplaceSearchText = ""
@@ -400,14 +401,59 @@ struct SidebarView: View {
             Section("Sessions") {
                 let agentSessions = viewModel.sessionsByAgent[viewModel.selectedAgentId] ?? []
                 let activeId = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId]
+                // Title-only filter for now: cheap, runs every keystroke,
+                // covers the "find that named conversation" case. A future
+                // enhancement could fall back to message-body search when
+                // title matches are empty.
+                let filteredSessions = sessionSearchText.isEmpty
+                    ? agentSessions
+                    : agentSessions.filter {
+                        $0.title.localizedCaseInsensitiveContains(sessionSearchText)
+                    }
+
+                // Search field — only show when there's something to search.
+                // Hides itself when the agent has zero sessions to keep the
+                // sidebar minimal in the empty state.
+                if !agentSessions.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        TextField("Search", text: $sessionSearchText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                        if !sessionSearchText.isEmpty {
+                            Button {
+                                sessionSearchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color(NSColor.controlBackgroundColor))
+                    )
+                    .listRowSeparator(.hidden)
+                }
 
                 if agentSessions.isEmpty {
                     Text("No sessions yet")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .listRowSeparator(.hidden)
+                } else if filteredSessions.isEmpty {
+                    Text("No matches for \"\(sessionSearchText)\"")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .listRowSeparator(.hidden)
                 } else {
-                    ForEach(agentSessions) { meta in
+                    ForEach(filteredSessions) { meta in
                         Button {
                             viewModel.switchSession(to: meta.id)
                             selectedTab = .chat
