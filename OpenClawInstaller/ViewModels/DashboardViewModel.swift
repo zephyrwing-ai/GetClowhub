@@ -908,6 +908,50 @@ class DashboardViewModel: ObservableObject {
         rebuildSessionsMirror()
     }
 
+    // MARK: - Session UI Actions
+
+    /// Switch the current agent's active session to `sessionId`. Flushes the
+    /// in-memory thread of the previous session to disk first so partial
+    /// state isn't lost when the user clicks back.
+    func switchSession(to sessionId: UUID) {
+        let agentId = selectedAgentId
+        flushActiveSession(forAgent: agentId)
+        guard let target = chatSessionStore.loadSession(id: sessionId) else { return }
+        selectedSessionIdByAgent[agentId] = sessionId
+        chatMessagesByAgent[agentId] = target.messages
+        rebuildSessionsMirror()
+    }
+
+    /// Mint a fresh empty session for the current agent and switch to it.
+    /// Used by the "+ New Session" sidebar button.
+    @discardableResult
+    func createNewSession() -> UUID {
+        let agentId = selectedAgentId
+        flushActiveSession(forAgent: agentId)
+        let new = ChatSession(agentId: agentId)
+        chatSessionStore.saveSession(new)
+        selectedSessionIdByAgent[agentId] = new.id
+        chatMessagesByAgent[agentId] = []
+        rebuildSessionsMirror()
+        return new.id
+    }
+
+    /// Cancel any pending debounced write for the agent's current session and
+    /// commit its in-memory messages to disk synchronously. Safe to call
+    /// when there is no active session — it's a no-op.
+    private func flushActiveSession(forAgent agentId: String) {
+        guard let sid = selectedSessionIdByAgent[agentId] else { return }
+        let messages = chatMessagesByAgent[agentId] ?? []
+        var current = chatSessionStore.loadSession(id: sid)
+            ?? ChatSession(id: sid, agentId: agentId, messages: messages)
+        current.messages = messages
+        current.updatedAt = Date()
+        if current.title == ChatSession.defaultTitle {
+            current.title = ChatSession.deriveTitle(from: messages)
+        }
+        chatSessionStore.flush(id: sid, current: current)
+    }
+
     /// Return the active session id for `agentId`, creating one if needed.
     /// `seedMessages` is the current in-memory thread; used to derive a title
     /// if we have to mint a fresh session.

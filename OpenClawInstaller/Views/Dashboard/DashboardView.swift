@@ -351,6 +351,38 @@ struct SidebarView: View {
                     .tag(DashboardViewModel.DashboardTab.chat)
             }
 
+            Section("Sessions") {
+                let agentSessions = viewModel.sessionsByAgent[viewModel.selectedAgentId] ?? []
+                let activeId = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId]
+
+                if agentSessions.isEmpty {
+                    Text("No sessions yet")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .listRowSeparator(.hidden)
+                } else {
+                    ForEach(agentSessions) { meta in
+                        Button {
+                            viewModel.switchSession(to: meta.id)
+                            selectedTab = .chat
+                        } label: {
+                            ChatSessionRow(meta: meta, isActive: activeId == meta.id)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Button {
+                    viewModel.createNewSession()
+                    selectedTab = .chat
+                } label: {
+                    Label("New Session", systemImage: "plus.circle")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+
             Section("Overview") {
                 Label(String(localized: "Status", bundle: LanguageManager.shared.localizedBundle), systemImage: "chart.bar.fill")
                     .tag(DashboardViewModel.DashboardTab.status)
@@ -6376,6 +6408,48 @@ private struct TerminalDragHandle: View {
                     }
                     .onEnded { _ in dragStart = nil }
             )
+    }
+}
+
+// MARK: - Chat Session Row (sidebar)
+
+/// Single row inside the Sessions sidebar section. Renders the title, an
+/// optional pin marker, and a relative-time tooltip; the parent sidebar
+/// section wraps each row in a Button that drives `switchSession(to:)`.
+struct ChatSessionRow: View {
+    let meta: ChatSessionMetadata
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if meta.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(.orange)
+            } else {
+                // Reserve space so titles align between pinned and unpinned rows.
+                Spacer().frame(width: 9)
+            }
+            Text(meta.title.isEmpty ? "新会话" : meta.title)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundColor(isActive ? .accentColor : .primary)
+            Spacer()
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+        )
+        .help("\(meta.messageCount) messages · \(Self.relativeTime(meta.updatedAt))")
+    }
+
+    private static func relativeTime(_ date: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
     }
 }
 
