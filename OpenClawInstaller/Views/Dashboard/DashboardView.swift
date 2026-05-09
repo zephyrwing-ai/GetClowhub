@@ -1034,6 +1034,9 @@ struct DetailContentView: View {
     @ObservedObject var viewModel: DashboardViewModel
     @State private var collabPanelWidth: CGFloat = 320
     @State private var dragStartWidth: CGFloat = 320
+    /// Whether the right-side session details panel is visible. Auto-shown
+    /// on the .chat tab; user can hide via a toggle in ChatHeaderBar (future).
+    @State private var showSessionPanel: Bool = true
 
     private let collabPanelMinWidth: CGFloat = 220
     private let collabPanelMaxWidth: CGFloat = 500
@@ -1057,6 +1060,11 @@ struct DetailContentView: View {
             // Main detail content
             mainContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Session details panel (right column) — only on chat tab
+            if viewModel.selectedTab == .chat && showSessionPanel {
+                SessionDetailsPanel(viewModel: viewModel)
+            }
         }
         .onChange(of: viewModel.selectedTab) { newTab in
             // Only reload agents when entering chat tab, but preserve current agent selection
@@ -6605,6 +6613,349 @@ private struct TerminalDragHandle: View {
                     }
                     .onEnded { _ in dragStart = nil }
             )
+    }
+}
+
+// MARK: - Session Details Panel (right column on chat tab)
+
+/// Right-side panel matching the redesign: surfaces metadata about the
+/// currently active chat session (agent, model, tool status, session info)
+/// plus a destructive "Clear Conversation" action. Two-tab top picker:
+/// 会话详情 / 执行记录.
+struct SessionDetailsPanel: View {
+    @ObservedObject var viewModel: DashboardViewModel
+    @State private var tab: PanelTab = .details
+
+    enum PanelTab: String, CaseIterable {
+        case details
+        case logs
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Top tab strip
+            HStack(spacing: 0) {
+                ForEach(PanelTab.allCases, id: \.self) { t in
+                    Button {
+                        tab = t
+                    } label: {
+                        VStack(spacing: 4) {
+                            Text(t == .details ? "Session Details" : "Activity")
+                                .font(.system(size: 13, weight: tab == t ? .semibold : .regular))
+                                .foregroundColor(tab == t ? .accentColor : .secondary)
+                            Rectangle()
+                                .fill(tab == t ? Color.accentColor : Color.clear)
+                                .frame(height: 2)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 12)
+
+            Divider()
+
+            // Tab content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    switch tab {
+                    case .details:
+                        detailsContent
+                    case .logs:
+                        activityContent
+                    }
+                }
+                .padding(16)
+            }
+
+            Divider()
+
+            // Clear conversation — destructive, full width at bottom
+            Button {
+                viewModel.chatMessagesByAgent[viewModel.selectedAgentId] = []
+            } label: {
+                HStack {
+                    Image(systemName: "trash")
+                    Text("Clear Conversation")
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.red.opacity(0.5), lineWidth: 1)
+                )
+                .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .padding(16)
+        }
+        .frame(width: 300)
+        .background(Color(NSColor.windowBackgroundColor))
+        .overlay(alignment: .leading) { Divider() }
+    }
+
+    // MARK: - Details tab
+
+    @ViewBuilder
+    private var detailsContent: some View {
+        // Current agent card
+        sectionTitle("Current Agent")
+        agentCard
+
+        // Model
+        sectionTitle("Model")
+        modelRow
+
+        // Tool status (mock — wire to real state once backend data is available)
+        sectionTitle("Tool Status")
+        toolStatusList
+
+        // Session info
+        sectionTitle("Session Info")
+        sessionInfoList
+    }
+
+    @ViewBuilder
+    private var activityContent: some View {
+        if recentActivity.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 28))
+                    .foregroundColor(.secondary)
+                Text("No activity yet")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 40)
+        } else {
+            ForEach(recentActivity, id: \.id) { item in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 11))
+                        .foregroundColor(item.color)
+                        .frame(width: 14)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.system(size: 12, weight: .medium))
+                        Text(item.subtitle)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    // MARK: - Sub-blocks
+
+    private var agentCard: some View {
+        let agent = viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
+        return HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                Text(agent?.emoji ?? "🤖")
+                    .font(.system(size: 22))
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Text(agent?.name ?? viewModel.selectedAgentId)
+                        .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                if let desc = agent?.description, !desc.isEmpty {
+                    Text(desc)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                } else {
+                    Text("General-purpose assistant")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+    }
+
+    private var modelRow: some View {
+        let modelName = viewModel.modelOverview.defaultModel
+        return HStack(spacing: 6) {
+            Image(systemName: "cube.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.accentColor)
+            Text(modelName.isEmpty ? "—" : modelName)
+                .font(.system(size: 13))
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+    }
+
+    /// Mock tool list. Until we wire to real skill / plugin enablement state,
+    /// these are illustrative — the design called for "X / Y enabled" so we
+    /// do show a count, but the items themselves are placeholders.
+    private var toolStatusList: some View {
+        let mock = [
+            ("Web Search", true),
+            ("Code Interpreter", true),
+            ("File Analysis", true),
+            ("Image Generation", false),
+            ("Browser", false),
+        ]
+        let enabled = mock.filter { $0.1 }.count
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Tool Status")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("\(enabled) / \(mock.count) enabled")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            ForEach(mock, id: \.0) { name, on in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(on ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 7, height: 7)
+                    Text(name)
+                        .font(.system(size: 12))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(NSColor.controlBackgroundColor))
+                )
+            }
+        }
+    }
+
+    private var sessionInfoList: some View {
+        let activeId = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId]
+        let meta = activeId.flatMap { sid in
+            viewModel.sessionsByAgent[viewModel.selectedAgentId]?.first { $0.id == sid }
+        }
+        let formatter: DateFormatter = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd HH:mm"
+            return f
+        }()
+        return VStack(alignment: .leading, spacing: 6) {
+            infoRow("Created",
+                    value: meta.map { formatter.string(from: $0.createdAt) } ?? "—")
+            infoRow("Messages",
+                    value: "\(viewModel.chatMessages.count)")
+            infoRow("Session ID",
+                    value: activeId.map { Self.shortId($0) } ?? "—")
+            infoRow("Uptime",
+                    value: Self.formatUptime(viewModel.openclawService.uptime))
+        }
+    }
+
+    private func infoRow(_ label: LocalizedStringKey, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func sectionTitle(_ key: LocalizedStringKey) -> some View {
+        Text(key)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.primary)
+            .padding(.top, 4)
+    }
+
+    /// Activity feed sourced from chat messages — surfaces user/assistant
+    /// turns with cancelled / timed-out states highlighted. A full activity
+    /// log would pull from openclawService logs but for now this is enough
+    /// to give the panel content while .activity tab is selected.
+    private struct ActivityItem {
+        let id: UUID
+        let icon: String
+        let color: SwiftUI.Color
+        let title: String
+        let subtitle: String
+    }
+
+    private var recentActivity: [ActivityItem] {
+        viewModel.chatMessages.suffix(20).reversed().map { msg in
+            let icon: String
+            let color: SwiftUI.Color
+            switch msg.taskStatus {
+            case .completed:
+                icon = "checkmark.circle.fill"
+                color = .green
+            case .cancelled:
+                icon = "xmark.circle.fill"
+                color = .red
+            case .timedOut:
+                icon = "clock.fill"
+                color = .orange
+            case .background:
+                icon = "tray.fill"
+                color = .blue
+            case .loading:
+                icon = "ellipsis.circle"
+                color = .secondary
+            }
+            let title = msg.role == .user ? "User" : (msg.agentEmoji.map { "\($0) Assistant" } ?? "Assistant")
+            let preview = msg.content.prefix(80).replacingOccurrences(of: "\n", with: " ")
+            return ActivityItem(
+                id: msg.id,
+                icon: icon,
+                color: color,
+                title: title,
+                subtitle: String(preview)
+            )
+        }
+    }
+
+    // MARK: - Helpers
+
+    private static func shortId(_ id: UUID) -> String {
+        let s = id.uuidString.lowercased()
+        return s.prefix(8) + "…" + s.suffix(4)
+    }
+
+    private static func formatUptime(_ seconds: TimeInterval) -> String {
+        guard seconds > 0 else { return "00:00:00" }
+        let h = Int(seconds) / 3600
+        let m = (Int(seconds) % 3600) / 60
+        let s = Int(seconds) % 60
+        return String(format: "%02d:%02d:%02d", h, m, s)
     }
 }
 
