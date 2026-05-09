@@ -2857,6 +2857,28 @@ struct ChatBubble: View {
         return try? NSRegularExpression(pattern: filePattern, options: [.caseInsensitive, .anchorsMatchLines])
     }()
 
+    /// Format a message timestamp: "HH:mm" if the message is from today, or
+    /// "MM-dd HH:mm" if it's older. Cached formatters keep this cheap on
+    /// scroll — Date↦string allocation per row is fine but we don't want
+    /// to spin up a fresh DateFormatter each time.
+    private static let timeOnlyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+    private static let dateAndTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm"
+        return f
+    }()
+
+    static func formatTimestamp(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) {
+            return timeOnlyFormatter.string(from: date)
+        }
+        return dateAndTimeFormatter.string(from: date)
+    }
+
     /// Scan for media file URLs — only called from .onChange, result stored in cachedMediaURLs
     private static func scanMediaURLs(in text: String) -> [URL] {
         guard let regex = mediaFileRegex else { return [] }
@@ -2895,6 +2917,15 @@ struct ChatBubble: View {
             if message.role == .user { Spacer(minLength: 60) }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
+                // Timestamp — small, secondary, sits above the message body.
+                // Hidden for legacy messages (nil timestamp) so we never
+                // synthesize a bogus "now" for pre-existing chats.
+                if let ts = message.timestamp {
+                    Text(Self.formatTimestamp(ts))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
                 // Attachment thumbnails (user-attached files)
                 if !message.attachments.isEmpty {
                     HStack(spacing: 6) {
@@ -6694,11 +6725,17 @@ struct SessionDetailsPanel: View {
         .frame(width: 300)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(alignment: .leading) { Divider() }
-        // Pre-load the model list once when the panel first appears so the
-        // model dropdown isn't empty on first click.
+        // Pre-load the model list and overview once when the panel first
+        // appears. loadModelsForSettings populates the picker; loadModels
+        // populates modelOverview.defaultModel so the row renders the
+        // global default when the active agent has no per-agent override.
         .task {
             if viewModel.availableModelsForSettings.isEmpty {
                 await viewModel.loadModelsForSettings()
+            }
+            if viewModel.modelOverview.defaultModel.isEmpty
+                || viewModel.modelOverview.defaultModel == "-" {
+                await viewModel.loadModels()
             }
         }
     }

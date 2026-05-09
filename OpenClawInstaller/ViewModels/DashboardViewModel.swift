@@ -3525,8 +3525,12 @@ struct ChatMessage: Identifiable, Codable {
     let attachments: [URL]
     let taskStatus: TaskStatus
     let scrollTargetId: UUID?  // For notification messages: ID of the message to scroll to
+    /// When the message was created. Optional so sessions persisted before
+    /// this field existed still decode cleanly — pre-existing messages
+    /// show no timestamp instead of an inaccurate "now".
+    let timestamp: Date?
 
-    init(role: ChatRole, content: String, agentId: String? = nil, agentEmoji: String? = nil, attachments: [URL] = [], taskStatus: TaskStatus = .completed, id: UUID = UUID(), scrollTargetId: UUID? = nil) {
+    init(role: ChatRole, content: String, agentId: String? = nil, agentEmoji: String? = nil, attachments: [URL] = [], taskStatus: TaskStatus = .completed, id: UUID = UUID(), scrollTargetId: UUID? = nil, timestamp: Date? = Date()) {
         self.id = id
         self.role = role
         self.content = content
@@ -3535,6 +3539,7 @@ struct ChatMessage: Identifiable, Codable {
         self.attachments = attachments
         self.taskStatus = taskStatus
         self.scrollTargetId = scrollTargetId
+        self.timestamp = timestamp
     }
 
     enum ChatRole: String, Codable {
