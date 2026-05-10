@@ -106,12 +106,10 @@ struct SidebarView: View {
             #if REQUIRE_LOGIN
             sidebarUserRow
             #endif
-            sidebarLanguageLogoutRow
             sidebarModePicker
             Divider()
             // Mode-driven body: 配置 → main list, 我的团队 → agents,
-            // 专家市场 → marketplace overview list. Falls back to
-            // sidebarMainList for safety.
+            // 专家市场 → marketplace overview list.
             switch viewModel.sidebarMode {
             case .config:
                 sidebarMainList
@@ -177,9 +175,9 @@ struct SidebarView: View {
 
     // MARK: - Sidebar Top Header (Logo + dropdown menu)
 
-    /// Top of the sidebar — just the brand. NavigationSplitView already
-    /// provides the real sidebar toggle in the window's toolbar chrome,
-    /// so we don't draw our own here (would just be a duplicate icon).
+    /// Top of the sidebar — brand on the left, language picker on the
+    /// right. NavigationSplitView's own toggle in the window toolbar
+    /// handles sidebar collapse, so no extra icon needed here.
     private var sidebarTopHeader: some View {
         HStack(spacing: 8) {
             Image("Logo1")
@@ -189,6 +187,32 @@ struct SidebarView: View {
             Text("GetClawHub")
                 .font(.system(size: 14, weight: .semibold))
             Spacer()
+            Menu {
+                ForEach(languageManager.supportedLanguages) { lang in
+                    Button {
+                        languageManager.selectedLanguage = lang.id
+                    } label: {
+                        HStack {
+                            Text(lang.name)
+                            if languageManager.selectedLanguage == lang.id {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Text(languageManager.displayName)
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -244,6 +268,21 @@ struct SidebarView: View {
                     .buttonStyle(.plain)
                     .foregroundColor(.orange)
                 }
+                // Inline 退出 button — moved here from the deleted
+                // language/logout row so the user row matches the design.
+                Button {
+                    authManager.logout()
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.right.square")
+                            .font(.system(size: 10))
+                        Text("Log Out")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Log Out")
             } else {
                 Image(systemName: "person.crop.circle.badge.questionmark")
                     .font(.system(size: 16))
@@ -264,68 +303,6 @@ struct SidebarView: View {
         .padding(.bottom, 10)
     }
     #endif
-
-    // MARK: - Sidebar Language + Logout Row
-
-    /// Standalone row matching the redesign: globe + language menu on the
-    /// left, plain "退出" button on the right. Pulls language switching
-    /// out of the top-bar dropdown so it's one click away.
-    private var sidebarLanguageLogoutRow: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "globe")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-            Menu {
-                ForEach(languageManager.supportedLanguages) { lang in
-                    Button {
-                        languageManager.selectedLanguage = lang.id
-                    } label: {
-                        HStack {
-                            Text(lang.name)
-                            if languageManager.selectedLanguage == lang.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 3) {
-                    Text(languageManager.displayName)
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            Spacer()
-            #if REQUIRE_LOGIN
-            if case .loggedIn = authManager.state {
-                Button {
-                    Task { await membershipManager.syncProfile() }
-                } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Sync membership")
-
-                Button("Log Out") {
-                    authManager.logout()
-                }
-                .font(.caption2)
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-            }
-            #endif
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-    }
 
     // MARK: - Sidebar Mode Picker
 
@@ -393,16 +370,14 @@ struct SidebarView: View {
                 #endif
             }
 
-            // ─── Agent: persona / multi-agent / tasks-logs / settings ───
+            // ─── Agent: persona / multi-agent ─── (per latest mockup;
+            // Tasks/Logs and Settings are reachable from the chat header
+            // ⋯ menu — they don't earn a sidebar row in this redesign).
             Section("Agent") {
                 Label("Persona", systemImage: "person.text.rectangle")
                     .tag(DashboardViewModel.DashboardTab.persona)
                 Label("Multi-Agent", systemImage: "person.3.fill")
                     .tag(DashboardViewModel.DashboardTab.subAgents)
-                Label("Tasks/Logs", systemImage: "checklist")
-                    .tag(DashboardViewModel.DashboardTab.tasksLogs)
-                Label("Settings", systemImage: "gearshape")
-                    .tag(DashboardViewModel.DashboardTab.config)
             }
         }
         .listStyle(.sidebar)
@@ -7221,7 +7196,10 @@ struct ChatHeaderBar: View {
             .controlSize(.small)
             .disabled(currentSessionId == nil)
 
-            // More menu — clear / new session shortcuts
+            // More menu — session shortcuts + entry points to Settings /
+            // Tasks-Logs (which were removed from the sidebar in the
+            // latest redesign). These need a reachable path or users
+            // get stuck.
             Menu {
                 Button {
                     viewModel.createNewSession()
@@ -7234,6 +7212,19 @@ struct ChatHeaderBar: View {
                     } label: {
                         Label("Export…", systemImage: "square.and.arrow.up")
                     }
+                }
+                Divider()
+                Button {
+                    viewModel.selectedTab = .tasksLogs
+                } label: {
+                    Label("Tasks/Logs", systemImage: "checklist")
+                }
+                Button {
+                    viewModel.selectedTab = .config
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                if currentSessionId != nil {
                     Divider()
                     Button(role: .destructive) {
                         viewModel.chatMessagesByAgent[viewModel.selectedAgentId] = []
