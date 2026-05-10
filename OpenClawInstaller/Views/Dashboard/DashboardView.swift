@@ -6671,23 +6671,47 @@ struct SessionDetailsPanel: View {
 
             Divider()
 
-            // Clear conversation — destructive, full width at bottom
-            Button {
-                viewModel.chatMessagesByAgent[viewModel.selectedAgentId] = []
+            // "More Actions" dropdown — collapses Export / Clear / etc
+            // into a single discreet menu instead of a destructive red
+            // button. Matches the redesign mockup's "更多操作 ⌄".
+            Menu {
+                if let sid = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId] {
+                    Button {
+                        viewModel.exportSession(sid)
+                    } label: {
+                        Label("Export…", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        viewModel.renameSession(sid, to: viewModel.sessionsByAgent[viewModel.selectedAgentId]?.first(where: { $0.id == sid })?.title ?? "")
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    Divider()
+                }
+                Button(role: .destructive) {
+                    viewModel.chatMessagesByAgent[viewModel.selectedAgentId] = []
+                } label: {
+                    Label("Clear Conversation", systemImage: "trash")
+                }
             } label: {
                 HStack {
-                    Image(systemName: "trash")
-                    Text("Clear Conversation")
+                    Text("More Actions")
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 12)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.red.opacity(0.5), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(NSColor.controlBackgroundColor))
                 )
-                .foregroundColor(.red)
+                .foregroundColor(.primary)
             }
-            .buttonStyle(.plain)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .padding(16)
         }
         .frame(width: 300)
@@ -6773,22 +6797,22 @@ struct SessionDetailsPanel: View {
     // MARK: - Sub-blocks
 
     private var agentCard: some View {
+        // Flat layout per redesign — no rounded background, just emoji
+        // avatar + name + description sitting directly on the panel
+        // surface. The pencil triggers AgentSettingsPanel.
         let agent = viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
         return HStack(spacing: 10) {
             ZStack {
                 Circle()
-                    .fill(Color.accentColor.opacity(0.15))
-                    .frame(width: 40, height: 40)
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 36, height: 36)
                 Text(agent?.emoji ?? "🤖")
-                    .font(.system(size: 22))
+                    .font(.system(size: 20))
             }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
                     Text(agent?.name ?? viewModel.selectedAgentId)
                         .font(.system(size: 14, weight: .semibold))
-                    // Pencil: opens the existing agent settings panel
-                    // (loadSelectedAgentDetail + agentSettingsOpen = true)
-                    // — same entry point the legacy AgentHeaderBar used.
                     Button {
                         viewModel.loadSelectedAgentDetail()
                         Task { await viewModel.loadModelsForSettings() }
@@ -6816,11 +6840,6 @@ struct SessionDetailsPanel: View {
             }
             Spacer()
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
     }
 
     /// Resolves the model that should display for the *current* agent.
@@ -6854,11 +6873,11 @@ struct SessionDetailsPanel: View {
                 // Always include current selection so the Picker can render
                 // even when the active model isn't in the available list yet.
                 if !viewModel.availableModelsForSettings.contains(where: { $0.id == currentAgentModel }) {
-                    Text(currentAgentModel.isEmpty ? "—" : currentAgentModel)
+                    Text(Self.stripProviderPrefix(currentAgentModel.isEmpty ? "—" : currentAgentModel))
                         .tag(currentAgentModel)
                 }
                 ForEach(viewModel.availableModelsForSettings) { m in
-                    Text(m.name).tag(m.id)
+                    Text(Self.stripProviderPrefix(m.name)).tag(m.id)
                 }
             }
             .labelsHidden()
@@ -7011,6 +7030,15 @@ struct SessionDetailsPanel: View {
     }
 
     // MARK: - Helpers
+
+    /// Strip a provider prefix like "getclawhub/" so the model name reads
+    /// cleanly in tight UI ("deepseek-v4-pro" rather than the full path).
+    static func stripProviderPrefix(_ s: String) -> String {
+        if let slash = s.lastIndex(of: "/") {
+            return String(s[s.index(after: slash)...])
+        }
+        return s
+    }
 
     private static func shortId(_ id: UUID) -> String {
         let s = id.uuidString.lowercased()
@@ -7170,10 +7198,15 @@ struct ChatHeaderBar: View {
     }
 
     /// Best-effort model name for display. Falls back gracefully when the
-    /// model overview hasn't loaded yet (cold start).
+    /// model overview hasn't loaded yet (cold start). Strips the provider
+    /// prefix ("getclawhub/") so the chat header reads cleanly.
     private var modelDisplay: String {
         let m = viewModel.modelOverview.defaultModel
-        return m.isEmpty ? "—" : m
+        if m.isEmpty { return "—" }
+        if let slash = m.lastIndex(of: "/") {
+            return String(m[m.index(after: slash)...])
+        }
+        return m
     }
 }
 
@@ -7301,12 +7334,45 @@ struct ChatSessionRow: View {
                 .truncationMode(.tail)
                 .foregroundColor(isActive ? .accentColor : .primary)
                 .fontWeight(isActive ? .medium : .regular)
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+            // Inline timestamp (HH:mm today / "昨天" / "N 天前" / MM-dd)
+            // — mirrors the recent-sessions list in the redesign mockup.
+            Text(Self.shortRelative(meta.updatedAt))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
         }
-        .help("\(meta.messageCount) · \(Self.relativeTime(meta.updatedAt))")
+        .help("\(meta.messageCount) · \(Self.fullRelative(meta.updatedAt))")
     }
 
-    private static func relativeTime(_ date: Date) -> String {
+    /// Compact form for inline sidebar display.
+    /// Today    → "HH:mm"
+    /// Yesterday→ "昨天"
+    /// 2-6 days → "N 天前"
+    /// Older    → "MM-dd"
+    static func shortRelative(_ date: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) {
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm"
+            return f.string(from: date)
+        }
+        if cal.isDateInYesterday(date) {
+            return "昨天"
+        }
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: date),
+                                      to: cal.startOfDay(for: Date())).day ?? 0
+        if days < 7 {
+            return "\(days) 天前"
+        }
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd"
+        return f.string(from: date)
+    }
+
+    /// Verbose form used in the tooltip — keeps the abbreviated relative
+    /// formatter for richer context on hover.
+    static func fullRelative(_ date: Date) -> String {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
         return f.localizedString(for: date, relativeTo: Date())
