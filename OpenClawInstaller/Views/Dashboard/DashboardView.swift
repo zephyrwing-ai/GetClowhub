@@ -106,8 +106,20 @@ struct SidebarView: View {
             #if REQUIRE_LOGIN
             sidebarUserRow
             #endif
+            sidebarLanguageLogoutRow
+            sidebarModePicker
             Divider()
-            sidebarMainList
+            // Mode-driven body: 配置 → main list, 我的团队 → agents,
+            // 专家市场 → marketplace overview list. Falls back to
+            // sidebarMainList for safety.
+            switch viewModel.sidebarMode {
+            case .config:
+                sidebarMainList
+            case .teams:
+                agentsList
+            case .market:
+                marketplaceList
+            }
             Divider()
             sidebarBottomBar
         }
@@ -165,9 +177,10 @@ struct SidebarView: View {
 
     // MARK: - Sidebar Top Header (Logo + dropdown menu)
 
-    /// Top of the sidebar: app logo, name, and a chevron menu housing language
-    /// picker, update check, and "About" — items that don't deserve a full
-    /// sidebar row but still need to be reachable.
+    /// Top of the sidebar — just the brand. Language / update / help all
+    /// have their own dedicated rows or live in the bottom toolbar, so
+    /// the top is intentionally bare. The trailing icon mirrors macOS
+    /// NavigationSplitView convention for the sidebar toggle.
     private var sidebarTopHeader: some View {
         HStack(spacing: 8) {
             Image("Logo1")
@@ -177,40 +190,14 @@ struct SidebarView: View {
             Text("GetClawHub")
                 .font(.system(size: 14, weight: .semibold))
             Spacer()
-            Menu {
-                // Language sub-menu
-                Menu {
-                    ForEach(languageManager.supportedLanguages) { lang in
-                        Button {
-                            languageManager.selectedLanguage = lang.id
-                        } label: {
-                            HStack {
-                                Text(lang.name)
-                                if languageManager.selectedLanguage == lang.id {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Label(String(localized: "Language", bundle: languageManager.localizedBundle),
-                          systemImage: "globe")
-                }
-                Divider()
-                Button {
-                    Task { await sparkleUpdater.checkLatestVersion() }
-                } label: {
-                    Label(String(localized: "Check for Updates", bundle: languageManager.localizedBundle),
-                          systemImage: "arrow.triangle.2.circlepath")
-                }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)  // suppress the auto chevron — we draw our own
-            .fixedSize()
+            // System sidebar toggle (chevron). NavigationSplitView wires
+            // the actual toggle behavior automatically when this icon is
+            // present in a Toolbar; here it's purely visual to match the
+            // mockup since SwiftUI handles the real toggle in the window
+            // chrome.
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -254,7 +241,7 @@ struct SidebarView: View {
                             NSWorkspace.shared.open(url)
                         }
                     } label: {
-                        Label("Enterprise", systemImage: "crown.fill")
+                        Label("Member Upgrade", systemImage: "crown.fill")
                             .font(.system(size: 9, weight: .medium))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -287,36 +274,103 @@ struct SidebarView: View {
     }
     #endif
 
+    // MARK: - Sidebar Language + Logout Row
+
+    /// Standalone row matching the redesign: globe + language menu on the
+    /// left, plain "退出" button on the right. Pulls language switching
+    /// out of the top-bar dropdown so it's one click away.
+    private var sidebarLanguageLogoutRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "globe")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Menu {
+                ForEach(languageManager.supportedLanguages) { lang in
+                    Button {
+                        languageManager.selectedLanguage = lang.id
+                    } label: {
+                        HStack {
+                            Text(lang.name)
+                            if languageManager.selectedLanguage == lang.id {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Text(languageManager.displayName)
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            Spacer()
+            #if REQUIRE_LOGIN
+            if case .loggedIn = authManager.state {
+                Button {
+                    Task { await membershipManager.syncProfile() }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Sync membership")
+
+                Button("Log Out") {
+                    authManager.logout()
+                }
+                .font(.caption2)
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+            }
+            #endif
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Sidebar Mode Picker
+
+    /// Restores the 3-mode segmented picker from the original design:
+    /// 配置 / 我的团队 / 专家市场. Below it the sidebar body switches
+    /// content per mode (managed in `body` itself).
+    private var sidebarModePicker: some View {
+        Picker("", selection: $viewModel.sidebarMode) {
+            Text(String(localized: "Config", bundle: languageManager.localizedBundle))
+                .tag(DashboardViewModel.SidebarMode.config)
+            Text(String(localized: "My Team", bundle: languageManager.localizedBundle))
+                .tag(DashboardViewModel.SidebarMode.teams)
+            Text(String(localized: "Market", bundle: languageManager.localizedBundle))
+                .tag(DashboardViewModel.SidebarMode.market)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+
     // MARK: - Sidebar Main List (the new unified list)
 
-    /// Replaces the old 3-mode picker. All navigation lives here as one List
-    /// with sections — main nav, recent sessions, system status, settings.
+    /// Body of the sidebar in 配置 mode — three sections: 聊天 / 概览 / 代理
+    /// — matching the latest design mockup. Marketplace and team agent
+    /// browsing live in their own sidebarMode views (专家市场 / 我的团队).
+    /// Help / language / logout / settings live in the language row + the
+    /// bottom toolbar so they don't crowd the main list.
     private var sidebarMainList: some View {
         List(selection: $selectedTab) {
-            // ─── Main Nav ───
-            Section {
-                Label(String(localized: "Chat", bundle: languageManager.localizedBundle),
-                      systemImage: "message.fill")
-                    .tag(DashboardViewModel.DashboardTab.chat)
-                Label(String(localized: "Agent", bundle: languageManager.localizedBundle),
-                      systemImage: "person.text.rectangle")
-                    .tag(DashboardViewModel.DashboardTab.persona)
-                Label(String(localized: "Multi-Agent", bundle: languageManager.localizedBundle),
-                      systemImage: "person.3.fill")
-                    .tag(DashboardViewModel.DashboardTab.subAgents)
-                Label(String(localized: "Marketplace", bundle: languageManager.localizedBundle),
-                      systemImage: "storefront")
-                    .tag(DashboardViewModel.DashboardTab.market)
-                Label(String(localized: "Tasks/Logs", bundle: languageManager.localizedBundle),
-                      systemImage: "checklist")
-                    .tag(DashboardViewModel.DashboardTab.tasksLogs)
-            }
+            ServiceStatusBadge(viewModel: viewModel)
+                .listRowSeparator(.hidden)
+                .padding(.bottom, 8)
 
-            // ─── Recent Sessions ───
-            Section("Recent Sessions") {
-                // "+ New Session" is the first row of the section so it
-                // shares the standard list-row inset with everything below
-                // — keeps icons, titles, and timestamps perfectly aligned.
+            // ─── Chat: search + recent sessions + "+ new" ───
+            Section("Chat") {
                 Button {
                     viewModel.createNewSession()
                     selectedTab = .chat
@@ -329,22 +383,10 @@ struct SidebarView: View {
                 sessionsSectionContent
             }
 
-            // ─── System ───
-            Section("System") {
-                Label {
-                    HStack {
-                        Text("Service Status")
-                        Spacer()
-                        Text(viewModel.openclawService.status == .running ? "Running" : "Stopped")
-                            .font(.caption)
-                            .foregroundColor(viewModel.openclawService.status == .running ? .green : .secondary)
-                    }
-                } icon: {
-                    Circle()
-                        .fill(viewModel.openclawService.status == .running ? Color.green : Color.secondary)
-                        .frame(width: 8, height: 8)
-                }
-                .tag(DashboardViewModel.DashboardTab.status)
+            // ─── Overview: status / budget / billing ───
+            Section("Overview") {
+                Label("Status", systemImage: "chart.bar.fill")
+                    .tag(DashboardViewModel.DashboardTab.status)
                 Label("Budget", systemImage: "dollarsign.gauge.chart.lefthalf.righthalf")
                     .tag(DashboardViewModel.DashboardTab.budget)
                 #if REQUIRE_LOGIN
@@ -353,29 +395,16 @@ struct SidebarView: View {
                 #endif
             }
 
-            // ─── Settings & Support ───
-            Section("Settings & Support") {
+            // ─── Agent: persona / multi-agent / tasks-logs / settings ───
+            Section("Agent") {
+                Label("Persona", systemImage: "person.text.rectangle")
+                    .tag(DashboardViewModel.DashboardTab.persona)
+                Label("Multi-Agent", systemImage: "person.3.fill")
+                    .tag(DashboardViewModel.DashboardTab.subAgents)
+                Label("Tasks/Logs", systemImage: "checklist")
+                    .tag(DashboardViewModel.DashboardTab.tasksLogs)
                 Label("Settings", systemImage: "gearshape")
                     .tag(DashboardViewModel.DashboardTab.config)
-
-                Button {
-                    HelpAssistantWindowController.shared.showWindow(dashboardViewModel: viewModel)
-                } label: {
-                    Label("Help Center", systemImage: "questionmark.circle")
-                }
-                .buttonStyle(.plain)
-
-                #if REQUIRE_LOGIN
-                if case .loggedIn = authManager.state {
-                    Button {
-                        authManager.logout()
-                    } label: {
-                        Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
-                            .foregroundColor(.red)
-                    }
-                    .buttonStyle(.plain)
-                }
-                #endif
             }
         }
         .listStyle(.sidebar)
@@ -472,24 +501,60 @@ struct SidebarView: View {
 
     private var sidebarBottomBar: some View {
         HStack(spacing: 8) {
-            // Version + update badge (small inline)
-            HStack(spacing: 4) {
+            // Brand + version block on the left
+            VStack(alignment: .leading, spacing: 1) {
+                Text("GetClawHub")
+                    .font(.system(size: 11, weight: .semibold))
                 Text("v\(sparkleUpdater.currentVersion)")
-                    .font(.caption2)
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                if sparkleUpdater.updateAvailable {
-                    Button {
-                        sparkleUpdater.checkForUpdates()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(.green)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Update available: v\(sparkleUpdater.latestVersion)")
-                }
             }
+
+            // Update badge — green pill when an update is available, plain
+            // refresh button otherwise. Click to check / install.
+            if sparkleUpdater.updateAvailable {
+                Button {
+                    sparkleUpdater.checkForUpdates()
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 10))
+                        Text("v\(sparkleUpdater.latestVersion)")
+                            .font(.system(size: 9))
+                    }
+                    .foregroundColor(.green)
+                }
+                .buttonStyle(.plain)
+                .help("Update to v\(sparkleUpdater.latestVersion)")
+            } else {
+                Button {
+                    Task { await sparkleUpdater.checkLatestVersion() }
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 10))
+                        Text(sparkleUpdater.checkSucceeded ? "Latest" : "Update")
+                            .font(.system(size: 9))
+                    }
+                    .foregroundColor(sparkleUpdater.checkSucceeded ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Check for Updates")
+            }
+
             Spacer()
+
+            // Help + theme buttons
+            Button {
+                HelpAssistantWindowController.shared.showWindow(dashboardViewModel: viewModel)
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Help Assistant")
+
             Button {
                 appAppearance = isDark ? "light" : "dark"
             } label: {
@@ -6666,47 +6731,27 @@ struct SessionDetailsPanel: View {
 
             Divider()
 
-            // "More Actions" dropdown — collapses Export / Clear / etc
-            // into a single discreet menu instead of a destructive red
-            // button. Matches the redesign mockup's "更多操作 ⌄".
-            Menu {
-                if let sid = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId] {
-                    Button {
-                        viewModel.exportSession(sid)
-                    } label: {
-                        Label("Export…", systemImage: "square.and.arrow.up")
-                    }
-                    Button {
-                        viewModel.renameSession(sid, to: viewModel.sessionsByAgent[viewModel.selectedAgentId]?.first(where: { $0.id == sid })?.title ?? "")
-                    } label: {
-                        Label("Rename", systemImage: "pencil")
-                    }
-                    Divider()
-                }
-                Button(role: .destructive) {
-                    viewModel.chatMessagesByAgent[viewModel.selectedAgentId] = []
-                } label: {
-                    Label("Clear Conversation", systemImage: "trash")
-                }
+            // Clear conversation — destructive red button matching the
+            // latest design mockup. Wipes the in-memory thread for the
+            // active agent (persistence layer continues writing on next
+            // turn). Quick action; long-press / right-click on a session
+            // in the sidebar still surfaces Export / Rename.
+            Button {
+                viewModel.chatMessagesByAgent[viewModel.selectedAgentId] = []
             } label: {
-                HStack {
-                    Text("More Actions")
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                    Text("Clear Conversation")
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(NSColor.controlBackgroundColor))
+                        .stroke(Color.red.opacity(0.55), lineWidth: 1)
                 )
-                .foregroundColor(.primary)
+                .foregroundColor(.red)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
             .padding(16)
         }
         .frame(width: 300)
