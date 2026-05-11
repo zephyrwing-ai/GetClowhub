@@ -1380,9 +1380,9 @@ struct ChatView: View {
     @ObservedObject var viewModel: DashboardViewModel
     var hideAgentPicker: Bool = false
     @State private var inputText = ""
-    /// Currently selected input mode (聊天/执行任务/代码模式). Wired into
-    /// the picker above the text editor; doesn't yet alter behavior.
-    @State private var inputMode: ChatInputMode = .chat
+    // The `ChatInputMode` picker (聊天/执行任务/代码模式) used to live here
+    // but was hidden in v1.1.46 — see the toolbar row below and the
+    // `ChatInputModePicker` definition for the disabled state's reasoning.
     @State private var eventMonitor: Any?
     @State private var queryHistory: [String] = UserDefaults.standard.stringArray(forKey: "chatQueryHistory") ?? []
     @State private var historyIndex: Int = -1
@@ -1815,13 +1815,25 @@ struct ChatView: View {
 
                 // Input card
                 VStack(spacing: 0) {
-                    // Toolbar row: new chat + agent picker + attach
+                    // Toolbar row: secondary actions (reset, attach). The
+                    // 聊天/执行任务/代码模式 picker that used to sit here is
+                    // hidden until the modes are actually wired into
+                    // sendMessage — see ChatInputModePicker definition.
                     HStack(spacing: 8) {
+                        Spacer()
+
+                        // Reset = clear in-memory thread + reset Agent's
+                        // backend session context. NOT the same as creating
+                        // a new sidebar session (sidebar's "+ New Session"
+                        // button does that). The previous label was "+ New"
+                        // with a plus icon — that was misleading, so it now
+                        // reads "Reset" and sits with the other secondary
+                        // actions on the right.
                         Button(action: { viewModel.clearChat() }) {
                             HStack(spacing: 4) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 14))
-                                Text("New")
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 12))
+                                Text("Reset")
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .foregroundColor(.secondary)
@@ -1831,13 +1843,8 @@ struct ChatView: View {
                             .cornerRadius(6)
                         }
                         .buttonStyle(.plain)
-                        .help("New Conversation")
-
-                        // Agent picker moved to ChatHeaderBar; mode picker
-                        // takes its place at the top of the input footer.
-                        ChatInputModePicker(mode: $inputMode)
-
-                        Spacer()
+                        .help(String(localized: "Clear messages and reset agent context", bundle: LanguageManager.shared.localizedBundle))
+                        .disabled(isInputLocked)
 
                         Button(action: { openFilePicker() }) {
                             Image(systemName: "paperclip")
@@ -7288,9 +7295,15 @@ struct ChatHeaderBar: View {
 // MARK: - Input Mode Picker (above the chat input area)
 
 /// Three-mode segmented picker matching the redesign: 聊天 / 执行任务 /
-/// 代码模式. Currently UI-only — actual behavior coupling per mode can be
-/// layered in later; for now all three modes route through the same
-/// sendMessage() pipeline.
+/// 代码模式.
+///
+/// **Currently hidden** (v1.1.46+). The three modes were never wired into
+/// `sendMessage()` — they only changed the picker highlight. Shipping a UI
+/// control that pretends to switch behavior but doesn't was misleading, so
+/// the picker is removed from the input toolbar. The enum + view stay in
+/// the codebase as a placeholder for the eventual wiring: each mode should
+/// inject a prompt prefix and/or change the agent invocation flags before
+/// `sendMessage()` runs.
 enum ChatInputMode: String, CaseIterable {
     case chat
     case task
