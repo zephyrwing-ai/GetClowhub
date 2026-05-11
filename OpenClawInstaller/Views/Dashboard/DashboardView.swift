@@ -326,6 +326,9 @@ struct SidebarView: View {
 
             // ─── Chat: search + recent sessions + "+ new" ───
             Section("Chat") {
+                Label("Channels", systemImage: "bubble.left.and.bubble.right.fill")
+                    .tag(DashboardViewModel.DashboardTab.channels)
+
                 // Explicit "Chat" tag so users can return to the chat
                 // view from any other tab (without needing to click a
                 // specific session row). The right details panel is
@@ -357,12 +360,14 @@ struct SidebarView: View {
                 #endif
             }
 
-            // ─── Agent: persona / multi-agent / tasks-logs / settings ───
+            // ─── Agent: persona / multi-agent / plugins / tasks-logs / settings ───
             Section("Agent") {
                 Label("Persona", systemImage: "person.text.rectangle")
                     .tag(DashboardViewModel.DashboardTab.persona)
                 Label("Multi-Agent", systemImage: "person.3.fill")
                     .tag(DashboardViewModel.DashboardTab.subAgents)
+                Label("Plugins", systemImage: "puzzlepiece.fill")
+                    .tag(DashboardViewModel.DashboardTab.plugins)
                 Label("Tasks/Logs", systemImage: "checklist")
                     .tag(DashboardViewModel.DashboardTab.tasksLogs)
                 Label("Settings", systemImage: "gearshape")
