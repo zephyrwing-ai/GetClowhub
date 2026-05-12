@@ -209,17 +209,79 @@ class DashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         // 5. Recompute `isSendingMessage` whenever the user switches agent
-        //    or the foreground task set changes. Switching session is
-        //    handled inline in `switchSession` / `createNewSession` /
-        //    `promoteNextSession` (since those mutate
+        //    or the foreground task set changes, AND lazy-load that agent's
+        //    most-recent session messages if `restoreActiveSessionsFromStore`
+        //    skipped it at startup (only the initially-visible agent gets
+        //    eager-loaded — every other agent's messages are parsed the
+        //    first time the user switches into it).
+        //
+        //    Switching session is handled inline in `switchSession` /
+        //    `createNewSession` / `promoteNextSession` (since those mutate
         //    `selectedSessionIdByAgent` dict in-place — SwiftUI doesn't
         //    publish per-key dict mutations reliably).
         Publishers.CombineLatest($selectedAgentId, $foregroundTaskIds)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _ in
-                self?.recomputeIsSendingMessage()
+            .sink { [weak self] agentId, _ in
+                guard let self = self else { return }
+                self.ensureMessagesLoaded(forAgent: agentId)
+                self.recomputeIsSendingMessage()
             }
             .store(in: &cancellables)
+        // 6. Persist updates landing in inactive sessions (background
+        //    streaming). Same debounce window as the active sink so
+        //    streaming completions in a hidden session still hit disk —
+        //    otherwise the user sees the old state until next switch.
+        $chatMessagesByInactiveSession
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { [weak self] dict in
+                self?.persistInactiveSessions(from: dict)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Mirror updates from `chatMessagesByInactiveSession` to disk. Used
+    /// when a streaming task completes for a session the user is not
+    /// currently viewing — without this, the on-disk file stays at
+    /// `.loading` (or whatever state it was in at the moment of switch)
+    /// until the user navigates back.
+    ///
+    /// We deliberately do NOT evict entries from
+    /// `chatMessagesByInactiveSession` here even when they have no more
+    /// in-flight tasks. Eviction would race with `saveSessionDebounced`
+    /// (it queues; the actual disk write happens later) — if the user
+    /// flips back to a just-evicted session before the queued write
+    /// flushes, `switchSession`'s disk-fallback path reads stale data
+    /// and the assistant's reply appears to vanish. The cost of NOT
+    /// evicting is one extra `[ChatMessage]` per session in memory,
+    /// which is negligible; entries get reclaimed naturally when the
+    /// user navigates back into the session (`switchSession`'s
+    /// `removeValue(forKey:)`).
+    private func persistInactiveSessions(from dict: [UUID: [ChatMessage]]) {
+        for (sid, messages) in dict where !messages.isEmpty {
+            // `loadSession` is now cache-backed; in the streaming-update
+            // hot path it returns from memory (the cache was warmed when
+            // the user opened this session originally), so this is no
+            // longer a full disk parse on every debounce fire.
+            guard var session = chatSessionStore.loadSession(id: sid) else { continue }
+            let memMessages = Self.stripStaleLoadingPlaceholders(messages)
+            // Cheap skip: if the trailing message's id+status+content-length
+            // already matches what's on (cached) disk, don't queue a write.
+            // Mirror of the same guard in `persistChangedSessions` — covers
+            // the case where streaming has paused but the sink keeps firing
+            // because of unrelated map mutations elsewhere.
+            if session.messages.count == memMessages.count,
+               session.messages.last?.id == memMessages.last?.id,
+               session.messages.last?.taskStatus == memMessages.last?.taskStatus,
+               session.messages.last?.content.count == memMessages.last?.content.count {
+                continue
+            }
+            session.messages = memMessages
+            session.updatedAt = Date()
+            if session.title == ChatSession.defaultTitle {
+                session.title = ChatSession.deriveTitle(from: memMessages)
+            }
+            chatSessionStore.saveSessionDebounced(session)
+        }
     }
 
     deinit {
@@ -260,6 +322,21 @@ class DashboardViewModel: ObservableObject {
     // Models
     @Published var models: [ModelInfo] = []
     @Published var modelOverview: ModelOverview = ModelOverview()
+
+    /// Gateway `Main` lane concurrency cap — the number of agent runs the
+    /// backend will execute in parallel before the rest start queueing.
+    /// Read from `agents.defaults.maxConcurrent` in `~/.openclaw/openclaw.json`;
+    /// falls back to the gateway's own default (4) when missing.
+    ///
+    /// Re-read whenever `loadAvailableAgents` runs so config edits flow
+    /// through without an app restart.
+    @Published var maxConcurrentTasks: Int = 4
+
+    /// Number of foreground tasks currently in flight across all visible
+    /// and inactive sessions. Mirrors `foregroundTaskIds.count` but
+    /// exposed as a stable computed property so views can observe via
+    /// `$foregroundTaskIds` without reading the underlying set directly.
+    var concurrentForegroundCount: Int { foregroundTaskIds.count }
     @Published var fallbackModels: [String] = []
     @Published var imageFallbackModels: [String] = []
     @Published var isLoadingModels = false
@@ -900,18 +977,73 @@ class DashboardViewModel: ObservableObject {
         return messages.filter { !($0.taskStatus == .loading && $0.content.isEmpty) }
     }
 
-    /// On launch, for every agent with stored history, load the newest session
-    /// and seed chatMessagesByAgent with its messages. Without this, the chat
-    /// view would render empty until the user types something even though
-    /// their previous conversation is sitting on disk.
-    private func restoreActiveSessionsFromStore() {
-        for (agentId, metas) in sessionsByAgent {
-            guard let mostRecent = metas.first,
-                  let session = chatSessionStore.loadSession(id: mostRecent.id) else {
-                continue
+    /// Load `agentId`'s active session messages into `chatMessagesByAgent`
+    /// if they haven't been parsed yet. Called from the `selectedAgentId`
+    /// sink so switching to an agent that was deferred at startup parses
+    /// its session on first access. Cache hit returns instantly; cache
+    /// miss kicks off an async load (with `loadingSessionIds` flipped to
+    /// flag the view) so the main thread isn't blocked on a big decode.
+    private func ensureMessagesLoaded(forAgent agentId: String) {
+        guard chatMessagesByAgent[agentId] == nil,
+              let sid = selectedSessionIdByAgent[agentId] else {
+            return
+        }
+        if let cached = chatSessionStore.cachedSession(id: sid) {
+            chatMessagesByAgent[agentId] = Self.stripStaleLoadingPlaceholders(cached.messages)
+            return
+        }
+        // Cold path — async decode.
+        loadingSessionIds.insert(sid)
+        Task { [weak self] in
+            guard let self = self else { return }
+            let target = await self.chatSessionStore.loadSessionAsync(id: sid)
+            await MainActor.run {
+                // Bail if the user has switched agent again in the
+                // meantime — we don't want to clobber their current view.
+                guard self.selectedAgentId == agentId,
+                      self.selectedSessionIdByAgent[agentId] == sid else {
+                    self.loadingSessionIds.remove(sid)
+                    return
+                }
+                if let target = target {
+                    self.chatMessagesByAgent[agentId] = Self.stripStaleLoadingPlaceholders(target.messages)
+                }
+                self.loadingSessionIds.remove(sid)
             }
-            selectedSessionIdByAgent[agentId] = session.id
-            chatMessagesByAgent[agentId] = Self.stripStaleLoadingPlaceholders(session.messages)
+        }
+    }
+
+    /// On launch, restore active sessions for each agent.
+    ///
+    /// Two-phase load:
+    /// - **Eager** (synchronous, on main thread): load the currently-selected
+    ///   agent's most-recent session. This is the one the user sees first
+    ///   when the chat tab opens, so blocking the main thread for this one
+    ///   parse is acceptable — anything else and the UI flashes empty.
+    /// - **Lazy** (in a Task): note the session-id for every other agent so
+    ///   the sidebar can show them and `selectedSessionIdByAgent` is
+    ///   populated, but DON'T load their message bodies yet. Those parse
+    ///   on demand when the user switches to that agent (cheap thanks to
+    ///   the ChatSessionStore cache hitting once they've loaded once).
+    ///
+    /// Previously this iterated every agent synchronously and parsed each
+    /// agent's full most-recent session, so users with several agents felt
+    /// startup as 5+ blocking JSON decodes on the main thread before the
+    /// chat view rendered anything.
+    private func restoreActiveSessionsFromStore() {
+        let currentAgent = selectedAgentId
+        for (agentId, metas) in sessionsByAgent {
+            guard let mostRecent = metas.first else { continue }
+            selectedSessionIdByAgent[agentId] = mostRecent.id
+            // Only synchronously parse messages for the visible agent.
+            if agentId == currentAgent,
+               let session = chatSessionStore.loadSession(id: mostRecent.id) {
+                chatMessagesByAgent[agentId] = Self.stripStaleLoadingPlaceholders(session.messages)
+            }
+            // Non-visible agents: leave chatMessagesByAgent[agentId] unset.
+            // It'll be populated lazily by switchSession the first time the
+            // user clicks into that agent — at which point the parse cost
+            // is paid once, then cached.
         }
     }
 
@@ -977,20 +1109,71 @@ class DashboardViewModel: ObservableObject {
     /// state isn't lost when the user clicks back.
     func switchSession(to sessionId: UUID) {
         let agentId = selectedAgentId
-        // If a task was streaming in the session we're leaving, cancel it
-        // *before* the flush + swap. Otherwise:
-        //   - the placeholder gets saved to disk in .loading state
-        //   - chatMessagesByAgent[agentId] is overwritten by the new session
-        //   - subsequent stream events for the old msgId find no message
-        //     to update → output silently lost AND the spinner is frozen
-        //     on disk until next save
-        if let currentSid = selectedSessionIdByAgent[agentId] {
-            cancelTasks(inSession: currentSid)
+        let oldSid = selectedSessionIdByAgent[agentId]
+
+        // If the session we're LEAVING has an in-flight task, we can't
+        // just overwrite `chatMessagesByAgent[agentId]` — subsequent
+        // stream events would find no msgId to update and silently
+        // discard output. Instead, stash the current messages into the
+        // inactive map keyed by the old sessionId. Stream handlers know
+        // to look there too. When the user returns to that session, we
+        // unstash.
+        //
+        // If there's no in-flight task, no stash needed — just drop the
+        // in-memory copy (it's already on disk).
+        if let oldSid = oldSid, hasForegroundTask(inSession: oldSid) {
+            chatMessagesByInactiveSession[oldSid] = chatMessagesByAgent[agentId]
         }
+
         flushActiveSession(forAgent: agentId)
-        guard let target = chatSessionStore.loadSession(id: sessionId) else { return }
         selectedSessionIdByAgent[agentId] = sessionId
-        chatMessagesByAgent[agentId] = Self.stripStaleLoadingPlaceholders(target.messages)
+
+        // Source-of-truth precedence on a session switch:
+        //  1. In-memory inactive stash (most current — includes any
+        //     streaming that completed while the user was away).
+        //  2. ChatSessionStore's LRU cache (warm hit, instant decode).
+        //  3. Disk (cold load — kicked off async so we don't freeze the
+        //     main thread on a multi-hundred-KB JSON parse). We set a
+        //     loading flag the view watches to show a spinner during
+        //     this window.
+        //
+        // IMPORTANT: do NOT `stripStaleLoadingPlaceholders` an in-memory
+        // unstash. The strip would remove a still-running .loading + ""
+        // placeholder, but the task IS still alive (foregroundTaskIds /
+        // taskSessionMap still have its msgId). Once stripped, the next
+        // stream event has nowhere to land — findMessage returns nil and
+        // the output is silently dropped. The disk path strips because
+        // we can't tell a live placeholder from a dead one left over by
+        // a previous crash.
+        if let stashed = chatMessagesByInactiveSession.removeValue(forKey: sessionId) {
+            chatMessagesByAgent[agentId] = stashed
+            loadingSessionIds.remove(sessionId)
+        } else if let target = chatSessionStore.cachedSession(id: sessionId) {
+            chatMessagesByAgent[agentId] = Self.stripStaleLoadingPlaceholders(target.messages)
+            loadingSessionIds.remove(sessionId)
+        } else {
+            // Cold load — render a loading placeholder while we decode
+            // the JSON off the main thread.
+            chatMessagesByAgent[agentId] = []
+            loadingSessionIds.insert(sessionId)
+            Task { [weak self] in
+                guard let self = self else { return }
+                let target = await self.chatSessionStore.loadSessionAsync(id: sessionId)
+                await MainActor.run {
+                    // If the user has navigated away again before the
+                    // decode finished, drop the result rather than
+                    // clobbering whatever they're looking at now.
+                    guard self.selectedSessionIdByAgent[agentId] == sessionId else {
+                        self.loadingSessionIds.remove(sessionId)
+                        return
+                    }
+                    if let target = target {
+                        self.chatMessagesByAgent[agentId] = Self.stripStaleLoadingPlaceholders(target.messages)
+                    }
+                    self.loadingSessionIds.remove(sessionId)
+                }
+            }
+        }
         rebuildSessionsMirror()
         recomputeIsSendingMessage()
     }
@@ -1112,11 +1295,12 @@ class DashboardViewModel: ObservableObject {
     @discardableResult
     func createNewSession() -> UUID {
         let agentId = selectedAgentId
-        // Symmetric with switchSession: kill in-flight work in the old
-        // session before swapping. Same reason — stream events would
-        // otherwise be routed to a session that's no longer visible.
-        if let currentSid = selectedSessionIdByAgent[agentId] {
-            cancelTasks(inSession: currentSid)
+        let oldSid = selectedSessionIdByAgent[agentId]
+        // Symmetric with switchSession: if a task is streaming in the old
+        // session, preserve its message list in the inactive stash so
+        // stream events can still find their target. We do NOT cancel.
+        if let oldSid = oldSid, hasForegroundTask(inSession: oldSid) {
+            chatMessagesByInactiveSession[oldSid] = chatMessagesByAgent[agentId]
         }
         flushActiveSession(forAgent: agentId)
         let new = ChatSession(agentId: agentId)
@@ -1224,6 +1408,27 @@ class DashboardViewModel: ObservableObject {
     /// terminal event (completed / cancelled / timed-out / error).
     var taskSessionMap: [UUID: UUID] = [:]
 
+    /// Messages for sessions the user has navigated AWAY from while a
+    /// foreground task was still streaming. Keyed by sessionId. The
+    /// session's stream events keep updating this map even though the
+    /// session isn't visible — so when the user navigates back, the
+    /// result (or in-progress streaming) is already there.
+    ///
+    /// Cleared on switch-back into the session (entry is moved to
+    /// `chatMessagesByAgent[agentId]`) and on session delete.
+    /// Persisted via a parallel debounced save sink so on-disk state
+    /// catches up with completions that landed while the session was
+    /// inactive.
+    @Published var chatMessagesByInactiveSession: [UUID: [ChatMessage]] = [:]
+
+    /// Sessions whose messages are being lazy-loaded from disk in the
+    /// background. The chat view watches this set so it can render a
+    /// "loading…" placeholder during the cold-load window instead of
+    /// flashing an empty thread. Entries are added by `switchSession` /
+    /// `ensureMessagesLoaded` when they take the async path (cache miss)
+    /// and removed when the load resolves.
+    @Published var loadingSessionIds: Set<UUID> = []
+
     /// Whether the currently selected agent has any foreground task running
     /// — across all its sessions. Used by the agent picker to badge agents
     /// that are working in the background.
@@ -1256,16 +1461,37 @@ class DashboardViewModel: ObservableObject {
         isSendingMessage = hasForegroundTask(inSession: sid)
     }
 
-    /// Cancel every foreground task currently bound to `sessionId`. Used by
-    /// `switchSession` / `deleteSession` / `createNewSession` so we don't
-    /// leave runs going in the background when the user navigates away —
-    /// previously these stayed alive on the gateway, burning tokens, and
-    /// their stream events landed in the wrong session's message list.
+    /// Cancel every foreground task currently bound to `sessionId`. Only
+    /// used by `deleteSession` now — deleting a session while a task is
+    /// running on it makes no sense (the destination for the output is
+    /// disappearing). For switchSession / createNewSession we instead
+    /// stash the session's state into `chatMessagesByInactiveSession` so
+    /// the task can keep running and route its output to the right place
+    /// when the user comes back.
     private func cancelTasks(inSession sessionId: UUID) {
         let toCancel = foregroundTaskIds.filter { taskSessionMap[$0] == sessionId }
         for msgId in toCancel {
             cancelChat(msgId)
         }
+    }
+
+    /// Look up a message by id in whichever bucket currently holds it —
+    /// the active per-agent map, or the inactive-sessions map for tasks
+    /// whose owning session the user has navigated away from. Returns
+    /// the message (read-only). Stream handlers use this for status
+    /// checks ("don't overwrite a .cancelled message with a delta")
+    /// without having to know where the message lives.
+    private func findMessage(byId msgId: UUID) -> ChatMessage? {
+        for messages in chatMessagesByAgent.values {
+            if let msg = messages.first(where: { $0.id == msgId }) {
+                return msg
+            }
+        }
+        if let sessionId = taskSessionMap[msgId],
+           let msg = chatMessagesByInactiveSession[sessionId]?.first(where: { $0.id == msgId }) {
+            return msg
+        }
+        return nil
     }
     @Published var selectedAgentId: String = "main"
     @Published var availableAgents: [AgentOption] = [AgentOption(id: "main", name: "main", emoji: "🤖", description: "", model: "", division: "")]
@@ -1287,6 +1513,20 @@ class DashboardViewModel: ObservableObject {
 
         // Ensure commander exists in openclaw.json before loading
         Self.ensureCommanderInConfig(configPath: configPath, baseDir: baseDir)
+
+        if let data = FileManager.default.contents(atPath: configPath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let agentsSection = json["agents"] as? [String: Any] {
+            // Pick up gateway concurrency cap from agents.defaults.maxConcurrent.
+            // Used by the chat header's concurrent-task badge so the user can
+            // see how close they are to gateway queuing kicking in.
+            if let defaults = agentsSection["defaults"] as? [String: Any],
+               let max = defaults["maxConcurrent"] as? Int, max > 0 {
+                maxConcurrentTasks = max
+            } else {
+                maxConcurrentTasks = 4
+            }
+        }
 
         if let data = FileManager.default.contents(atPath: configPath),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1565,18 +1805,31 @@ class DashboardViewModel: ObservableObject {
     }
 
     private func updateMessage(msgId: UUID, content: String, status: ChatMessage.TaskStatus, agentId: String, agentEmoji: String?) {
+        let newMsg = ChatMessage(
+            role: .assistant, content: content,
+            agentId: agentId, agentEmoji: agentEmoji,
+            taskStatus: status, id: msgId
+        )
+        // Route to wherever this msgId currently lives. The task may have
+        // started in the (then-visible) active session and migrated to
+        // chatMessagesByInactiveSession when the user navigated away —
+        // stream events still need to find it.
         if let idx = chatMessagesByAgent[agentId]?.firstIndex(where: { $0.id == msgId }) {
             var messages = chatMessagesByAgent[agentId] ?? []
-            messages[idx] = ChatMessage(
-                role: .assistant, content: content,
-                agentId: agentId, agentEmoji: agentEmoji,
-                taskStatus: status, id: msgId
-            )
+            messages[idx] = newMsg
             chatMessagesByAgent[agentId] = messages
-            logChat("UPDATE_MSG: agent=\(agentId), contentLen=\(content.count), status=\(status), totalMsgs=\(messages.count)")
-        } else {
-            logChat("UPDATE_FAILED: agent=\(agentId), msgId=\(msgId.uuidString.prefix(8)) NOT FOUND!")
+            logChat("UPDATE_MSG (active): agent=\(agentId), contentLen=\(content.count), status=\(status), totalMsgs=\(messages.count)")
+            return
         }
+        if let sessionId = taskSessionMap[msgId],
+           let idx = chatMessagesByInactiveSession[sessionId]?.firstIndex(where: { $0.id == msgId }) {
+            var messages = chatMessagesByInactiveSession[sessionId] ?? []
+            messages[idx] = newMsg
+            chatMessagesByInactiveSession[sessionId] = messages
+            logChat("UPDATE_MSG (inactive): session=\(sessionId.uuidString.prefix(8)), contentLen=\(content.count), status=\(status), totalMsgs=\(messages.count)")
+            return
+        }
+        logChat("UPDATE_FAILED: agent=\(agentId), msgId=\(msgId.uuidString.prefix(8)) NOT FOUND in active or inactive!")
     }
 
     private func appendBackgroundNotification(agentId: String, agentEmoji: String?, completed: Bool, msgId: UUID) {
@@ -1693,8 +1946,7 @@ class DashboardViewModel: ObservableObject {
                         self.gatewayClient.unsubscribe(subscriberId: subscriberId)
                         let timeoutMsg = String(localized: "The task timed out and has been terminated. You can try again or switch to another agent.", bundle: LanguageManager.shared.localizedBundle)
                         await MainActor.run {
-                            if let idx = self.chatMessagesByAgent[currentAgentId]?.firstIndex(where: { $0.id == msgId }) {
-                                let msg = self.chatMessagesByAgent[currentAgentId]![idx]
+                            if let msg = self.findMessage(byId: msgId) {
                                 let content = msg.content.isEmpty
                                     ? timeoutMsg
                                     : msg.content + "\n\n---\n> ⚠️ " + timeoutMsg
@@ -1755,10 +2007,14 @@ class DashboardViewModel: ObservableObject {
                 let now = Date()
                 if now.timeIntervalSince(lastUpdateTime) >= updateThrottleInterval {
                     lastUpdateTime = now
-                    // Only update if not already in a terminal state
-                    if let idx = chatMessagesByAgent[currentAgentId]?.firstIndex(where: { $0.id == msgId }),
-                       chatMessagesByAgent[currentAgentId]![idx].taskStatus != .cancelled {
-                        updateMessage(msgId: msgId, content: accumulatedText, status: chatMessagesByAgent[currentAgentId]![idx].taskStatus, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
+                    // Only update if not already in a terminal state. The
+                    // placeholder may live in chatMessagesByAgent[agentId]
+                    // (session still visible) or in chatMessagesByInactiveSession
+                    // (user navigated to a different session mid-stream) —
+                    // findMessage handles both.
+                    if let current = findMessage(byId: msgId),
+                       current.taskStatus != .cancelled {
+                        updateMessage(msgId: msgId, content: accumulatedText, status: current.taskStatus, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
                     }
                 }
 
@@ -1800,8 +2056,8 @@ class DashboardViewModel: ObservableObject {
             case .aborted(let eventRunId, _):
                 guard eventRunId == runId else { continue }
                 receivedTerminalEvent = true
-                if let idx = chatMessagesByAgent[currentAgentId]?.firstIndex(where: { $0.id == msgId }),
-                   chatMessagesByAgent[currentAgentId]![idx].taskStatus != .cancelled {
+                if let current = findMessage(byId: msgId),
+                   current.taskStatus != .cancelled {
                     let cancelledLabel = String(localized: "Task cancelled.", bundle: LanguageManager.shared.localizedBundle)
                     let content = accumulatedText.isEmpty
                         ? cancelledLabel
@@ -1827,8 +2083,8 @@ class DashboardViewModel: ObservableObject {
         // Show whatever we have so far instead of leaving the message in a loading state.
         if !receivedTerminalEvent {
             chatLog.warning("chat stream ended WITHOUT terminal event: runId=\(runId), accumulatedLen=\(accumulatedText.count)")
-            if let idx = chatMessagesByAgent[currentAgentId]?.firstIndex(where: { $0.id == msgId }),
-               chatMessagesByAgent[currentAgentId]![idx].taskStatus != .completed && chatMessagesByAgent[currentAgentId]![idx].taskStatus != .cancelled && chatMessagesByAgent[currentAgentId]![idx].taskStatus != .timedOut {
+            if let current = findMessage(byId: msgId),
+               current.taskStatus != .completed && current.taskStatus != .cancelled && current.taskStatus != .timedOut {
                 let disconnectNote = String(localized: "Connection was interrupted. The response may be incomplete.", bundle: LanguageManager.shared.localizedBundle)
                 let content = accumulatedText.isEmpty
                     ? disconnectNote
@@ -1886,23 +2142,18 @@ class DashboardViewModel: ObservableObject {
         gatewayClient.unsubscribe(subscriberId: msgId.uuidString)
         activeChatRuns.removeValue(forKey: msgId)
 
-        // 3. Update message status to cancelled (search all agents)
-        for agentId in chatMessagesByAgent.keys {
-            if let idx = chatMessagesByAgent[agentId]?.firstIndex(where: { $0.id == msgId }) {
-                let msg = chatMessagesByAgent[agentId]![idx]
-                let cancelledLabel = String(localized: "Task cancelled by user.", bundle: LanguageManager.shared.localizedBundle)
-                let content = msg.content.isEmpty
-                    ? cancelledLabel
-                    : msg.content + "\n\n---\n> " + cancelledLabel
-                var messages = chatMessagesByAgent[agentId]!
-                messages[idx] = ChatMessage(
-                    role: .assistant, content: content,
-                    agentId: msg.agentId, agentEmoji: msg.agentEmoji,
-                    taskStatus: .cancelled, id: msgId
-                )
-                chatMessagesByAgent[agentId] = messages
-                break
-            }
+        // 3. Update message status to cancelled — message may live in
+        // chatMessagesByAgent (visible session) or chatMessagesByInactiveSession
+        // (background-streaming session). updateMessage handles both.
+        if let msg = findMessage(byId: msgId) {
+            let cancelledLabel = String(localized: "Task cancelled by user.", bundle: LanguageManager.shared.localizedBundle)
+            let content = msg.content.isEmpty
+                ? cancelledLabel
+                : msg.content + "\n\n---\n> " + cancelledLabel
+            updateMessage(msgId: msgId, content: content,
+                          status: .cancelled,
+                          agentId: msg.agentId ?? taskAgentMap[msgId] ?? selectedAgentId,
+                          agentEmoji: msg.agentEmoji)
         }
 
         // 4. Cleanup tracking

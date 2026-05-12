@@ -1332,23 +1332,43 @@ class SubAgentsViewModel: ObservableObject {
 
     static func patchAgentModel(configPath: String, agentId: String, model: String) {
         guard let data = FileManager.default.contents(atPath: configPath),
-              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var agents = root["agents"] as? [String: Any],
-              var list = agents["list"] as? [[String: Any]] else {
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             NSLog("[SubAgents] patchAgentModel: failed to read config")
             return
         }
 
-        guard let idx = list.firstIndex(where: { $0["id"] as? String == agentId }) else {
-            NSLog("[SubAgents] patchAgentModel: agent %@ not found in list", agentId)
-            return
+        // Initialize agents/list if either is missing — happens for fresh
+        // installs where the user has only the implicit main workspace.
+        var agents = root["agents"] as? [String: Any] ?? [:]
+        var list = agents["list"] as? [[String: Any]] ?? []
+
+        if let idx = list.firstIndex(where: { $0["id"] as? String == agentId }) {
+            // Existing agent — patch in place
+            if model.isEmpty {
+                list[idx].removeValue(forKey: "model")
+            } else {
+                list[idx]["model"] = model
+            }
+        } else {
+            // Agent not in agents.list yet. This is normal for the implicit
+            // "main" agent (its identity lives in ~/.openclaw/workspace/
+            // and openclaw.json never gets a `main` entry until someone
+            // sets a per-agent override). Without this branch the model
+            // change is a silent no-op — `loadAvailableAgents` re-reads
+            // disk after the patch and reverts the in-memory state,
+            // leaving the top header out of sync with the side panel.
+            //
+            // If the user is clearing the override (model == ""), we
+            // don't bother adding a stub entry — inheriting is already
+            // the default for agents not present in the list.
+            guard !model.isEmpty else {
+                NSLog("[SubAgents] patchAgentModel: agent %@ not in list and model is empty — nothing to do (already inheriting)", agentId)
+                return
+            }
+            list.append(["id": agentId, "model": model])
+            NSLog("[SubAgents] patchAgentModel: agent %@ added to list with model %@", agentId, model)
         }
 
-        if model.isEmpty {
-            list[idx].removeValue(forKey: "model")
-        } else {
-            list[idx]["model"] = model
-        }
         agents["list"] = list
         root["agents"] = agents
 

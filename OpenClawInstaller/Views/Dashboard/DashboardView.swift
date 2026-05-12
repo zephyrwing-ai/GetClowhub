@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import AVKit
 import Combine
 import Quartz
+import MarkdownUI
 
 struct DashboardView: View {
     @ObservedObject var viewModel: DashboardViewModel
@@ -427,7 +428,9 @@ struct SidebarView: View {
                     viewModel.switchSession(to: meta.id)
                     selectedTab = .chat
                 } label: {
-                    ChatSessionRow(meta: meta, isActive: activeId == meta.id)
+                    ChatSessionRow(meta: meta,
+                                   isActive: activeId == meta.id,
+                                   isExecuting: viewModel.hasForegroundTask(inSession: meta.id))
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
@@ -630,7 +633,9 @@ struct SidebarView: View {
                             viewModel.switchSession(to: meta.id)
                             selectedTab = .chat
                         } label: {
-                            ChatSessionRow(meta: meta, isActive: activeId == meta.id)
+                            ChatSessionRow(meta: meta,
+                                           isActive: activeId == meta.id,
+                                           isExecuting: viewModel.hasForegroundTask(inSession: meta.id))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -1452,6 +1457,24 @@ struct ChatView: View {
                         .frame(height: 1)
                         .id("chatTop")
 
+                    // Loading placeholder — shown while ChatSessionStore
+                    // is decoding the session JSON off the main thread.
+                    // The chatMessages array is empty during this window,
+                    // so without this the view would flash blank.
+                    if let sid = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId],
+                       viewModel.loadingSessionIds.contains(sid),
+                       viewModel.chatMessages.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("加载会话…")
+                                .foregroundColor(.secondary)
+                                .font(.callout)
+                        }
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity)
+                    }
+
                     ForEach(viewModel.chatMessages, id: \.id) { message in
                         if !(message.role == .assistant && message.content.isEmpty && message.attachments.isEmpty) {
                             if message.scrollTargetId != nil {
@@ -1813,40 +1836,17 @@ struct ChatView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                // Wrapper VStack — the parent is a ZStack(alignment: .bottom),
-                // so without this wrapper the attach button and the input
-                // card would both bottom-align inside the ZStack and visually
-                // overlap. Wrapping them in a VStack puts the attach button
-                // above the input card as a single bottom-aligned unit.
-                VStack(spacing: 0) {
-
-                // Attach button — lives OUTSIDE the input card, just above
-                // it. Triggers the file picker; resulting file chips still
-                // render INSIDE the input card. Clear/Reset button was
-                // removed entirely — users can wipe a thread via /reset or
-                // the sidebar's session menu.
-                HStack(spacing: 0) {
-                    Button(action: { openFilePicker() }) {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.plain)
-                    .help(String(localized: "Attach File", bundle: LanguageManager.shared.localizedBundle))
-                    .disabled(isInputLocked)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 2)
-
-                // Input card — Claude-style: just the editor + a small inline
-                // send button at the bottom-right. No bottom toolbar row.
+                // Input card — Claude-style layout:
                 //   ┌────────────────────────────────┐
-                //   │ [attachment chips, if any]     │
-                //   │ TextEditor              ↑      │
+                //   │ [attachment chips, if any]    │
+                //   │ TextEditor (full width)       │
+                //   │ 📎 attach          ↑ send     │  ← bottom toolbar
                 //   └────────────────────────────────┘
+                // Attach + send both sit at the bottom of the card (one
+                // bordered unit). This matches Claude's input pattern and
+                // unifies the affordances — previously attach lived
+                // outside-above and send was overlaid on the editor; users
+                // found that confusing.
                 VStack(spacing: 0) {
                     // Attachment preview bar (top)
                     if !attachedFiles.isEmpty {
@@ -1863,45 +1863,56 @@ struct ChatView: View {
                         }
                     }
 
-                    // TextEditor — primary input. Send button is overlaid in
-                    // the bottom-right corner; text gets enough trailing
-                    // padding to never run under it (button ~26pt + 12pt
-                    // breathing room = 38pt clearance).
+                    // TextEditor — full width, no overlay button. Goes the
+                    // full available width because attach + send are below
+                    // in their own row.
                     ZStack(alignment: .topLeading) {
                         // Placeholder — hidden when focused
                         if inputText.isEmpty && !isInputFocused {
                             Text("Ask anything...")
                                 .font(.subheadline)
                                 .foregroundColor(Color(NSColor.placeholderTextColor).opacity(0.6))
-                                .padding(.leading, 12)
-                                .padding(.trailing, 44)
+                                .padding(.horizontal, 12)
                                 .padding(.vertical, 10)
                                 .allowsHitTesting(false)
                                 .transition(.opacity)
                         }
 
-                        // Hidden text for height calculation — matches the
-                        // visible TextEditor padding so the ZStack sizes
-                        // to the rendered text.
+                        // Hidden text for height calculation
                         Text(inputText.isEmpty ? " " : inputText)
                             .font(.body)
-                            .padding(.leading, 12)
-                            .padding(.trailing, 44)
+                            .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .opacity(0)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         TextEditor(text: $inputText)
                             .font(.body)
-                            .padding(.leading, 6)
-                            .padding(.trailing, 38)
+                            .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .scrollContentBackground(.hidden)
                             .disabled(isInputLocked)
                     }
                     .frame(minHeight: 44, maxHeight: 200)
                     .fixedSize(horizontal: false, vertical: true)
-                    .overlay(alignment: .bottomTrailing) {
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .padding(.bottom, 2)
+
+                    // Bottom toolbar: attach (left), send (right).
+                    HStack(spacing: 6) {
+                        Button(action: { openFilePicker() }) {
+                            Image(systemName: "paperclip")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                                .frame(width: 26, height: 26)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Attach File", bundle: LanguageManager.shared.localizedBundle))
+                        .disabled(isInputLocked)
+
+                        Spacer()
+
                         Button(action: { sendMessage() }) {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 13, weight: .semibold))
@@ -1917,11 +1928,10 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                         .disabled(!canSend)
                         .animation(.easeInOut(duration: 0.15), value: canSend)
-                        .padding(.trailing, 8)
-                        .padding(.bottom, 8)
                     }
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
+                    .padding(.top, 2)
+                    .padding(.bottom, 8)
                 }
                 .background(Color(NSColor.windowBackgroundColor))
                 .cornerRadius(16)
@@ -1946,7 +1956,6 @@ struct ChatView: View {
                     }
                     return true
                 }
-                }   // end wrapper VStack (attach button + input card)
             }
             .animation(.easeInOut(duration: 0.15), value: showSlashPanel)
             .animation(.easeInOut(duration: 0.15), value: showSkillsPanel)
@@ -2299,12 +2308,22 @@ struct ChatView: View {
     private var canSend: Bool {
         let hasText = !inputText.trimmingCharacters(in: .whitespaces).isEmpty
         let hasFiles = !attachedFiles.isEmpty
-        return (hasText || hasFiles) && !viewModel.isCurrentAgentSending
+        // Lock send only when *this session* is in flight — not when
+        // another session of the same agent is running in the background.
+        // `viewModel.isSendingMessage` is the session-scoped predicate
+        // (recomputed by `recomputeIsSendingMessage` whenever session,
+        // agent, or task set changes); `isCurrentAgentSending` is
+        // agent-scoped and used by the sidebar to badge the agent row.
+        return (hasText || hasFiles) && !viewModel.isSendingMessage
     }
 
-    /// Whether the input area (text + attachment) should be locked
+    /// Whether the input area (text + attachment) should be locked.
+    /// Session-scoped — see comment in `canSend`. Switching to a
+    /// different session of the same agent unlocks the input even if
+    /// the previous session has a task still streaming in the
+    /// inactive-sessions map.
     private var isInputLocked: Bool {
-        viewModel.isCurrentAgentSending
+        viewModel.isSendingMessage
     }
 
     private func sendMessage() {
@@ -2841,15 +2860,30 @@ struct ThinkingIndicator: View {
 
     private func startTimer() {
         stopTimer()
-        elapsedSeconds = 0
+        // Derive elapsed from message.timestamp (set when the placeholder
+        // was created in sendChatMessage) instead of counting up from 0.
+        // Without this, switching away and back to the session re-runs
+        // .onAppear → startTimer → reset to 0 even though the actual
+        // gateway-side run is still progressing, so "Thinking 23s"
+        // became "Thinking 0s" every time the user clicked back.
+        recomputeElapsed()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak viewModel] _ in
             DispatchQueue.main.async { [weak viewModel] in
-                elapsedSeconds += 1
+                recomputeElapsed()
                 // Auto-move to background at 120 seconds
                 if elapsedSeconds >= 120, let vm = viewModel, vm.foregroundTaskIds.contains(message.id) {
                     vm.moveTaskToBackground(message.id)
                 }
             }
+        }
+    }
+
+    /// Set `elapsedSeconds` from the absolute task start time
+    /// (`message.timestamp`) — wall-clock derived, so it survives view
+    /// recreation across session switches.
+    private func recomputeElapsed() {
+        if let start = message.timestamp {
+            elapsedSeconds = max(0, Int(Date().timeIntervalSince(start)))
         }
     }
 
@@ -2862,6 +2896,78 @@ struct ThinkingIndicator: View {
         let m = seconds / 60
         let s = seconds % 60
         return m > 0 ? String(format: "%d:%02d", m, s) : "\(s)s"
+    }
+}
+
+// MARK: - Model Picker Row (right-sidebar SessionDetailsPanel)
+
+/// Extracted into its own view so we can use the working
+/// `@State + .onChange(of:)` pattern (mirrors `SubAgentsTabView`'s model
+/// picker, which actually works). The previous inline `Binding(get:set:)`
+/// in `SessionDetailsPanel.modelRow` looked correct but the picker's
+/// selection often failed to fire `set:` in SwiftUI on macOS — net
+/// result: dropdown opens, user picks an option, nothing happens.
+///
+/// Source-of-truth flow:
+///   - external: `viewModel.availableAgents[i].model` (raw, "" means inherit)
+///   - `@State selection`: kept in sync with external via `.onAppear` and
+///     `.onChange(of: currentRawModel)`
+///   - user picks → `.onChange(of: selection)` fires →
+///     `viewModel.updateAgentModel(model:)` writes to disk → reload →
+///     `currentRawModel` flips → external observer syncs `selection`.
+private struct ModelPickerRow: View {
+    @ObservedObject var viewModel: DashboardViewModel
+    let currentRawModel: String
+    let resolvedDefaultModel: String
+
+    @State private var selection: String = ""
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "cube.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.accentColor)
+            Picker("", selection: $selection) {
+                if resolvedDefaultModel.isEmpty {
+                    Text("Default (inherit)").tag("")
+                } else {
+                    Text("Default (\(resolvedDefaultModel))").tag("")
+                }
+                // Always include the currently-set model so the Picker
+                // can render the active selection even if the available
+                // list hasn't loaded yet or doesn't contain that id.
+                if !currentRawModel.isEmpty
+                   && !viewModel.availableModelsForSettings.contains(where: { $0.id == currentRawModel }) {
+                    Text(SessionDetailsPanel.stripProviderPrefix(currentRawModel))
+                        .tag(currentRawModel)
+                }
+                ForEach(viewModel.availableModelsForSettings) { m in
+                    Text(SessionDetailsPanel.stripProviderPrefix(m.name)).tag(m.id)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .onAppear { selection = currentRawModel }
+        .onChange(of: currentRawModel) { newRaw in
+            // External truth changed (agent switched, or another panel
+            // wrote a different model). Sync our local @State.
+            if selection != newRaw {
+                selection = newRaw
+            }
+        }
+        .onChange(of: selection) { newValue in
+            // User picked something. Only write through when it differs
+            // from the external raw — same guard as before, but now the
+            // .onChange contract guarantees this fires even with
+            // identity-shaped equality, unlike the manual Binding pattern.
+            if newValue != currentRawModel {
+                viewModel.updateAgentModel(model: newValue)
+            }
+        }
     }
 }
 
@@ -2966,12 +3072,32 @@ struct ChatBubble: View {
                 if !message.content.isEmpty {
                     ZStack(alignment: .topTrailing) {
                         if message.role == .assistant {
-                            // Always use SelectableMarkdownView to show markdown format
-                            // Throttling is applied inside SelectableMarkdownView to prevent CPU 100%
-                            SelectableMarkdownView(content: message.content)
-                                .padding(10)
-                                .background(backgroundColor)
-                                .cornerRadius(12)
+                            // Terminal-state messages (the bulk of a session
+                            // on first render) use the SwiftUI-native
+                            // MarkdownUI renderer — synchronous, no WKWebView
+                            // spin-up, no per-bubble JS round-trip for height
+                            // measurement. Historical content is the common
+                            // case so this is what dominates session-open
+                            // latency.
+                            //
+                            // Still-streaming messages (.loading / .background)
+                            // stick with SelectableMarkdownView (WKWebView)
+                            // because its internal 500ms throttle keeps CPU
+                            // sane during rapid delta updates — re-parsing
+                            // markdown on every token via MarkdownUI would
+                            // saturate the main thread.
+                            if message.taskStatus == .loading || message.taskStatus == .background {
+                                SelectableMarkdownView(content: message.content)
+                                    .padding(10)
+                                    .background(backgroundColor)
+                                    .cornerRadius(12)
+                            } else {
+                                Markdown(message.content)
+                                    .textSelection(.enabled)
+                                    .padding(10)
+                                    .background(backgroundColor)
+                                    .cornerRadius(12)
+                            }
                         } else {
                             Text(message.content)
                                 .padding(10)
@@ -3650,7 +3776,23 @@ struct SelectableMarkdownView: View {
         if let cached = markdownHeightCache.object(forKey: heightKey) {
             _height = State(initialValue: CGFloat(cached.doubleValue))
         } else {
-            _height = State(initialValue: 22)
+            // Estimate initial height from content length so the frame is
+            // roughly the right size before WKWebView reports its measured
+            // height. Without this estimate, the frame is locked at 22pt
+            // (one line) until the WebView's JS callback fires — and on
+            // macOS 26 we've observed that callback can stall for several
+            // seconds (or never arrive), leaving content visibly clipped
+            // to a sliver and the bubble appearing empty.
+            //
+            // Heuristic: ~60 chars per visual line, ~18pt line height,
+            // 20pt total padding. Newlines count for an extra line each.
+            // Capped at 600pt so we don't reserve a huge frame for a
+            // message that turns out to be short.
+            let lineCount = max(1, content.split(separator: "\n").count)
+            let estimatedLines = max(Double(lineCount),
+                                     ceil(Double(content.count) / 60.0))
+            let estimatedHeight = min(600.0, estimatedLines * 18.0 + 20.0)
+            _height = State(initialValue: CGFloat(max(22.0, estimatedHeight)))
         }
         // Initialize with actual content so _MarkdownWebView can load cached HTML in makeNSView
         _throttledContent = State(initialValue: content)
@@ -6843,9 +6985,15 @@ struct SessionDetailsPanel: View {
     // MARK: - Sub-blocks
 
     private var agentCard: some View {
-        // Flat layout per redesign — no rounded background, just emoji
-        // avatar + name + description sitting directly on the panel
-        // surface. The pencil triggers AgentSettingsPanel.
+        // Flat layout — avatar + name + pencil on the left, agent Picker
+        // pushed to the right edge. Two distinct entries:
+        //   - **Picker** (right side): SWITCH to a different agent.
+        //     Writes `viewModel.selectedAgentId`; SwiftUI auto-propagates
+        //     the change to the top header read-out and the left-sidebar
+        //     agent list.
+        //   - **Pencil** (next to name): EDIT the current agent's
+        //     identity / soul / model (opens AgentSettingsPanel as a
+        //     trailing overlay).
         let agent = viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
         return HStack(spacing: 10) {
             ZStack {
@@ -6884,54 +7032,82 @@ struct SessionDetailsPanel: View {
                         .foregroundColor(.secondary)
                 }
             }
+
             Spacer()
+
+            // Agent switch picker — right-aligned, distinct visual unit.
+            // Uses a Menu so the trigger renders the current agent's
+            // name with a chevron, matching the mock-up's bordered
+            // popup-button look.
+            Menu {
+                ForEach(viewModel.availableAgents) { a in
+                    Button {
+                        if viewModel.selectedAgentId != a.id {
+                            viewModel.selectedAgentId = a.id
+                        }
+                    } label: {
+                        if a.id == viewModel.selectedAgentId {
+                            Label("\(a.emoji) \(a.name)", systemImage: "checkmark")
+                        } else {
+                            Text("\(a.emoji) \(a.name)")
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(agent?.name ?? viewModel.selectedAgentId)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
     }
 
     /// Resolves the model that should display for the *current* agent.
     /// Falls back to the global default when an agent has no per-agent model
     /// override — that mirrors the runtime behavior of openclaw.
+    /// The **raw** per-agent model override. Empty string means "inherit
+    /// the global default" — same semantics as `AgentSettingsPanel`'s
+    /// model picker. Was previously returning the RESOLVED model (the
+    /// global default substituted in when the agent had no override),
+    /// which caused two bugs:
+    ///   1. Inconsistency: the sidebar showed e.g. "deepseek-v4-pro"
+    ///      while the agent settings panel showed "Default (inherit)"
+    ///      for the same agent.
+    ///   2. Picker `set:` saw `newValue == currentAgentModel` whenever
+    ///      the user picked the same model that was being inherited,
+    ///      so the binding was silently a no-op — "无法切换".
     private var currentAgentModel: String {
-        let agentModel = viewModel.availableAgents
+        viewModel.availableAgents
             .first { $0.id == viewModel.selectedAgentId }?
             .model ?? ""
-        if !agentModel.isEmpty { return agentModel }
-        return viewModel.modelOverview.defaultModel
+    }
+
+    /// Display label for the resolved default (shown in parentheses after
+    /// "Default (inherit)" so the user can see WHAT they're inheriting).
+    private var resolvedDefaultModel: String {
+        let defaultModel = viewModel.modelOverview.defaultModel
+        return defaultModel.isEmpty || defaultModel == "-"
+            ? ""
+            : Self.stripProviderPrefix(defaultModel)
     }
 
     private var modelRow: some View {
-        // Use a native Picker — gives a built-in popup-button affordance
-        // (chevron + bordered control) so users instantly recognize the row
-        // as selectable. Setter routes through updateAgentModel so the
-        // change is persisted to openclaw.json + agents reloaded.
-        HStack(spacing: 6) {
-            Image(systemName: "cube.fill")
-                .font(.system(size: 12))
-                .foregroundColor(.accentColor)
-            Picker("", selection: Binding(
-                get: { currentAgentModel },
-                set: { newValue in
-                    if newValue != currentAgentModel {
-                        viewModel.updateAgentModel(model: newValue)
-                    }
-                }
-            )) {
-                // Always include current selection so the Picker can render
-                // even when the active model isn't in the available list yet.
-                if !viewModel.availableModelsForSettings.contains(where: { $0.id == currentAgentModel }) {
-                    Text(Self.stripProviderPrefix(currentAgentModel.isEmpty ? "—" : currentAgentModel))
-                        .tag(currentAgentModel)
-                }
-                ForEach(viewModel.availableModelsForSettings) { m in
-                    Text(Self.stripProviderPrefix(m.name)).tag(m.id)
-                }
-            }
-            .labelsHidden()
-            .controlSize(.small)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        ModelPickerRow(viewModel: viewModel,
+                       currentRawModel: currentAgentModel,
+                       resolvedDefaultModel: resolvedDefaultModel)
     }
 
     /// Tool Status — sourced from real `openclaw skills list` data via
@@ -7172,22 +7348,31 @@ struct ChatHeaderBar: View {
 
             Spacer()
 
-            // Agent picker (was inline in input area; moved here per design)
+            // Agent — read-only display.
+            // The canonical edit entry-point is the pencil in the right-side
+            // SessionDetailsPanel (Current Agent card). Putting a second
+            // editable picker up here was confusing — users would change it
+            // in one spot, then look puzzled when the sidebar didn't update
+            // until SwiftUI got around to re-publishing. Now the header
+            // just mirrors `selectedAgentId` and the side panel owns
+            // switching.
             HStack(spacing: 6) {
                 Text("Agent:")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Picker("", selection: $viewModel.selectedAgentId) {
-                    ForEach(viewModel.availableAgents) { agent in
-                        Text("\(agent.emoji) \(agent.name)").tag(agent.id)
-                    }
+                if let agent = viewModel.availableAgents.first(where: { $0.id == viewModel.selectedAgentId }) {
+                    Text("\(agent.emoji) \(agent.name)")
+                        .font(.caption)
+                        .lineLimit(1)
+                } else {
+                    Text(viewModel.selectedAgentId)
+                        .font(.caption)
+                        .lineLimit(1)
                 }
-                .labelsHidden()
-                .controlSize(.small)
-                .fixedSize()
             }
 
-            // Model display (read-only here; full editor is in Configuration tab)
+            // Model — read-only display (same rationale as Agent above; the
+            // right-side panel owns the picker).
             HStack(spacing: 6) {
                 Text("Model:")
                     .font(.caption)
@@ -7195,6 +7380,34 @@ struct ChatHeaderBar: View {
                 Text(modelDisplay)
                     .font(.caption)
                     .lineLimit(1)
+            }
+
+            // Concurrent-task counter — informational only. Visible when
+            // anything is in flight so the user can gauge how close they
+            // are to the gateway's `Main` lane concurrency cap (default 4).
+            //
+            // At cap: the badge turns orange and the help tooltip
+            // explains that new sends will queue gateway-side until a
+            // running task completes. We don't block sends client-side —
+            // the gateway already handles queueing correctly.
+            if viewModel.concurrentForegroundCount > 0 {
+                let atCap = viewModel.concurrentForegroundCount >= viewModel.maxConcurrentTasks
+                HStack(spacing: 4) {
+                    Image(systemName: atCap ? "exclamationmark.circle.fill" : "circle.dotted")
+                        .font(.system(size: 10))
+                    Text("\(viewModel.concurrentForegroundCount)/\(viewModel.maxConcurrentTasks)")
+                        .font(.caption.monospacedDigit())
+                }
+                .foregroundColor(atCap ? .orange : .accentColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill((atCap ? Color.orange : Color.accentColor).opacity(0.10))
+                )
+                .help(atCap
+                      ? "Concurrent task limit reached — new sends will queue at the gateway until a running task finishes."
+                      : "\(viewModel.concurrentForegroundCount) of \(viewModel.maxConcurrentTasks) concurrent tasks running.")
             }
 
             // Service status pill
@@ -7281,16 +7494,23 @@ struct ChatHeaderBar: View {
         return meta.title
     }
 
-    /// Best-effort model name for display. Falls back gracefully when the
-    /// model overview hasn't loaded yet (cold start). Strips the provider
-    /// prefix ("getclawhub/") so the chat header reads cleanly.
+    /// Best-effort model name for display in the top header. Shows the
+    /// *resolved* model the current agent is actually running with —
+    /// agent's own model override if set, otherwise the global default.
+    /// Strips provider prefix ("getclawhub/") so the chat header reads
+    /// cleanly.
     private var modelDisplay: String {
-        let m = viewModel.modelOverview.defaultModel
-        if m.isEmpty { return "—" }
-        if let slash = m.lastIndex(of: "/") {
-            return String(m[m.index(after: slash)...])
+        let agentModel = viewModel.availableAgents
+            .first { $0.id == viewModel.selectedAgentId }?
+            .model ?? ""
+        let resolved = !agentModel.isEmpty
+            ? agentModel
+            : viewModel.modelOverview.defaultModel
+        if resolved.isEmpty { return "—" }
+        if let slash = resolved.lastIndex(of: "/") {
+            return String(resolved[resolved.index(after: slash)...])
         }
-        return m
+        return resolved
     }
 }
 
@@ -7409,15 +7629,36 @@ struct TasksLogsTabView: View {
 struct ChatSessionRow: View {
     let meta: ChatSessionMetadata
     let isActive: Bool
+    /// True when a foreground task is currently streaming inside this
+    /// session (whether or not the session is the visible one). Replaces
+    /// the default bubble/pin icon with a small accent-colored dot so
+    /// the user can see at a glance which sessions are "working" — same
+    /// affordance Claude Code uses for its task list.
+    let isExecuting: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            // Use bubble icon to thematically match the "Chat" Label above,
-            // but subtler color so it doesn't compete for attention.
-            Image(systemName: meta.isPinned ? "pin.fill" : "bubble.left")
-                .font(.system(size: 11))
-                .foregroundColor(meta.isPinned ? .orange : .secondary)
-                .frame(width: 14, alignment: .center)
+            // Icon precedence: running > pinned > default bubble.
+            // The running indicator uses an accent-orange filled dot
+            // (slightly smaller than the other glyphs) so it reads as
+            // a status light, not a topic icon.
+            Group {
+                if isExecuting {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange)
+                        .accessibilityLabel("Task running")
+                } else if meta.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                } else {
+                    Image(systemName: "bubble.left")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(width: 14, alignment: .center)
 
             Text(meta.title.isEmpty ? "新会话" : meta.title)
                 .lineLimit(1)
