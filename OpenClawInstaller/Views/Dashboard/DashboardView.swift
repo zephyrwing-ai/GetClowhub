@@ -1813,54 +1813,19 @@ struct ChatView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                // Input card
+                // Input card — Claude-style layout:
+                //   ┌────────────────────────────────┐
+                //   │ [attachment chips, if any]    │
+                //   │ TextEditor (full width)       │
+                //   ├────────────────────────────────┤
+                //   │ 📎 attach  🗑 Clear     ↑ send │
+                //   └────────────────────────────────┘
+                // The Clear button used to be labelled "Reset" in the
+                // top-right toolbar; renamed to "Clear" + tinted red and
+                // moved to the bottom toolbar so the input feels less
+                // cluttered and matches Claude's input affordance pattern.
                 VStack(spacing: 0) {
-                    // Toolbar row: secondary actions (reset, attach). The
-                    // 聊天/执行任务/代码模式 picker that used to sit here is
-                    // hidden until the modes are actually wired into
-                    // sendMessage — see ChatInputModePicker definition.
-                    HStack(spacing: 8) {
-                        Spacer()
-
-                        // Reset = clear in-memory thread + reset Agent's
-                        // backend session context. NOT the same as creating
-                        // a new sidebar session (sidebar's "+ New Session"
-                        // button does that). The previous label was "+ New"
-                        // with a plus icon — that was misleading, so it now
-                        // reads "Reset" and sits with the other secondary
-                        // actions on the right.
-                        Button(action: { viewModel.clearChat() }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.counterclockwise")
-                                    .font(.system(size: 12))
-                                Text("Reset")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color(NSColor.controlBackgroundColor))
-                            .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                        .help(String(localized: "Clear messages and reset agent context", bundle: LanguageManager.shared.localizedBundle))
-                        .disabled(isInputLocked)
-
-                        Button(action: { openFilePicker() }) {
-                            Image(systemName: "paperclip")
-                                .font(.system(size: 14))
-                                .foregroundColor(.secondary)
-                                .padding(4)
-                        }
-                        .buttonStyle(.plain)
-                        .help(String(localized: "Attach File", bundle: LanguageManager.shared.localizedBundle))
-                        .disabled(isInputLocked)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 6)
-
-                    // Attachment preview bar
+                    // Attachment preview bar (top)
                     if !attachedFiles.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
@@ -1875,40 +1840,75 @@ struct ChatView: View {
                         }
                     }
 
-                    // Input row: text editor + send button
-                    HStack(alignment: .bottom, spacing: 8) {
-                        ZStack(alignment: .topLeading) {
-                            // Placeholder — hidden when focused
-                            if inputText.isEmpty && !isInputFocused {
-                                Text("Ask anything...")
-                                    .font(.subheadline)
-                                    .foregroundColor(Color(NSColor.placeholderTextColor).opacity(0.6))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 10)
-                                    .allowsHitTesting(false)
-                                    .transition(.opacity)
-                            }
-
-                            // Hidden text for height calculation
-                            Text(inputText.isEmpty ? " " : inputText)
-                                .font(.body)
+                    // TextEditor — primary input, takes full width.
+                    ZStack(alignment: .topLeading) {
+                        // Placeholder — hidden when focused
+                        if inputText.isEmpty && !isInputFocused {
+                            Text("Ask anything...")
+                                .font(.subheadline)
+                                .foregroundColor(Color(NSColor.placeholderTextColor).opacity(0.6))
                                 .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .opacity(0)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                            TextEditor(text: $inputText)
-                                .font(.body)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .scrollContentBackground(.hidden)
-                                .disabled(isInputLocked)
+                                .padding(.vertical, 10)
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
                         }
-                        .frame(minHeight: 36, maxHeight: 120)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .cornerRadius(12)
 
+                        // Hidden text for height calculation
+                        Text(inputText.isEmpty ? " " : inputText)
+                            .font(.body)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .opacity(0)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        TextEditor(text: $inputText)
+                            .font(.body)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .scrollContentBackground(.hidden)
+                            .disabled(isInputLocked)
+                    }
+                    .frame(minHeight: 44, maxHeight: 200)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 6)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+
+                    // Bottom toolbar: attach + clear on the left, send on the right.
+                    HStack(spacing: 8) {
+                        // Attach
+                        Button(action: { openFilePicker() }) {
+                            Image(systemName: "paperclip")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                                .padding(6)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Attach File", bundle: LanguageManager.shared.localizedBundle))
+                        .disabled(isInputLocked)
+
+                        // Clear — destructive action, red tint to telegraph that.
+                        // clearChat() wipes the in-memory thread + resets the
+                        // Agent's backend session context. NOT the same as
+                        // deleting a sidebar session.
+                        Button(action: { viewModel.clearChat() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 12))
+                                Text("Clear")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Clear messages and reset agent context", bundle: LanguageManager.shared.localizedBundle))
+                        .disabled(isInputLocked)
+
+                        Spacer()
+
+                        // Send
                         Button(action: { sendMessage() }) {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 28))
@@ -1917,10 +1917,10 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                         .disabled(!canSend)
                         .animation(.easeInOut(duration: 0.15), value: canSend)
-                        .padding(.bottom, 4)
                     }
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
+                    .padding(.top, 4)
+                    .padding(.bottom, 10)
                 }
                 .background(Color(NSColor.windowBackgroundColor))
                 .cornerRadius(16)
