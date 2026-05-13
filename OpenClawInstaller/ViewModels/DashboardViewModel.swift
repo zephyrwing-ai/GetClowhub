@@ -2394,13 +2394,18 @@ class DashboardViewModel: ObservableObject {
             agentEmoji: currentAgentEmoji
         )
 
-        // Inactivity timeout: only triggers when the WebSocket connection itself goes silent.
-        // The gateway does NOT currently emit periodic tick/heartbeat events — `lastMessageReceivedAt`
-        // is updated by any inbound message (chat deltas, responses, etc.), so during a long
-        // tool-execution phase with no chat output the timer effectively measures "any traffic at all
-        // since send". Liveness of the socket itself is now guarded by `GatewayClient.startHeartbeat()`
-        // (30s WS-protocol ping with pong-timeout reconnect); this timer is the higher-level safety
-        // net for "client never heard back about this run after N minutes".
+        // Abandonment safety net: only triggers when NO inbound traffic at all for the
+        // entire `inactivityLimit` window. Modeled after Claude's API/SSE behavior — we
+        // never want to declare a task failed purely because deltas came infrequently
+        // (deep-thinking + long tools can be naturally silent for many minutes). The
+        // 30s client heartbeat already proves WS liveness independently; this timer is
+        // pure defense-in-depth for genuinely abandoned runs.
+        //
+        // Claude-style "prefer resume over fail": before marking `.timedOut`, attempt
+        // a `chat.history` fetch first. If the gateway has more content than our
+        // placeholder, the run actually completed gateway-side and we just missed the
+        // final event (possible after long lid-closed sleep, dropped reconnect race,
+        // etc.). Recover cleanly to `.completed` instead of falsely marking failed.
         let inactivityLimit: TimeInterval = inactivityTimeoutSeconds  // user-tunable, default 60 min
         let timeoutTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -2410,16 +2415,29 @@ class DashboardViewModel: ObservableObject {
                 // `inactivityLimit` means we're not getting anything (including ack/delta) from gateway.
                 let elapsed = Date().timeIntervalSince(self.gatewayClient.lastMessageReceivedAt)
                 if elapsed >= inactivityLimit {
-                    // No WebSocket messages at all for inactivityLimit — connection is dead
                     if self.activeChatRuns[msgId] != nil {
+                        // Step 1: try history recovery before declaring failure.
+                        // 10s budget (matches GatewayClient.fetchLastAssistantMessage's own timeout).
+                        let recovered = await self.gatewayClient.fetchLastAssistantMessage(sessionKey: sessionKey)
                         self.gatewayClient.unsubscribe(subscriberId: subscriberId)
-                        let timeoutMsg = String(localized: "The task timed out and has been terminated. You can try again or switch to another agent.", bundle: LanguageManager.shared.localizedBundle)
+
                         await MainActor.run {
-                            if let msg = self.findMessage(byId: msgId) {
-                                let content = msg.content.isEmpty
-                                    ? timeoutMsg
-                                    : msg.content + "\n\n---\n> ⚠️ " + timeoutMsg
-                                self.updateMessage(msgId: msgId, content: content, status: .timedOut, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
+                            // Snapshot current placeholder length so we only adopt history
+                            // if it strictly extends what we already have. Otherwise (history
+                            // empty / shorter / unchanged) fall to the timedOut path.
+                            let currentLen = self.findMessage(byId: msgId)?.content.count ?? 0
+                            if let text = recovered, text.count > currentLen, !text.isEmpty {
+                                chatLog.info("inactivity recovery succeeded: \(text.count) chars from history (placeholder had \(currentLen))")
+                                self.updateMessage(msgId: msgId, content: text, status: .completed, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
+                            } else {
+                                chatLog.warning("inactivity timeout: no usable history, marking timedOut (elapsed=\(Int(elapsed))s)")
+                                let timeoutMsg = String(localized: "The task timed out and has been terminated. You can try again or switch to another agent.", bundle: LanguageManager.shared.localizedBundle)
+                                if let msg = self.findMessage(byId: msgId) {
+                                    let content = msg.content.isEmpty
+                                        ? timeoutMsg
+                                        : msg.content + "\n\n---\n> ⚠️ " + timeoutMsg
+                                    self.updateMessage(msgId: msgId, content: content, status: .timedOut, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
+                                }
                             }
                             self.activeChatRuns.removeValue(forKey: msgId)
                             self.foregroundTaskIds.remove(msgId)
@@ -2570,10 +2588,17 @@ class DashboardViewModel: ObservableObject {
             chatLog.warning("chat stream ended WITHOUT terminal event: runId=\(runId), accumulatedLen=\(accumulatedText.count) — attempting chat.history recovery")
 
             // Wait briefly for the WS to come back. Poll every 0.5s
-            // rather than blocking on a single 15s sleep so we recover
+            // rather than blocking on a single 30s sleep so we recover
             // as soon as the gateway is reachable.
+            //
+            // 30s window: must strictly exceed our reconnect backoff
+            // ceiling (1+2+4+8 = 15s for the 4th attempt) plus the
+            // connect.challenge round-trip + auth (~1-3s). 15s exactly
+            // matched the backoff tail and lost the race on the 4th
+            // retry; 30s gives the handshake comfortable headroom and
+            // matches Anthropic SSE's typical reconnect tolerance.
             var recovered: String? = nil
-            let recoveryDeadline = Date().addingTimeInterval(15)
+            let recoveryDeadline = Date().addingTimeInterval(30)
             while Date() < recoveryDeadline {
                 if gatewayClient.isConnected {
                     recovered = await gatewayClient.fetchLastAssistantMessage(sessionKey: sessionKey)

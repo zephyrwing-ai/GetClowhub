@@ -345,7 +345,19 @@ class GatewayClient: ObservableObject {
         var request = URLRequest(url: url)
         request.setValue("http://127.0.0.1:\(port)", forHTTPHeaderField: "Origin")
 
-        let session = URLSession(configuration: .default, delegate: delegateHandler, delegateQueue: nil)
+        // Explicit bounds on the WS handshake — `timeoutIntervalForRequest` applies to
+        // the initial HTTP upgrade; the WS stream itself is open-ended (long-running
+        // tasks can stream for hours and that's fine). macOS defaults to 60s here,
+        // which is unhelpfully generous given our 30s client heartbeat already proves
+        // post-handshake liveness — drop to 30s so a stuck handshake surfaces fast
+        // enough to schedule a reconnect rather than blocking for a minute.
+        //
+        // `timeoutIntervalForResource` defaults to ~7 days (DT_RESOURCE_TIMEOUT) which
+        // matches what we want — a streaming WS is a long-lived resource by design.
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+
+        let session = URLSession(configuration: config, delegate: delegateHandler, delegateQueue: nil)
         self.urlSession = session
 
         let task = session.webSocketTask(with: request)
