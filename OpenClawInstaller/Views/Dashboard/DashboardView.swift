@@ -768,7 +768,20 @@ struct SidebarView: View {
     }
 
     private var agentsList: some View {
-        List(selection: $viewModel.selectedAgentId) {
+        // Wrap the selection binding so we also force-switch to the
+        // chat tab when the user picks an agent from 我的团队. Without
+        // this, if the user was on .status (or any non-per-agent tab),
+        // clicking a team member visibly does nothing — only
+        // `selectedAgentId` updates and the right side doesn't reflect
+        // the agent context. The expectation is "I clicked a team
+        // member → take me to that team member's conversation".
+        List(selection: Binding<String>(
+            get: { viewModel.selectedAgentId },
+            set: { newId in
+                viewModel.selectedAgentId = newId
+                viewModel.selectedTab = .chat
+            }
+        )) {
             // Commander — pinned at top, standalone
             if let commander = viewModel.availableAgents.first(where: { $0.id == "commander" }) {
                 agentRowWithContextMenu(commander)
@@ -2066,6 +2079,20 @@ struct ChatView: View {
                 // Don't intercept keys when a CommitTextField (rename/new file) is focused
                 if let tv = responder as? NSTextView,
                    tv.identifier?.rawValue == "commitTextField" {
+                    return event
+                }
+
+                // IME composition guard — when the user is mid-pinyin
+                // (or any other input-method composition), the text view
+                // has "marked text" (the candidates shown above the
+                // caret). In that state ALL keys including Return / Tab
+                // / Escape belong to the IME — Return commits the raw
+                // composed text as English, Tab cycles candidates, etc.
+                // Without this guard, hitting Return mid-composition
+                // gets intercepted by our sendMessage shortcut, and the
+                // half-typed pinyin (e.g. "li'r") is sent literally
+                // before the IME has a chance to convert it.
+                if let tv = responder as? NSTextView, tv.hasMarkedText() {
                     return event
                 }
 
