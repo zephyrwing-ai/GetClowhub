@@ -1632,6 +1632,12 @@ class DashboardViewModel: ObservableObject {
         // become orphans, isSendingMessage stays true forever).
         cancelTasks(inSession: sessionId)
         chatSessionStore.deleteSession(id: sessionId)
+        // Drop any stashed in-memory copy too. Otherwise the entry sits in
+        // chatMessagesByInactiveSession forever (until app restart), and the
+        // 500ms persistInactiveSessions sink keeps firing for it — each tick
+        // calls loadSession, gets nil (file is gone), skips. Wasted CPU and
+        // memory for a session the user explicitly removed.
+        chatMessagesByInactiveSession.removeValue(forKey: sessionId)
         if wasActive {
             promoteNextSession(forAgent: agentId)
         }
@@ -2648,11 +2654,14 @@ class DashboardViewModel: ObservableObject {
         backgroundTaskIds.insert(msgId)
         recomputeIsSendingMessage()
 
-        // Update message status to background (search all agents)
+        let bgLabel = String(localized: "⏳ Task running in background...", bundle: LanguageManager.shared.localizedBundle)
+
+        // First look in the active per-agent map (the common case — auto-bg
+        // fires from ThinkingIndicator which only renders for visible
+        // placeholders).
         for agentId in chatMessagesByAgent.keys {
             if let idx = chatMessagesByAgent[agentId]?.firstIndex(where: { $0.id == msgId }) {
                 let msg = chatMessagesByAgent[agentId]![idx]
-                let bgLabel = String(localized: "⏳ Task running in background...", bundle: LanguageManager.shared.localizedBundle)
                 let content = msg.content.isEmpty ? bgLabel : msg.content
                 var messages = chatMessagesByAgent[agentId]!
                 messages[idx] = ChatMessage(
@@ -2663,6 +2672,25 @@ class DashboardViewModel: ObservableObject {
                 chatMessagesByAgent[agentId] = messages
                 return
             }
+        }
+
+        // Fall back to the inactive stash. Reachable when the auto-bg
+        // timer fires within the ~1s window between the user switching
+        // sessions and `.onDisappear` cancelling the timer — without
+        // this branch the placeholder keeps showing "Thinking…" forever
+        // when the user navigates back, even though the task is
+        // already tracked as background internally.
+        if let sessionId = taskSessionMap[msgId],
+           let idx = chatMessagesByInactiveSession[sessionId]?.firstIndex(where: { $0.id == msgId }) {
+            let msg = chatMessagesByInactiveSession[sessionId]![idx]
+            let content = msg.content.isEmpty ? bgLabel : msg.content
+            var messages = chatMessagesByInactiveSession[sessionId]!
+            messages[idx] = ChatMessage(
+                role: .assistant, content: content,
+                agentId: msg.agentId, agentEmoji: msg.agentEmoji,
+                taskStatus: .background, id: msgId
+            )
+            chatMessagesByInactiveSession[sessionId] = messages
         }
     }
 
