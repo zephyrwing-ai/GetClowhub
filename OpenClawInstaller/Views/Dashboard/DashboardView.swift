@@ -7003,32 +7003,13 @@ struct SessionDetailsPanel: View {
     // MARK: - Collapsed (default)
 
     /// Slim vertical strip — mirrors the same content as the expanded
-    /// panel but stripped to icons + counts. Clicking the chevron
-    /// expands; clicking a tab label switches the tab and expands.
+    /// panel but stripped to icons + counts. Toggle handle lives on the
+    /// leading edge (vertically centered) — see `edgeChevronHandle`.
     private var collapsedBody: some View {
         VStack(spacing: 14) {
-            // Expand chevron — placed at the top so it's the first thing
-            // the eye finds. Previously sat mid-column between tabs and
-            // agent block, which felt arbitrary.
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    expanded = true
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 28, height: 22)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(Color(NSColor.controlBackgroundColor))
-                    )
-            }
-            .buttonStyle(.plain)
-            .help("Expand session details")
-            .padding(.top, 12)
-
-            // Tab labels (clickable — switch tab AND expand)
+            // Tab labels (clickable — switch tab AND expand). Padded to match
+            // the gap left by the old top-chevron so the panel head doesn't
+            // butt up against the window's top edge.
             VStack(spacing: 8) {
                 ForEach(PanelTab.allCases, id: \.self) { t in
                     Button {
@@ -7042,6 +7023,7 @@ struct SessionDetailsPanel: View {
                     .buttonStyle(.plain)
                 }
             }
+            .padding(.top, 16)
 
             Divider().padding(.horizontal, 12)
 
@@ -7095,6 +7077,38 @@ struct SessionDetailsPanel: View {
         .frame(width: 52)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(alignment: .leading) { Divider() }
+        .overlay(alignment: .leading) { edgeChevronHandle }
+    }
+
+    /// Vertical edge handle used by both collapsed and expanded bodies.
+    /// Lives on the panel's leading edge, vertically centered. Replaces
+    /// the previous top-aligned chevron — feels more like a draggable
+    /// panel tab (Notion/Linear convention) and frees the top of the
+    /// panel for content. The button is offset half outward so it
+    /// visually straddles the divider, giving a "handle sticking out"
+    /// affordance.
+    private var edgeChevronHandle: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                expanded.toggle()
+            }
+        } label: {
+            Image(systemName: expanded ? "chevron.right" : "chevron.left")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+                .frame(width: 14, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color(NSColor.controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.secondary.opacity(0.22), lineWidth: 0.5)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(expanded ? "Collapse session details" : "Expand session details")
+        .offset(x: -7)  // half-out / half-in; the button visually sits on the divider
     }
 
     /// Short uptime label for the collapsed column. Falls back to a few
@@ -7130,22 +7144,10 @@ struct SessionDetailsPanel: View {
 
     private var expandedBody: some View {
         VStack(spacing: 0) {
-            // Top tab strip + collapse chevron
+            // Top tab strip — the collapse chevron used to sit before the
+            // first tab; it now lives on the panel's leading edge (see
+            // `edgeChevronHandle`), so tabs span the full strip cleanly.
             HStack(spacing: 0) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        expanded = false
-                    }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-                .help("Collapse session details")
-
                 ForEach(PanelTab.allCases, id: \.self) { t in
                     Button {
                         tab = t
@@ -7209,6 +7211,7 @@ struct SessionDetailsPanel: View {
         .frame(width: 300)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(alignment: .leading) { Divider() }
+        .overlay(alignment: .leading) { edgeChevronHandle }
     }
 
     // MARK: - Details tab
