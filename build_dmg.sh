@@ -390,18 +390,25 @@ fi
 
 # 获取 DMG 文件大小
 DMG_SIZE=$(stat -f%z "$DMG_PATH")
-DMG_DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$MARKETING_VERSION/$DMG_NAME"
+DMG_URL_INTL="https://github.com/$GITHUB_REPO/releases/download/v$MARKETING_VERSION/$DMG_NAME"
+DMG_URL_CN="https://fp-getclawhub.oss-cn-hangzhou.aliyuncs.com/v$MARKETING_VERSION/$DMG_NAME"
+PUB_DATE=$(date -R)
 
-# 生成 appcast.xml
-echo "📝 生成 appcast.xml..."
+# 生成 appcast.xml (海外, GitHub) + appcast-cn.xml (国内, OSS 杭州)
+# 客户端 SparkleUpdater 按 region 自动选源, 同一份 DMG / 同一个 EdDSA 签名.
+echo "📝 生成 appcast.xml + appcast-cn.xml..."
 mkdir -p "$DOCS_DIR"
 
-cat > "$DOCS_DIR/appcast.xml" << APPCAST_EOF
+write_appcast() {
+    local out_path="$1"
+    local feed_self_url="$2"
+    local enclosure_url="$3"
+    cat > "$out_path" << APPCAST_EOF
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>OpenClaw Helper Updates</title>
-    <link>https://firewolf189.github.io/GetClowhub/appcast.xml</link>
+    <link>$feed_self_url</link>
     <description>OpenClaw Helper 版本更新</description>
     <language>zh-cn</language>
     <item>
@@ -414,8 +421,8 @@ cat > "$DOCS_DIR/appcast.xml" << APPCAST_EOF
           <li>${RELEASE_NOTES:-版本更新}</li>
         </ul>
       ]]></description>
-      <pubDate>$(date -R)</pubDate>
-      <enclosure url="$DMG_DOWNLOAD_URL"
+      <pubDate>$PUB_DATE</pubDate>
+      <enclosure url="$enclosure_url"
                  length="$DMG_SIZE"
                  type="application/octet-stream"
                  sparkle:edSignature="$EDDSA_SIGNATURE" />
@@ -423,8 +430,18 @@ cat > "$DOCS_DIR/appcast.xml" << APPCAST_EOF
   </channel>
 </rss>
 APPCAST_EOF
+}
 
-echo "✅ appcast.xml 已生成: $DOCS_DIR/appcast.xml"
+write_appcast \
+    "$DOCS_DIR/appcast.xml" \
+    "https://firewolf189.github.io/GetClowhub/appcast.xml" \
+    "$DMG_URL_INTL"
+write_appcast \
+    "$DOCS_DIR/appcast-cn.xml" \
+    "https://firewolf189.github.io/GetClowhub/appcast-cn.xml" \
+    "$DMG_URL_CN"
+
+echo "✅ appcast.xml + appcast-cn.xml 已生成: $DOCS_DIR/"
 echo ""
 echo "🎉 构建完成！DMG 路径: $DMG_PATH"
 echo ""

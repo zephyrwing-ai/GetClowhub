@@ -130,18 +130,27 @@ if [ -n "$SIGN_UPDATE" ]; then
     fi
     echo "✅ EdDSA 签名: ${EDDSA_SIGNATURE:0:20}..."
 
-    # 更新 appcast.xml
+    # 更新 appcast.xml (海外用户 - GitHub Releases) 和 appcast-cn.xml (国内用户 - OSS 杭州镜像)
+    # 客户端 SparkleUpdater 按 Locale.current.region 自动选: region=CN → cn 版本.
+    # 两份 XML 除 enclosure URL 之外完全一样, 同一份 DMG + 同一个 EdDSA 签名.
     DMG_SIZE=$(stat -f%z "$DMG_PATH")
     DOCS_DIR="$PROJECT_DIR/docs"
     GITHUB_REPO="firewolf189/GetClowhub"
-    DMG_DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$NEW_VERSION/GetClawHub.dmg"
+    DMG_URL_INTL="https://github.com/$GITHUB_REPO/releases/download/v$NEW_VERSION/GetClawHub.dmg"
+    DMG_URL_CN="https://fp-getclawhub.oss-cn-hangzhou.aliyuncs.com/v$NEW_VERSION/GetClawHub.dmg"
+    PUB_DATE=$(date -R)
 
-    cat > "$DOCS_DIR/appcast.xml" << APPCAST_EOF
+    # 模板函数: 生成一份 appcast XML, 参数 = enclosure URL + 自描述的 channel name
+    write_appcast() {
+        local out_path="$1"
+        local feed_self_url="$2"
+        local enclosure_url="$3"
+        cat > "$out_path" << APPCAST_EOF
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>OpenClaw Helper Updates</title>
-    <link>https://firewolf189.github.io/GetClowhub/appcast.xml</link>
+    <link>$feed_self_url</link>
     <description>OpenClaw Helper 版本更新</description>
     <language>zh-cn</language>
     <item>
@@ -154,8 +163,8 @@ if [ -n "$SIGN_UPDATE" ]; then
           <li>${RELEASE_NOTES:-版本更新}</li>
         </ul>
       ]]></description>
-      <pubDate>$(date -R)</pubDate>
-      <enclosure url="$DMG_DOWNLOAD_URL"
+      <pubDate>$PUB_DATE</pubDate>
+      <enclosure url="$enclosure_url"
                  length="$DMG_SIZE"
                  type="application/octet-stream"
                  sparkle:edSignature="$EDDSA_SIGNATURE" />
@@ -163,7 +172,17 @@ if [ -n "$SIGN_UPDATE" ]; then
   </channel>
 </rss>
 APPCAST_EOF
-    echo "✅ appcast.xml 已更新 (签名 + 文件大小)"
+    }
+
+    write_appcast \
+        "$DOCS_DIR/appcast.xml" \
+        "https://firewolf189.github.io/GetClowhub/appcast.xml" \
+        "$DMG_URL_INTL"
+    write_appcast \
+        "$DOCS_DIR/appcast-cn.xml" \
+        "https://firewolf189.github.io/GetClowhub/appcast-cn.xml" \
+        "$DMG_URL_CN"
+    echo "✅ appcast.xml (海外, GitHub) + appcast-cn.xml (国内, OSS) 已更新"
 else
     echo "❌ 未找到 sign_update 工具，无法签名"
     exit 1
@@ -174,6 +193,7 @@ echo ""
 echo "📤 [6/7] 提交并推送..."
 cd "$PROJECT_DIR"
 git add docs/appcast.xml \
+    docs/appcast-cn.xml \
     OpenClawInstaller/Info.plist \
     OpenClawInstaller.xcodeproj/project.pbxproj
 git commit -m "release v$NEW_VERSION: $RELEASE_NOTES"

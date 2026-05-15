@@ -4,6 +4,7 @@ import Sparkle
 
 @MainActor
 final class SparkleUpdater: ObservableObject {
+    private let feedDelegate = LocaleAwareFeedDelegate()
     private let updaterController: SPUStandardUpdaterController
 
     @Published var isCheckingVersion = false
@@ -11,12 +12,17 @@ final class SparkleUpdater: ObservableObject {
     @Published var latestVersion: String = ""
     @Published var checkSucceeded = false
 
-    private let appcastURL = "https://firewolf189.github.io/GetClowhub/appcast.xml"
+    /// Same URL Sparkle uses for the actual update flow. Computed at access
+    /// time so locale changes between launches (e.g. user moved region) take
+    /// effect on next check.
+    private var appcastURL: String {
+        return LocaleAwareFeedDelegate.resolveAppcastURL()
+    }
 
     init() {
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: feedDelegate,
             userDriverDelegate: nil
         )
     }
@@ -81,6 +87,34 @@ final class SparkleUpdater: ObservableObject {
             if va < vb { return false }
         }
         return false
+    }
+}
+
+// MARK: - Locale-aware Sparkle feed-URL delegate
+
+/// Returns a different appcast URL based on the user's region:
+///   - Mainland China (`region == "CN"`) → `appcast-cn.xml` whose
+///     `<enclosure url>` points to Aliyun OSS Hangzhou. ~5MB/s+ vs
+///     GitHub Releases' frequent <100 KB/s for a 264 MB DMG.
+///   - Otherwise → standard `appcast.xml` whose enclosure points to
+///     GitHub Releases.
+///
+/// We pick by *region* not language: a Chinese user living in HK/TW/SG/US
+/// has region != CN and routes through GitHub fine; an English-system user
+/// physically in mainland China has region=CN and benefits from the OSS
+/// mirror. The DMG itself is byte-identical with one EdDSA signature, so
+/// the choice of mirror doesn't affect signature verification.
+private final class LocaleAwareFeedDelegate: NSObject, SPUUpdaterDelegate {
+    static func resolveAppcastURL() -> String {
+        let region = Locale.current.region?.identifier.uppercased() ?? ""
+        if region == "CN" {
+            return "https://firewolf189.github.io/GetClowhub/appcast-cn.xml"
+        }
+        return "https://firewolf189.github.io/GetClowhub/appcast.xml"
+    }
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        return Self.resolveAppcastURL()
     }
 }
 
