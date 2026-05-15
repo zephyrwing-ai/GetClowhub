@@ -86,6 +86,33 @@ class GatewayClient: ObservableObject {
     private let pingInterval: TimeInterval = 30
     private let pingTimeout: TimeInterval = 30  // pong must arrive within this window
 
+    // MARK: - Device pairing state
+
+    /// Ed25519 keypair lazily loaded from (or generated into)
+    /// `~/.openclaw/identity/device.json`. Carries the deviceId we present
+    /// to the gateway and the private key we sign connect challenges with.
+    /// See `DeviceIdentity.swift` for full rationale.
+    private let deviceIdentity = DeviceIdentityStore.loadOrCreate()
+
+    /// Stores the per-role `deviceToken` returned by `helloOk.auth.deviceToken`
+    /// after a successful pair. Reused on reconnect to skip the full pairing
+    /// flow and to land back on the SAME server-side device record (so its
+    /// existing `approvedScopes` are reused, not reset).
+    private let tokenStore = DeviceAuthTokenStore()
+
+    /// Most recent connect-challenge nonce, captured by `handleMessage` when
+    /// the gateway sends `event: "connect.challenge"`. Used as the `nonce`
+    /// component of the v3 sign payload. nil until the challenge arrives —
+    /// `sendConnectRequest()` falls back to no-device mode if nil so we
+    /// keep working against older gateways that don't issue challenges.
+    private var pendingChallengeNonce: String?
+
+    /// Role we connect under. Hard-coded here because we always behave as the
+    /// macOS operator UI; sub-agent / talk roles aren't in scope for this
+    /// client. Pulling it into a property mostly so the v3 payload + token
+    /// lookup don't drift apart from one literal.
+    private let connectRole = "operator"
+
     init(port: Int, authToken: String, credentialsProvider: (() -> (port: Int, authToken: String))? = nil) {
         self.port = port
         self.authToken = authToken
@@ -423,7 +450,17 @@ class GatewayClient: ObservableObject {
         let type = json["type"] as? String
 
         if type == "event", let event = json["event"] as? String, event == "connect.challenge" {
-            // Respond with connect request
+            // Capture nonce for the v3 device signature. Older gateways may
+            // omit the payload — we fall through with nonce=nil and
+            // sendConnectRequest will skip the device field (i.e. behave like
+            // pre-pairing clients did, working against legacy gateways).
+            if let payload = json["payload"] as? [String: Any],
+               let nonce = payload["nonce"] as? String,
+               !nonce.trimmingCharacters(in: .whitespaces).isEmpty {
+                self.pendingChallengeNonce = nonce
+            } else {
+                self.pendingChallengeNonce = nil
+            }
             sendConnectRequest()
             return
         }
@@ -496,6 +533,10 @@ class GatewayClient: ObservableObject {
             let isError = json["error"] != nil
             if !isError {
                 gwLog.info("Gateway connected successfully")
+                // Persist the deviceToken from `helloOk.auth.deviceToken` if
+                // present — lets the next connect re-bind to the same paired
+                // device record (and its `approvedScopes`) without re-signing.
+                self.persistDeviceTokenFromHello(json["payload"] as? [String: Any])
                 // reconnectAttempt is part of the state-machine and must only be mutated
                 // on stateQueue (it races with scheduleReconnect()'s `+= 1` otherwise).
                 // Start heartbeat on the same queue so a stale prior timer is replaced
@@ -517,6 +558,15 @@ class GatewayClient: ObservableObject {
                 // double-free the URLSession (crash on `_CFRelease` inside establishConnection).
                 let parsedError = Self.parseConnectError(from: json["error"])
                 gwLog.error("Gateway connect failed: code=\(parsedError.code) detail=\(parsedError.detailCode ?? "-") msg=\(parsedError.message). Will reconnect.")
+                // If the failure looks token-related, drop our stored deviceToken
+                // so the next reconnect re-pairs from scratch. Without this we'd
+                // loop forever sending the same bad token. Heuristic: gateway
+                // surfaces these as `detail-code` strings (see
+                // connect-error-details-BuyNSAkw.js on server side).
+                if Self.isDeviceTokenAuthFailure(parsedError) {
+                    self.clearStoredDeviceTokenForCurrentRole()
+                    gwLog.info("Cleared stored deviceToken due to token-related auth failure")
+                }
                 stateQueue.async { [weak self] in
                     self?.teardownSession()
                 }
@@ -540,33 +590,164 @@ class GatewayClient: ObservableObject {
         return GatewayConnectError(code: code, detailCode: detailCode, message: message)
     }
 
+    /// Whether `err` is the gateway saying our stored deviceToken is no good
+    /// (revoked, mismatched, doesn't cover the requested scopes). When yes we
+    /// drop the stored token so the next connect re-pairs from scratch.
+    ///
+    /// Strings derived from openclaw's `connect-error-details-BuyNSAkw.js`
+    /// `ConnectErrorDetailCodes` enum + `formatGatewayAuthFailureMessage` —
+    /// matched loosely on detailCode keywords so we don't pin to one exact
+    /// spelling that the server might rename across versions.
+    private static func isDeviceTokenAuthFailure(_ err: GatewayConnectError) -> Bool {
+        let detail = (err.detailCode ?? "").lowercased()
+        let msg = err.message.lowercased()
+        let tokenSignals = [
+            "device_token", "device-token",
+            "token_revoked", "token-revoked",
+            "token_mismatch", "token-mismatch",
+            "scope_mismatch", "scope-mismatch",
+            "device_token_mismatch",
+        ]
+        for s in tokenSignals {
+            if detail.contains(s) || msg.contains(s) { return true }
+        }
+        return false
+    }
+
     private func sendConnectRequest() {
         let requestId = UUID().uuidString
         let instanceId = UUID().uuidString
         let locale = Locale.current.language.languageCode?.identifier ?? "en"
 
+        // Static descriptors for the v3 signed payload. Must match the
+        // strings we send in `params.client.*` and `params.role` exactly —
+        // the gateway re-derives the payload from those request fields and
+        // verifies the signature against it. Drift here → server reports
+        // "invalid device signature" and 1008-closes the socket.
+        let clientId = "openclaw-macos"
+        let clientMode = "webchat"
+        // CRITICAL: use "darwin" (Node's `process.platform` on macOS), NOT
+        // "macos". When the openclaw CLI / setup wizard ran on this same
+        // machine, it auto-paired using `process.platform = "darwin"`, so
+        // the server's `paired.platform` is "darwin". If our client claims
+        // "macos", server detects `platformMismatch` and demands a
+        // metadata-upgrade re-approval (preview-58 v2 hit exactly this on
+        // 2026-05-15 19:22 — `reason=pairing required: device identity
+        // changed and must be re-approved`). Aligning to "darwin" lets the
+        // server match the existing record on the first try.
+        let platformForAuth = "darwin"
+        let deviceFamilyForAuth = ""
+        let scopes = [
+            // operator.write: required for chat.send / chat.abort / node.invoke
+            // (the actual write-class RPCs we use). Older clients relied on
+            // gateway's `if (scopes.includes("operator.admin")) return null`
+            // bypass, but newer openclaw filters requested scopes against the
+            // paired device's `approvedScopes`, so admin-only no longer works.
+            // operator.admin: kept for cron.* / sessions.patch / etc admin RPCs.
+            // operator.approvals: tool-approval RPCs.
+            // operator.pairing: needed to do the device-pair handshake itself.
+            "operator.admin",
+            "operator.write",
+            "operator.approvals",
+            "operator.pairing",
+        ]
+
+        // Build auth payload — match reference client's `selectConnectAuth`
+        // (client-CqZRDXHX.js:585-610) precedence exactly. Critical detail
+        // discovered after preview-58 crashed with "device signature invalid":
+        //
+        //   The persisted per-device token goes into `auth.token`, NOT into
+        //   `auth.deviceToken` (which is reserved for a specific retry case).
+        //
+        // Server-side signature verification (message-handler-BQfKyLEV.js:402
+        // `resolveSignatureToken`) reconstructs the verify payload using:
+        //   `auth.token ?? auth.deviceToken ?? auth.bootstrapToken`
+        // — i.e. whichever slot has a value, in that order. So whatever we
+        // put in `auth.token` is what we MUST sign with. To keep this trivially
+        // correct, we resolve to a single `signatureToken` and place it in
+        // `auth.token` only — no other slot.
+        let storedToken = tokenStore.load(role: connectRole,
+                                          currentDeviceId: deviceIdentity.deviceId)
+        // Precedence: stored device-token (preserves paired record's
+        // `approvedScopes`) > shared bootstrap token (first-ever connect).
+        let signatureToken: String? = storedToken?.token ?? (authToken.isEmpty ? nil : authToken)
+        var auth: [String: Any] = [:]
+        if let tok = signatureToken {
+            auth["token"] = tok
+        }
+
+        // Build the v3 signed device descriptor. Skip silently if (a) the
+        // gateway didn't send a connect-challenge nonce (legacy server, or
+        // server crashed between accept and challenge) or (b) signing fails
+        // for any reason — better to attempt a no-device connect (might still
+        // succeed under admin-bypass on older gateways) than to deadlock the
+        // app on an unsignable handshake.
+        var device: [String: Any]? = nil
+        if let nonce = pendingChallengeNonce, !nonce.isEmpty {
+            let signedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+            // Use the SAME single token we put in `auth.token`. Empty string
+            // when no auth available (server's resolveSignatureToken falls
+            // through to "" too in that case).
+            let tokenForSignature = signatureToken ?? ""
+            let signPayload = [
+                "v3",
+                deviceIdentity.deviceId,
+                clientId,
+                clientMode,
+                connectRole,
+                scopes.joined(separator: ","),
+                String(signedAtMs),
+                tokenForSignature,
+                nonce,
+                platformForAuth,
+                deviceFamilyForAuth,
+            ].joined(separator: "|")
+            if let signature = DeviceIdentityStore.sign(signPayload, with: deviceIdentity),
+               let publicKeyB64 = DeviceIdentityStore.publicKeyRawBase64Url(deviceIdentity) {
+                device = [
+                    "id": deviceIdentity.deviceId,
+                    "publicKey": publicKeyB64,
+                    "signature": signature,
+                    "signedAt": signedAtMs,
+                    "nonce": nonce,
+                ]
+                gwLog.info("Connect: signing v3 device payload deviceId=\(self.deviceIdentity.deviceId.prefix(12), privacy: .public)… hasStoredToken=\(storedToken != nil)")
+            } else {
+                gwLog.warning("Connect: device payload could not be signed — falling back to non-device connect")
+            }
+        } else {
+            gwLog.warning("Connect: no challenge nonce — falling back to non-device connect (legacy gateway?)")
+        }
+
+        // Nonce is single-use; clear so a forced reconnect that arrives
+        // before the next challenge doesn't reuse a stale value.
+        pendingChallengeNonce = nil
+
+        var params: [String: Any] = [
+            "minProtocol": 3,
+            "maxProtocol": 4,                   // gateway accepts highest mutual; v4 unlocks newer event shapes
+            "client": [
+                "id": clientId,
+                "version": "1.1.16",
+                "platform": platformForAuth,
+                "mode": clientMode,
+                "instanceId": instanceId,
+            ],
+            "role": connectRole,
+            "scopes": scopes,
+            "caps": [] as [String],
+            "auth": auth,
+            "locale": locale,
+        ]
+        if let device = device {
+            params["device"] = device
+        }
+
         let payload: [String: Any] = [
             "type": "req",
             "id": requestId,
             "method": "connect",
-            "params": [
-                "minProtocol": 3,
-                "maxProtocol": 3,
-                "client": [
-                    "id": "openclaw-macos",
-                    "version": "1.1.16",
-                    "platform": "macos",
-                    "mode": "webchat",
-                    "instanceId": instanceId
-                ],
-                "role": "operator",
-                "scopes": ["operator.admin", "operator.approvals", "operator.pairing"],
-                "caps": [] as [String],
-                "auth": [
-                    "token": authToken
-                ],
-                "locale": locale
-            ] as [String: Any]
+            "params": params,
         ]
 
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
@@ -579,6 +760,37 @@ class GatewayClient: ObservableObject {
                 self?.scheduleReconnect()
             }
         }
+    }
+
+    /// Persist the `deviceToken` returned in `helloOk.auth.deviceToken` after
+    /// a successful pair. Subsequent connects use it (see `sendConnectRequest`)
+    /// so the gateway matches us back to the same paired-device record.
+    /// Returning nil here is a no-op — older gateways or fallback paths may
+    /// not include `auth` in the hello payload at all.
+    private func persistDeviceTokenFromHello(_ helloPayload: [String: Any]?) {
+        guard let authDict = helloPayload?["auth"] as? [String: Any],
+              let token = authDict["deviceToken"] as? String,
+              !token.isEmpty else {
+            return
+        }
+        let scopes = (authDict["scopes"] as? [String]) ?? []
+        let role = (authDict["role"] as? String) ?? connectRole
+        tokenStore.save(role: role,
+                        deviceId: deviceIdentity.deviceId,
+                        token: StoredDeviceAuthToken(
+                            token: token,
+                            scopes: scopes,
+                            updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000)
+                        ))
+        let scopeList = scopes.joined(separator: ",")
+        gwLog.info("Persisted deviceToken for role=\(role, privacy: .public), scopes=\(scopeList, privacy: .public)")
+    }
+
+    /// Clear a stored deviceToken (typically because the gateway just told us
+    /// it's revoked / mismatched). Next connect will fall back to the
+    /// bootstrap-token + sign path and re-pair.
+    private func clearStoredDeviceTokenForCurrentRole() {
+        tokenStore.remove(role: connectRole, deviceId: deviceIdentity.deviceId)
     }
 
     /// Schedule a reconnect after exponential backoff.
