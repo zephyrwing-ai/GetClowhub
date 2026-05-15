@@ -112,14 +112,17 @@ class DashboardViewModel: ObservableObject {
             port: settings.settings.gatewayPort,
             authToken: settings.settings.gatewayAuthToken,
             credentialsProvider: {
+                // Must equal `AppSettings.gatewayPort` default — a drift here lets the
+                // WS connect a dead port while the UI still shows the service running.
+                let defaultPort = 18789
                 let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
                 let configPath = "\(homeDir)/.openclaw/openclaw.json"
                 guard let data = FileManager.default.contents(atPath: configPath),
                       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let gateway = dict["gateway"] as? [String: Any] else {
-                    return (port: 3000, authToken: "")
+                    return (port: defaultPort, authToken: "")
                 }
-                let port = gateway["port"] as? Int ?? 3000
+                let port = gateway["port"] as? Int ?? defaultPort
                 let token = (gateway["auth"] as? [String: Any])?["token"] as? String ?? ""
                 return (port: port, authToken: token)
             }
@@ -2347,9 +2350,19 @@ class DashboardViewModel: ObservableObject {
         taskSessionMap[msgId] = currentSessionId
         recomputeIsSendingMessage()
 
-        // Check gateway connection
+        // Check gateway connection. Prefer the gateway's own rejection reason
+        // (e.g. NOT_PAIRED / DEVICE_IDENTITY_REQUIRED, token mismatch) so the user
+        // can act on it; only fall back to the generic message when we never got
+        // a server response (TCP failed / handshake never reached the auth step).
         guard gatewayClient.isConnected else {
-            let errorMsg = String(localized: "Gateway is not connected. Please check the service status.", bundle: LanguageManager.shared.localizedBundle)
+            let generic = String(localized: "Gateway is not connected. Please check the service status.", bundle: LanguageManager.shared.localizedBundle)
+            let errorMsg: String
+            if let lastErr = gatewayClient.lastConnectError {
+                let detail = lastErr.detailCode.map { " (\($0))" } ?? ""
+                errorMsg = "\(generic)\n[\(lastErr.code)\(detail)] \(lastErr.message)"
+            } else {
+                errorMsg = generic
+            }
             updateMessage(msgId: msgId, content: errorMsg, status: .completed, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
             foregroundTaskIds.remove(msgId)
             taskAgentMap.removeValue(forKey: msgId)

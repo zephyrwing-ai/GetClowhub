@@ -12,10 +12,21 @@ enum GatewayChatEvent {
     case error(runId: String, sessionKey: String, message: String)
 }
 
+/// Last gateway-side rejection seen on the connect handshake. Carries the raw
+/// error envelope so the UI can show *why* the WS won't connect (e.g.
+/// `NOT_PAIRED` / `DEVICE_IDENTITY_REQUIRED` vs `token_mismatch`) instead of
+/// the generic "Gateway is not connected".
+struct GatewayConnectError: Equatable {
+    let code: String          // e.g. "NOT_PAIRED", "INVALID_REQUEST"
+    let detailCode: String?   // e.g. "DEVICE_IDENTITY_REQUIRED", "token_mismatch"
+    let message: String
+}
+
 /// Lightweight WebSocket client for the OpenClaw gateway.
 /// Uses native `URLSessionWebSocketTask` (macOS 13+), no third-party dependencies.
 class GatewayClient: ObservableObject {
     @Published var isConnected = false
+    @Published var lastConnectError: GatewayConnectError?
 
     private var port: Int
     private var authToken: String
@@ -98,7 +109,10 @@ class GatewayClient: ObservableObject {
             guard let self = self else { return }
             self.isIntentionalDisconnect = true
             self.teardownSession()
-            DispatchQueue.main.async { self.isConnected = false }
+            DispatchQueue.main.async {
+                self.isConnected = false
+                self.lastConnectError = nil
+            }
         }
     }
 
@@ -491,21 +505,39 @@ class GatewayClient: ObservableObject {
                     self?.reconnectPending = false
                     self?.startHeartbeat()
                 }
-                DispatchQueue.main.async { self.isConnected = true }
+                DispatchQueue.main.async {
+                    self.isConnected = true
+                    self.lastConnectError = nil
+                }
             } else {
                 // Connect auth failed (e.g. stale token after gateway restart).
                 // Close this dead socket and reconnect with fresh credentials. The teardown
                 // touches `webSocketTask` / `urlSession` so it must run on stateQueue,
                 // otherwise it can race with scheduleReconnect()'s reconnect timer and
                 // double-free the URLSession (crash on `_CFRelease` inside establishConnection).
-                gwLog.error("Gateway connect auth failed: \(String(describing: json["error"])). Will reconnect with fresh credentials.")
+                let parsedError = Self.parseConnectError(from: json["error"])
+                gwLog.error("Gateway connect failed: code=\(parsedError.code) detail=\(parsedError.detailCode ?? "-") msg=\(parsedError.message). Will reconnect.")
                 stateQueue.async { [weak self] in
                     self?.teardownSession()
                 }
-                DispatchQueue.main.async { self.isConnected = false }
+                DispatchQueue.main.async {
+                    self.isConnected = false
+                    self.lastConnectError = parsedError
+                }
                 self.scheduleReconnect()
             }
         }
+    }
+
+    /// Pull `code` / `message` / `details.code` out of the gateway error envelope.
+    /// Tolerant of unknown shapes: never throws, always yields something the UI
+    /// can show even when the server's payload is unfamiliar.
+    private static func parseConnectError(from raw: Any?) -> GatewayConnectError {
+        let dict = raw as? [String: Any] ?? [:]
+        let code = (dict["code"] as? String) ?? "UNKNOWN"
+        let message = (dict["message"] as? String) ?? "Gateway rejected the connection"
+        let detailCode = (dict["details"] as? [String: Any])?["code"] as? String
+        return GatewayConnectError(code: code, detailCode: detailCode, message: message)
     }
 
     private func sendConnectRequest() {

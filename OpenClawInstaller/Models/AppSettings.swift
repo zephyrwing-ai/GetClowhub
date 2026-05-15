@@ -108,6 +108,10 @@ class AppSettingsManager: ObservableObject {
         gateway["mode"] = gateway["mode"] as? String ?? "local"
 
         var auth = gateway["auth"] as? [String: Any] ?? [:]
+        // Avoid landing `mode = "none"`: in that mode the gateway returns
+        // sharedAuthOk=false and rejects unpaired operator clients with NOT_PAIRED.
+        // "token" is the lowest-friction value that still keeps unpaired clients usable.
+        auth["mode"] = (auth["mode"] as? String) ?? "token"
         auth["token"] = settings.gatewayAuthToken
         gateway["auth"] = auth
 
