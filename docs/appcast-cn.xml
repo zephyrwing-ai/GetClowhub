@@ -6,20 +6,20 @@
     <description>OpenClaw Helper 版本更新</description>
     <language>zh-cn</language>
     <item>
-      <title>Version 1.1.53</title>
-      <sparkle:version>60</sparkle:version>
-      <sparkle:shortVersionString>1.1.53</sparkle:shortVersionString>
+      <title>Version 1.1.55</title>
+      <sparkle:version>62</sparkle:version>
+      <sparkle:shortVersionString>1.1.55</sparkle:shortVersionString>
       <description><![CDATA[
-        <h2>OpenClaw Helper 1.1.53</h2>
+        <h2>OpenClaw Helper 1.1.55</h2>
         <ul>
-          <li>版本 1.1.53 更新</li>
+          <li>修复消息可跨段拖选; 复制按钮加 "已复制" 反馈; 修复流式输出结束瞬间空白闪烁</li>
         </ul>
       ]]></description>
-      <pubDate>Sat, 16 May 2026 00:11:28 +0800</pubDate>
-      <enclosure url="https://fp-getclawhub.oss-cn-hangzhou.aliyuncs.com/v1.1.53/GetClawHub.dmg"
-                 length="277555296"
+      <pubDate>Tue, 19 May 2026 23:51:32 +0800</pubDate>
+      <enclosure url="https://fp-getclawhub.oss-cn-hangzhou.aliyuncs.com/v1.1.55/GetClawHub.dmg"
+                 length="277306077"
                  type="application/octet-stream"
-                 sparkle:edSignature="hLbhJIh0TP3RXdAsO6mLQxr2i53/xzcinHWCzF5zIkgSlroCtnMWX5BF0uZ1wRrBE+mrotkKwhbh9ZxdMMoPBg==" />
+                 sparkle:edSignature="t0VamPuVUzfCJyMuxyDuGEagdo3VGLWMIr7TeHx2QyUMtPAsPwiVxZeBRVCfFBbz+CtdBk8ZO8u5ZnI5C1sTBg==" />
     </item>
   </channel>
 </rss>

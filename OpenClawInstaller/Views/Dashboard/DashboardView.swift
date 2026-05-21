@@ -3063,6 +3063,17 @@ struct ChatBubble: View {
     @State private var cachedMediaURLs: [URL] = []
     @State private var lastMediaScanContent: String = ""
 
+    /// Visual ack for the copy button — flips to `true` for ~1.5s after a
+    /// successful clipboard write, swaps the icon to a green checkmark, and
+    /// surfaces a "已复制" label. Without this, clicking the button gave
+    /// zero feedback (a user-reported bug — they couldn't tell whether the
+    /// copy actually fired).
+    @State private var copied = false
+    /// In-flight reset task for `copied`. Re-clicking the button while a
+    /// previous ack is still showing should restart the 1.5s window rather
+    /// than have both timers fight each other.
+    @State private var copyResetTask: DispatchWorkItem?
+
     /// Cached regex for media URL detection (compiled once, reused)
     private static let mediaFileRegex: NSRegularExpression? = {
         let mediaExtensions = [
@@ -3183,8 +3194,22 @@ struct ChatBubble: View {
                     // is fine on the main thread.
                     Group {
                         if message.role == .assistant {
-                            Markdown(message.content)
-                                .textSelection(.enabled)
+                            // Single rendering path for the full message
+                            // lifecycle. WKWebView is mounted on first
+                            // render with the full HTML envelope already
+                            // baked in (CSS + MathJax), then every
+                            // streaming delta and the final terminal-
+                            // state content land via JS DOM mutation —
+                            // `document.body.innerHTML = ...` — so we
+                            // never reload the page, never tear down the
+                            // SwiftUI subtree, and never see the blank
+                            // transition the hybrid Markdown↔WebView
+                            // attempt produced. WebKit's selection model
+                            // gives us cross-paragraph / list / table
+                            // drag-select for free via the body's
+                            // `-webkit-user-select: text`.
+                            SelectableMarkdownView(content: message.content)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .padding(10)
                                 .background(backgroundColor)
                                 .cornerRadius(12)
@@ -3198,7 +3223,7 @@ struct ChatBubble: View {
                         }
                     }
                     .contextMenu {
-                        Button(action: { copyToClipboard(message.content) }) {
+                        Button(action: { performCopy(message.content) }) {
                             Label("Copy", systemImage: "doc.on.doc")
                         }
                     }
@@ -3208,44 +3233,61 @@ struct ChatBubble: View {
                         }
                     }
 
-                    // Hover toolbar — only on TERMINAL-state messages
-                    // (.completed / .cancelled / .timedOut / .error).
-                    // While streaming we don't show it:
+                    // Bubble action toolbar — sits below TERMINAL-state
+                    // messages (.completed / .cancelled / .timedOut /
+                    // .error). Streaming bubbles don't show it:
                     //   1. Reserving a 22pt frame between the bubble and
                     //      the streaming spinner inserted a visible gap
                     //      → "字 [gap] spinner [gap] 字" felt jagged.
                     //   2. Copy mid-stream copies partial content; better
                     //      to wait until the message is final.
                     //
+                    // The button is now ALWAYS visible (dimmed slightly
+                    // when the bubble isn't hovered) — Markdown content
+                    // is rendered as multiple SwiftUI Text views, and
+                    // SwiftUI's `textSelection(.enabled)` can't drag-
+                    // select across separate Text views. Users were
+                    // hitting that wall and reporting "选中只能选一行".
+                    // A persistently visible copy affordance side-steps
+                    // the limitation instead of fighting it.
+                    //
                     // Toolbar aligned with the bubble side (user → right,
                     // assistant → left) so it always sits opposite the
                     // avatar, never over the message.
-                    if !isStreamingState {
+                    if !isStreamingState && !message.content.isEmpty {
                         HStack(spacing: 6) {
-                            if isHovering && !message.content.isEmpty {
-                                Button(action: { copyToClipboard(message.content) }) {
-                                    Image(systemName: "doc.on.doc")
+                            Button(action: { performCopy(message.content) }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
                                         .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 5)
-                                                .fill(Color(NSColor.controlBackgroundColor))
-                                        )
+                                        .foregroundColor(copied ? .green : .secondary)
+                                    if copied {
+                                        Text("已复制")
+                                            .font(.caption2)
+                                            .foregroundColor(.green)
+                                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                                    }
                                 }
-                                .buttonStyle(.plain)
-                                .help("Copy")
-                                .transition(.opacity)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .fill(Color(NSColor.controlBackgroundColor))
+                                )
                             }
+                            .buttonStyle(.plain)
+                            .help(copied ? "已复制" : "复制消息")
+                            .opacity(isHovering || copied ? 1.0 : 0.55)
+                            .animation(.easeInOut(duration: 0.15), value: isHovering)
+                            .animation(.easeInOut(duration: 0.18), value: copied)
                         }
                         .frame(height: 22, alignment: message.role == .user ? .trailing : .leading)
                         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
                         .onHover { hovering in
-                            // Keep toolbar visible while hovering over
-                            // the toolbar itself (not just the bubble)
-                            // so the user can move bubble → button
-                            // without the button vanishing.
+                            // Keep toolbar at full opacity while hovering
+                            // over the toolbar itself (not just the
+                            // bubble) so the user can move bubble →
+                            // button without the button vanishing.
                             if hovering {
                                 withAnimation(.easeInOut(duration: 0.15)) {
                                     isHovering = true
@@ -3345,6 +3387,27 @@ struct ChatBubble: View {
     private func copyToClipboard(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Copy + show the "已复制" ack for 1.5s. Both the bubble toolbar
+    /// button and the contextMenu "Copy" item route through here so the
+    /// feedback is consistent across entry points.
+    private func performCopy(_ text: String) {
+        copyToClipboard(text)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            copied = true
+        }
+        // Restart the 1.5s reset window on every click so rapid
+        // repeated clicks don't get clipped by a stale reset firing
+        // mid-animation.
+        copyResetTask?.cancel()
+        let task = DispatchWorkItem {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                copied = false
+            }
+        }
+        copyResetTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: task)
     }
 }
 
@@ -3727,8 +3790,18 @@ struct AttachmentPreview: View {
     let onRemove: () -> Void
 
     private var isImage: Bool {
+        // Directories never read as images, even if the path happens to end in .png.
+        if isDirectory { return false }
         let ext = url.pathExtension.lowercased()
         return ["jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "svg"].contains(ext)
+    }
+
+    /// True iff the URL points at an existing directory. Stat'd once per render —
+    /// fine for the small N of attached items shown in the chip strip.
+    private var isDirectory: Bool {
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        return exists && isDir.boolValue
     }
 
     var body: some View {
@@ -3744,7 +3817,7 @@ struct AttachmentPreview: View {
                 VStack(spacing: 4) {
                     Image(systemName: fileIconName)
                         .font(.system(size: 20))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(isDirectory ? .accentColor : .secondary)
                     Text(url.lastPathComponent)
                         .font(.system(size: 9))
                         .lineLimit(1)
@@ -3769,6 +3842,9 @@ struct AttachmentPreview: View {
     }
 
     private var fileIconName: String {
+        // Folder takes precedence over extension — `~/Projects/foo.bar` is still
+        // a folder; rendering it as a generic doc icon would be misleading.
+        if isDirectory { return "folder.fill" }
         let ext = url.pathExtension.lowercased()
         switch ext {
         case "pdf": return "doc.fill"
@@ -3890,15 +3966,23 @@ private let markdownHTMLCache = NSCache<NSString, NSString>()
 /// Cache for measured heights to avoid 22pt → actual height jump when LazyVStack recreates views.
 private let markdownHeightCache = NSCache<NSString, NSNumber>()
 
-/// Renders markdown as selectable rich text via WKWebView.
-/// Supports free multi-line text selection and proper markdown rendering.
-/// Includes throttling to prevent CPU 100% during streaming updates.
+/// Renders markdown as selectable rich text via WKWebView. Supports
+/// free multi-line drag-selection across paragraphs, lists and tables
+/// (HTML body carries `-webkit-user-select: text` and WebKit's native
+/// selection model handles cross-block ranges).
+///
+/// Streaming updates: `_MarkdownWebView` mutates `document.body.innerHTML`
+/// via JS on every content delta — no `loadHTMLString` reload, no flash.
+/// The 500 ms throttle the previous version had was a workaround for
+/// the reload-flash; with DOM mutations the per-update cost is small
+/// (~5–30 ms for markdown→HTML build + a single JS bridge call), so we
+/// just pipe `content` straight through and let SwiftUI's natural body
+/// re-eval rate (bounded by the upstream `sendChatMessage` throttle of
+/// ~100 ms) drive updates.
 struct SelectableMarkdownView: View {
     let content: String
     var onReady: (() -> Void)? = nil
     @State private var height: CGFloat
-    @State private var throttledContent: String
-    @State private var updateTimer: Timer?
 
     init(content: String, onReady: (() -> Void)? = nil) {
         self.content = content
@@ -3926,42 +4010,15 @@ struct SelectableMarkdownView: View {
             let estimatedHeight = min(600.0, estimatedLines * 18.0 + 20.0)
             _height = State(initialValue: CGFloat(max(22.0, estimatedHeight)))
         }
-        // Initialize with actual content so _MarkdownWebView can load cached HTML in makeNSView
-        _throttledContent = State(initialValue: content)
     }
 
     var body: some View {
-        _MarkdownWebView(content: throttledContent, dynamicHeight: $height)
+        _MarkdownWebView(content: content, dynamicHeight: $height)
             .frame(height: max(height, 22))
             .onChange(of: height) { newHeight in
                 if newHeight > 22 {
                     onReady?()
                 }
-            }
-            .onChange(of: content) { newContent in
-                // Throttle updates: only update WKWebView every 0.5 seconds
-                // This prevents CPU 100% during streaming while still showing content
-                updateTimer?.invalidate()
-                updateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
-                    throttledContent = newContent
-                    updateTimer = nil
-                }
-                // Also update immediately if content grows significantly (every 500+ chars)
-                // This shows streaming progress without excessive WKWebView reloads
-                if newContent.count > throttledContent.count + 500 {
-                    throttledContent = newContent
-                }
-            }
-            .onAppear {
-                // Critical: sync throttledContent immediately when view appears
-                // to avoid showing empty content on first render
-                throttledContent = content
-            }
-            .onDisappear {
-                updateTimer?.invalidate()
-                // IMPORTANT: Apply the latest content before disappearing to prevent message loss
-                throttledContent = content
-                updateTimer = nil
             }
     }
 }
@@ -4015,69 +4072,105 @@ private struct _MarkdownWebView: NSViewRepresentable {
 
         let isDark = (colorScheme == .dark)
 
-        // Try to load cached HTML directly (for LazyVStack recreation of already-rendered messages)
-        if !content.isEmpty {
-            let contentHash = content.hashValue
-            let cacheKey = "\(isDark ? "d" : "l"):\(contentHash)" as NSString
-            if let cachedHTML = markdownHTMLCache.object(forKey: cacheKey) {
-                // Cache hit: load full HTML immediately — no transparent shell, no async delay
-                webView.loadHTMLString(cachedHTML as String, baseURL: nil)
-                context.coordinator.lastSource = content
-                context.coordinator.lastIsDark = isDark
-                return webView
-            }
+        // Always paint the full HTML envelope (CSS + MathJax + body) on
+        // first mount — synchronously, no transparent shell, no async
+        // round trip. This gives the WKWebView a complete styled
+        // document immediately. Every subsequent content delta updates
+        // the body via JS DOM mutation (see `updateNSView` →
+        // `Coordinator.injectBodyHTML`), so we never reload the page,
+        // never flash, and never see the "blank then re-render" the
+        // previous loadHTMLString-on-every-update path produced.
+        //
+        // For empty starting content (streaming placeholder before the
+        // first delta), `MarkdownHTML.buildHTML("")` is essentially the
+        // envelope alone — cheap to build, fine to display as an empty
+        // bubble for the brief moment before the first delta arrives.
+        let contentHash = content.hashValue
+        let cacheKey = "\(isDark ? "d" : "l"):\(contentHash)" as NSString
+        let html: String
+        if let cachedHTML = markdownHTMLCache.object(forKey: cacheKey) {
+            html = cachedHTML as String
+        } else {
+            html = MarkdownHTML.buildHTML(content, isDark: isDark)
+            markdownHTMLCache.setObject(html as NSString, forKey: cacheKey)
         }
-
-        // Cache miss (new content): preload transparent shell, then build async
-        let textColor = isDark ? "#e0e0e0" : "#1d1d1f"
-        webView.loadHTMLString("""
-            <html><head><meta charset='utf-8'>
-            <style>* { margin:0; padding:0; } body { background:transparent; color:\(textColor); font-family:-apple-system,sans-serif; font-size:13px; }</style>
-            </head><body></body></html>
-            """, baseURL: nil)
-        context.coordinator.lastSource = ""
+        webView.loadHTMLString(html, baseURL: nil)
+        context.coordinator.lastSource = content
         context.coordinator.lastIsDark = isDark
-        loadHTML(in: webView, coordinator: context.coordinator)
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        loadHTML(in: webView, coordinator: context.coordinator)
-    }
-
-    private func loadHTML(in webView: WKWebView, coordinator: Coordinator) {
         let isDark = (colorScheme == .dark)
-        // Skip when neither content nor theme changed
+        let coordinator = context.coordinator
+
+        // Bail when nothing meaningful changed (SwiftUI re-evaluates
+        // bodies aggressively).
         guard content != coordinator.lastSource || isDark != coordinator.lastIsDark else { return }
+
+        // Theme change requires a full reload — the CSS (text color,
+        // borders, code background) is embedded in the HTML <style>
+        // block, not driven by CSS variables. Rare event (user toggling
+        // system appearance); a momentary reload-flash is acceptable.
+        let isThemeChange = (isDark != coordinator.lastIsDark)
         coordinator.lastSource = content
         coordinator.lastIsDark = isDark
-
-        // Bump generation so any in-flight build knows it's stale
         coordinator.buildGeneration += 1
-        let myGeneration = coordinator.buildGeneration
+        let myGen = coordinator.buildGeneration
         let currentContent = content
 
-        // Serial queue: only one buildHTML runs at a time.
-        // Stale tasks skip the expensive buildHTML call immediately.
         coordinator.buildQueue.async { [weak coordinator] in
             guard let coordinator = coordinator else { return }
-
-            // If a newer request arrived while we waited in the queue, skip
-            if myGeneration != coordinator.buildGeneration { return }
+            if myGen != coordinator.buildGeneration { return }
 
             let contentHash = currentContent.hashValue
             let cacheKey = "\(isDark ? "d" : "l"):\(contentHash)" as NSString
-            let html: String
-            if let cached = markdownHTMLCache.object(forKey: cacheKey) {
-                html = cached as String
-            } else {
-                html = MarkdownHTML.buildHTML(currentContent, isDark: isDark)
-                markdownHTMLCache.setObject(html as NSString, forKey: cacheKey)
+
+            if isThemeChange {
+                // Build (or fetch) full HTML, reload entire page.
+                let html: String
+                if let cached = markdownHTMLCache.object(forKey: cacheKey) {
+                    html = cached as String
+                } else {
+                    html = MarkdownHTML.buildHTML(currentContent, isDark: isDark)
+                    markdownHTMLCache.setObject(html as NSString, forKey: cacheKey)
+                }
+                DispatchQueue.main.async {
+                    if myGen != coordinator.buildGeneration { return }
+                    coordinator.isPageLoaded = false
+                    coordinator.pendingBodyHTML = nil
+                    webView.loadHTMLString(html, baseURL: nil)
+                }
+                return
+            }
+
+            // Content-only delta. Build just the <body> innards and
+            // poke them into the live document via JS. No navigation,
+            // no parse-from-scratch, no flash. CSS / MathJax / scripts
+            // stay loaded.
+            let bodyHTML = MarkdownHTML.convertMarkdown(currentContent)
+
+            // Keep the full-HTML cache warm too, so a future cold mount
+            // (LazyVStack recycling, theme toggle and back, etc.) hits
+            // the sync path in `makeNSView`.
+            if markdownHTMLCache.object(forKey: cacheKey) == nil {
+                let fullHTML = MarkdownHTML.buildHTML(currentContent, isDark: isDark)
+                markdownHTMLCache.setObject(fullHTML as NSString, forKey: cacheKey)
             }
 
             DispatchQueue.main.async { [weak coordinator] in
-                guard coordinator != nil else { return }
-                webView.loadHTMLString(html, baseURL: nil)
+                guard let coordinator = coordinator else { return }
+                if myGen != coordinator.buildGeneration { return }
+
+                if !coordinator.isPageLoaded {
+                    // Initial navigation from makeNSView still in flight.
+                    // Stash; `didFinish` will inject when ready.
+                    coordinator.pendingBodyHTML = bodyHTML
+                    return
+                }
+                coordinator.injectBodyHTML(bodyHTML, into: webView) {
+                    coordinator.remeasureHeight(webView: webView)
+                }
             }
         }
     }
@@ -4089,6 +4182,14 @@ private struct _MarkdownWebView: NSViewRepresentable {
         let buildQueue = DispatchQueue(label: "markdown.build", qos: .utility)
         /// Incremented on each loadHTML call; stale builds check this to skip work
         var buildGeneration: Int = 0
+        /// True once the WKWebView has finished its initial navigation —
+        /// only then are JS DOM mutations safe to evaluate. Updates that
+        /// arrive before this flips are stashed in `pendingBodyHTML` and
+        /// flushed by `webView(_:didFinish:)`.
+        var isPageLoaded: Bool = false
+        /// Latest body-HTML waiting on the first navigation to finish.
+        /// Always holds the freshest value; older stashes are overwritten.
+        var pendingBodyHTML: String?
         private var dynamicHeight: Binding<CGFloat>
 
         init(dynamicHeight: Binding<CGFloat>) {
@@ -4096,7 +4197,40 @@ private struct _MarkdownWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            measureHeight(webView: webView, attempt: 0)
+            isPageLoaded = true
+            if let pending = pendingBodyHTML {
+                pendingBodyHTML = nil
+                injectBodyHTML(pending, into: webView) { [weak self] in
+                    self?.measureHeight(webView: webView, attempt: 0)
+                }
+            } else {
+                measureHeight(webView: webView, attempt: 0)
+            }
+        }
+
+        /// Replace `document.body.innerHTML` with `bodyHTML` and re-run
+        /// MathJax typesetting. Body HTML is shipped over the JS bridge
+        /// as a JSON-encoded array element so all escaping (quotes,
+        /// backslashes, newlines, unicode) is handled by Foundation —
+        /// no fragile manual string mangling.
+        func injectBodyHTML(_ bodyHTML: String, into webView: WKWebView, completion: (() -> Void)? = nil) {
+            guard let data = try? JSONSerialization.data(withJSONObject: [bodyHTML]),
+                  let jsonStr = String(data: data, encoding: .utf8) else {
+                completion?()
+                return
+            }
+            let js = """
+            (function() {
+                var arr = \(jsonStr);
+                document.body.innerHTML = arr[0];
+                if (window.MathJax && window.MathJax.typesetPromise) {
+                    window.MathJax.typesetPromise([document.body]).catch(function(){});
+                }
+            })();
+            """
+            webView.evaluateJavaScript(js) { _, _ in
+                completion?()
+            }
         }
 
         /// Measure content height, retrying if the WKWebView hasn't received
@@ -4169,11 +4303,6 @@ enum MarkdownHTML {
         try? NSRegularExpression(pattern: "\\$\\$([\\s\\S]*?)\\$\\$")
     }()
 
-    /// Cached regex for inline math patterns ($...$)
-    private static let inlineMathRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: "(?<!\\$)\\$(?!\\$)([^$]+)\\$(?!\\$)")
-    }()
-
     /// Cached regex for image markdown ![alt](url)
     private static let imageRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: "!\\[([^\\]]*)\\]\\(([^)]+)\\)")
@@ -4230,8 +4359,16 @@ enum MarkdownHTML {
         <script>
         window.MathJax = {
             tex: {
-                inlineMath: [['$', '$']],
-                displayMath: [['$$', '$$']],
+                // Inline math uses LaTeX-style \\( ... \\) ONLY — never single
+                // '$'. Customer-support content is full of currency ("$5",
+                // "$5 ... $10 discount"), and treating '$' as an inline-math
+                // delimiter made MathJax parse the text between two dollar
+                // signs as a formula — e.g. it hit a literal '#' and rendered
+                // the red error "You can't use 'macro parameter character #'
+                // in math mode" right in the chat bubble. \\( ... \\) never
+                // collides with natural text.
+                inlineMath: [['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
                 processEscapes: true
             },
             svg: {
@@ -4285,7 +4422,14 @@ enum MarkdownHTML {
     // MARK: - Markdown → HTML conversion
 
     static func convertMarkdown(_ markdown: String) -> String {
-        // First, extract and preserve math formulas (both inline $...$ and display $$...$$)
+        // Extract & preserve display-math blocks ($$...$$) so markdown
+        // inline processing doesn't mangle their contents (e.g. `a_b`
+        // becoming italic). We deliberately DO NOT extract single-'$'
+        // inline math — '$' is currency in customer-support content, and
+        // protecting/round-tripping "$5 ... $10" as a formula is exactly
+        // what produced the MathJax "macro parameter character #" error.
+        // Real inline math is delimited \\( ... \\) (see the MathJax
+        // config in buildHTML) and needs no markdown protection.
         var processedMarkdown = markdown
         var mathPlaceholders: [String: String] = [:]
         var mathCounter = 0
@@ -4297,21 +4441,6 @@ enum MarkdownHTML {
             for match in matches.reversed() {
                 if let mathRange = Range(match.range, in: processedMarkdown) {
                     let placeholder = ":MATHDISPLAY\(mathCounter):"
-                    let formula = String(processedMarkdown[mathRange])
-                    mathPlaceholders[placeholder] = formula
-                    processedMarkdown.replaceSubrange(mathRange, with: placeholder)
-                    mathCounter += 1
-                }
-            }
-        }
-
-        // Extract inline math ($...$) - must come after display math
-        if let regex = inlineMathRegex {
-            let nsString = processedMarkdown as NSString
-            let matches = regex.matches(in: processedMarkdown, range: NSRange(location: 0, length: nsString.length))
-            for match in matches.reversed() {
-                if let mathRange = Range(match.range, in: processedMarkdown) {
-                    let placeholder = ":MATHINLINE\(mathCounter):"
                     let formula = String(processedMarkdown[mathRange])
                     mathPlaceholders[placeholder] = formula
                     processedMarkdown.replaceSubrange(mathRange, with: placeholder)

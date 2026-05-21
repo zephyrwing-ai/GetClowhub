@@ -2221,7 +2221,15 @@ class DashboardViewModel: ObservableObject {
     /// Extensions that the gateway accepts as image attachments (via base64 in `content` field).
     private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp"]
 
-    /// Process attachments: images → base64 attachments array; other files → pass file path in message.
+    /// True iff `url` is an existing directory. Cheap stat; called per-attachment.
+    private static func urlIsDirectory(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        return exists && isDir.boolValue
+    }
+
+    /// Process attachments: images → base64 attachments array; other files → pass file path in message;
+    /// directories → pass folder path with a "folder" hint so the agent picks list_dir over read_file.
     /// Returns (imageAttachments, textToAppend).
     private func processAttachments(_ urls: [URL]) -> (attachments: [[String: Any]], inlineText: String) {
         var imageAttachments: [[String: Any]] = []
@@ -2230,6 +2238,17 @@ class DashboardViewModel: ObservableObject {
         for url in urls {
             let ext = url.pathExtension.lowercased()
             let fileName = url.lastPathComponent
+            let isDir = Self.urlIsDirectory(url)
+
+            // Directories → never read as image, never base64; just inline the path
+            // with an explicit "folder" hint so the AI agent reaches for list_dir /
+            // glob tools rather than read_file. Must run before the image branch
+            // because the path might literally end in `.png` and still be a folder.
+            if isDir {
+                os_log(.info, "processAttachments: directory '%{public}@' → passing folder path", fileName)
+                textParts.append("Attached folder: \(url.path)")
+                continue
+            }
 
             // Image files → send as base64 attachment (gateway only accepts image/*)
             if Self.imageExtensions.contains(ext) {

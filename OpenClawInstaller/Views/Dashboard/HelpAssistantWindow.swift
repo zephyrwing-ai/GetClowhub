@@ -235,6 +235,11 @@ struct MessageBubble: View {
     let message: HelpMessage
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovering = false
+    /// Visual ack for the copy button — flips on for ~1.5s after a copy
+    /// click. Mirrors `ChatBubble.copied` in DashboardView.swift so the
+    /// Help window's UX matches the main chat.
+    @State private var copied = false
+    @State private var copyResetTask: DispatchWorkItem?
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -245,50 +250,69 @@ struct MessageBubble: View {
                     .frame(width: 24, height: 24)
             }
 
-            ZStack(alignment: .topTrailing) {
-                if message.role == .assistant {
-                    SelectableMarkdownView(content: message.content)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(bubbleBackground)
-                        .cornerRadius(12)
-                } else {
-                    Text(message.content)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(bubbleBackground)
-                        .cornerRadius(12)
+            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
+                ZStack(alignment: .topTrailing) {
+                    if message.role == .assistant {
+                        SelectableMarkdownView(content: message.content)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(bubbleBackground)
+                            .cornerRadius(12)
+                    } else {
+                        Text(message.content)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(bubbleBackground)
+                            .cornerRadius(12)
+                    }
+                }
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isHovering = hovering
+                    }
+                }
+                .contextMenu {
+                    Button(action: { performCopy(message.content) }) {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
                 }
 
-                // Hover copy button
-                if isHovering && !message.content.isEmpty {
-                    Button(action: { copyToClipboard(message.content) }) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .padding(4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color(NSColor.windowBackgroundColor))
-                                    .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
-                            )
+                // Always-visible copy affordance under each bubble (dimmed
+                // when the bubble isn't hovered). The assistant side
+                // renders via WKWebView (SelectableMarkdownView), which
+                // supports drag-select inside a single message but
+                // can't span bubbles — so a one-click copy is the most
+                // reliable path. Click → icon swaps to checkmark + "已
+                // 复制" label for 1.5s.
+                if !message.content.isEmpty {
+                    Button(action: { performCopy(message.content) }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 10))
+                                .foregroundColor(copied ? .green : .secondary)
+                            if copied {
+                                Text("已复制")
+                                    .font(.caption2)
+                                    .foregroundColor(.green)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                            }
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(Color(NSColor.windowBackgroundColor))
+                                .shadow(color: .black.opacity(0.06), radius: 1, y: 0.5)
+                        )
                     }
                     .buttonStyle(.plain)
-                    .padding(5)
-                    .transition(.opacity)
-                }
-            }
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isHovering = hovering
-                }
-            }
-            .contextMenu {
-                Button(action: { copyToClipboard(message.content) }) {
-                    Label("Copy", systemImage: "doc.on.doc")
+                    .help(copied ? "已复制" : "复制消息")
+                    .opacity(isHovering || copied ? 1.0 : 0.55)
+                    .animation(.easeInOut(duration: 0.15), value: isHovering)
+                    .animation(.easeInOut(duration: 0.18), value: copied)
                 }
             }
 
@@ -318,5 +342,22 @@ struct MessageBubble: View {
     private func copyToClipboard(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Copy + show the "已复制" ack for 1.5s. Re-clicks restart the
+    /// reset window instead of stacking timers.
+    private func performCopy(_ text: String) {
+        copyToClipboard(text)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            copied = true
+        }
+        copyResetTask?.cancel()
+        let task = DispatchWorkItem {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                copied = false
+            }
+        }
+        copyResetTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: task)
     }
 }
