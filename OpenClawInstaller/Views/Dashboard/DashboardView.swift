@@ -3096,6 +3096,8 @@ struct MessageActionIcon: View {
     let help: String
     let action: () -> Void
     @State private var hovering = false
+    @State private var showTooltip = false
+    @State private var tooltipTask: DispatchWorkItem?
 
     var body: some View {
         Button(action: action) {
@@ -3110,9 +3112,46 @@ struct MessageActionIcon: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(help)
-        .onHover { hovering = $0 }
+        // Claude-style tooltip instead of the native `.help()` — the system
+        // tooltip's ~1.5s delay + OS styling felt unresponsive. A compact dark
+        // pill fades in ~0.35s after the cursor settles, sits just above the
+        // icon, and never intercepts clicks. VoiceOver still gets the label via
+        // accessibilityLabel.
+        .onHover { h in
+            hovering = h
+            tooltipTask?.cancel()
+            if h {
+                let task = DispatchWorkItem {
+                    withAnimation(.easeInOut(duration: 0.1)) { showTooltip = true }
+                }
+                tooltipTask = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: task)
+            } else {
+                showTooltip = false
+            }
+        }
         .animation(.easeInOut(duration: 0.12), value: hovering)
+        .accessibilityLabel(help)
+        .overlay(alignment: .top) {
+            if showTooltip {
+                Text(help)
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(SwiftUI.Color(white: 0.15))
+                            .shadow(color: SwiftUI.Color.black.opacity(0.28), radius: 4, y: 2)
+                    )
+                    .offset(y: -26)
+                    .transition(.opacity)
+                    .zIndex(100)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 
@@ -3327,7 +3366,7 @@ struct ChatBubble: View {
                                 MessageActionIcon(
                                     systemName: copied ? "checkmark" : "doc.on.doc",
                                     tint: copied ? .green : .secondary,
-                                    help: copied ? "已复制" : "复制消息",
+                                    help: copied ? "已复制" : "复制",
                                     action: { performCopy(message.content) }
                                 )
                                 // Edit & resend only makes sense for the user's
@@ -3338,7 +3377,7 @@ struct ChatBubble: View {
                                     MessageActionIcon(
                                         systemName: "arrow.uturn.backward",
                                         tint: .secondary,
-                                        help: "编辑重发：把这条放回输入框，并丢弃此条及其后的对话",
+                                        help: "编辑重发",
                                         action: { onRewind?(message) }
                                     )
                                 }

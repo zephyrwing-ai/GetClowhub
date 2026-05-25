@@ -292,7 +292,7 @@ struct MessageBubble: View {
                     MessageActionIcon(
                         systemName: copied ? "checkmark" : "doc.on.doc",
                         tint: copied ? .green : .secondary,
-                        help: copied ? "已复制" : "复制消息",
+                        help: copied ? "已复制" : "复制",
                         action: { performCopy(message.content) }
                     )
                     // Claude-style: hidden until message hover, fade in on hover.
