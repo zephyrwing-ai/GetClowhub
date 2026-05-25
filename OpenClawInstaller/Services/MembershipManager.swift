@@ -422,7 +422,7 @@ class MembershipManager: ObservableObject {
 
     // MARK: - Apply Key to Config
 
-    func applyKeyToConfig(_ key: ApiKeyInfo) {
+    func applyKeyToConfig(_ key: ApiKeyInfo, activate: Bool = false) {
         // Match preset models against the key's allow-list case-insensitively. The
         // backend has historically shipped `MiniMax-*` in mixed case while the
         // preset (and LiteLLM model registry) use lowercase; an exact-case Set
@@ -439,13 +439,17 @@ class MembershipManager: ObservableObject {
         let allPresetModels = presetManager.findProvider(byKey: "getclawhub")?.models ?? []
         let models = allPresetModels.filter { allowedLowercased.contains($0.id.lowercased()) }
         let baseUrl = presetManager.findProvider(byKey: "getclawhub")?.baseUrl ?? "https://ai.getclawhub.com/v1"
-        AppSettingsManager.writeGetClawHubProvider(apiKey: key.fullKey, models: models, baseUrl: baseUrl)
+        AppSettingsManager.writeGetClawHubProvider(apiKey: key.fullKey, models: models, baseUrl: baseUrl, activate: activate)
     }
 
     /// Automatically apply the most recently created active key to config.
     func autoApplyFirstKey() {
+        let shouldActivate = AppSettingsManager.shouldAutoApplyGetClawHubProvider()
         guard let latestActive = apiKeys.last(where: { $0.isActive }) else { return }
-        applyKeyToConfig(latestActive)
+        if !shouldActivate {
+            os_log("[MembershipManager] Custom provider is active, syncing GetClawHub key without switching models", log: OSLog.default, type: .info)
+        }
+        applyKeyToConfig(latestActive, activate: shouldActivate)
     }
 }
 #endif

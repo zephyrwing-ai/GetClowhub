@@ -6,6 +6,7 @@ struct SkillsTabView: View {
     @State private var searchText = ""
     @State private var filterStatus: SkillFilterStatus = .all
     @State private var showInstallSheet = false
+    @State private var skillPendingRemoval: SkillInfo?
 
     enum SkillFilterStatus: String, CaseIterable {
         case all = "All"
@@ -142,8 +143,13 @@ struct SkillsTabView: View {
                             SkillRow(
                                 skill: skill,
                                 isLoadingDetail: viewModel.isLoadingSkillDetail,
+                                isRemoving: viewModel.removingSkillName == skill.name,
+                                canRemove: DashboardViewModel.canRemoveSkill(skill),
                                 onInfo: {
                                     Task { await viewModel.loadSkillDetail(skill.name) }
+                                },
+                                onRemove: {
+                                    skillPendingRemoval = skill
                                 }
                             )
 
@@ -173,6 +179,16 @@ struct SkillsTabView: View {
                 isPresented: $showInstallSheet,
                 searchText: $searchText,
                 filterStatus: $filterStatus
+            )
+        }
+        .alert(item: $skillPendingRemoval) { skill in
+            Alert(
+                title: Text("Remove Skill"),
+                message: Text("Remove \"\(skill.name)\" from installed skills?"),
+                primaryButton: .destructive(Text("Remove")) {
+                    Task { await viewModel.removeSkill(skill) }
+                },
+                secondaryButton: .cancel()
             )
         }
     }
@@ -386,7 +402,10 @@ struct SkillInstallSheet: View {
 struct SkillRow: View {
     let skill: SkillInfo
     let isLoadingDetail: Bool
+    let isRemoving: Bool
+    let canRemove: Bool
     let onInfo: () -> Void
+    let onRemove: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -428,6 +447,22 @@ struct SkillRow: View {
                     .font(.caption)
                     .foregroundColor(.orange)
             }
+
+            // Remove button
+            Button(action: onRemove) {
+                if isRemoving {
+                    ProgressView()
+                        .scaleEffect(0.55)
+                        .frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(canRemove ? .red : .secondary)
+            .disabled(!canRemove || isRemoving)
+            .help(canRemove ? "Remove skill" : "Bundled skills cannot be removed")
 
             // Info button
             Button(action: onInfo) {

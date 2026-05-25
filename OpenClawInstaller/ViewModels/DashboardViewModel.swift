@@ -883,6 +883,7 @@ class DashboardViewModel: ObservableObject {
         editedSelectedProviderKey = settings.settings.selectedProviderKey
         editedProviderApi = settings.settings.providerApi
         editedConfiguredModels = settings.settings.configuredModels
+        editedActiveServiceSource = settings.settings.activeServiceSource
         availableProviders = presetManager.loadPresets().filter { $0.key != "getclawhub" }
 
         // If no config file exists yet, populate from preset defaults
@@ -940,8 +941,13 @@ class DashboardViewModel: ObservableObject {
                 #else
                 let models = allPresetModels
                 #endif
-                AppSettingsManager.writeGetClawHubProvider(apiKey: editedGetClawHubApiKey, models: models, baseUrl: baseUrl)
+                AppSettingsManager.writeGetClawHubProvider(apiKey: editedGetClawHubApiKey, models: models, baseUrl: baseUrl, activate: true)
             }
+            settings.loadFromFile()
+            syncEditedFieldsFromSettings()
+            loadAvailableAgents()
+            await loadModels()
+            await loadModelsForSettings()
             showSuccessMessage("Configuration saved to openclaw.json")
         } else {
             showErrorMessage("Failed to save configuration file")
@@ -1140,6 +1146,7 @@ class DashboardViewModel: ObservableObject {
     @Published var isLoadingSkills = false
     @Published var selectedSkillDetail: SkillDetailInfo?
     @Published var isLoadingSkillDetail = false
+    @Published var removingSkillName: String?
 
     /// Load skills list by running `openclaw skills list`
     func loadSkills() async {
@@ -1259,6 +1266,34 @@ class DashboardViewModel: ObservableObject {
         isLoadingSkillDetail = false
     }
 
+    static func canRemoveSkill(_ skill: SkillInfo) -> Bool {
+        skill.source != "openclaw-bundled"
+    }
+
+    func removeSkill(_ skill: SkillInfo) async {
+        guard Self.canRemoveSkill(skill) else {
+            showErrorMessage("Bundled skills cannot be removed")
+            return
+        }
+
+        removingSkillName = skill.name
+        let scopeFlag = skill.source == "openclaw-workspace" ? "" : " -g"
+        let command = "npx skills remove \(Self.shellQuote(skill.name))\(scopeFlag) -y"
+        let output = await openclawService.runCommand(
+            "(\(command) 2>&1 && echo __OPENCLAW_SKILL_REMOVE_OK__) | sed 's/\\x1b\\[[0-9;]*m//g'",
+            timeout: 120
+        )
+        removingSkillName = nil
+
+        if output?.contains("__OPENCLAW_SKILL_REMOVE_OK__") == true {
+            await loadSkills()
+            showSuccessMessage("Removed skill \(skill.name)")
+        } else {
+            let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines)
+            showErrorMessage("Failed to remove \(skill.name): \(trimmed?.isEmpty == false ? trimmed! : "unknown error")")
+        }
+    }
+
     /// Parse `openclaw skills info <name>` output
     static func parseSkillInfo(output: String?, skillName: String) -> SkillDetailInfo? {
         guard let output = output else { return nil }
@@ -1343,6 +1378,10 @@ class DashboardViewModel: ObservableObject {
             path: path,
             requirements: requirements
         )
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
     // MARK: - Chat

@@ -37,11 +37,24 @@ class AppSettingsManager: ObservableObject {
         loadFromFile()
     }
 
+    private static var defaultConfigPath: String {
+        NSString("~/.openclaw/openclaw.json").expandingTildeInPath
+    }
+    private static var appStatePath: String {
+        NSString("~/.openclaw/getclawhub-app-state.json").expandingTildeInPath
+    }
+    private static let legacyAppStateKey = "getclawhubApp"
+    private static let activeServiceSourceKey = "activeServiceSource"
+    private static let selectedCustomProviderKey = "selectedCustomProviderKey"
+    private static let customProviderSnapshotsKey = "customProviders"
+
     // MARK: - Read from openclaw.json
 
     /// Load settings from ~/.openclaw/openclaw.json
     func loadFromFile() {
         guard let dict = readConfigDict() else { return }
+        let appState = Self.readAppStateDict(legacyConfig: dict)
+        Self.removeLegacyAppState(fromConfigAt: configPath, dict: dict)
 
         var newSettings = AppSettings()
 
@@ -61,19 +74,46 @@ class AppSettingsManager: ObservableObject {
         // Provider key, baseUrl, apiKey, api, models
         if let models = dict["models"] as? [String: Any],
            let providers = models["providers"] as? [String: Any] {
-            // Determine active service source — getclawhub takes priority
+            let activeProviderKey = Self.activeProviderKey(in: dict)
             let hasGetclawhub = providers["getclawhub"] != nil
-            let hasCustom = providers.keys.contains(where: { $0 != "getclawhub" })
-            if hasGetclawhub {
+            let customProviderSnapshots = appState?[Self.customProviderSnapshotsKey] as? [String: Any] ?? [:]
+            let customKeys = Array(Set(
+                providers.keys.filter { $0 != "getclawhub" }
+                    + customProviderSnapshots.keys.filter { $0 != "getclawhub" }
+            )).sorted()
+            let hasCustom = !customKeys.isEmpty
+            let savedSource = appState?[Self.activeServiceSourceKey] as? String
+            let savedCustomProvider = appState?[Self.selectedCustomProviderKey] as? String
+
+            // The runtime default model is the source of truth for which provider is active.
+            // If both providers exist, do not let a synced GetClawHub key override a custom default.
+            if savedSource == "custom", hasCustom {
+                newSettings.activeServiceSource = "custom"
+            } else if savedSource == "getclawhub", hasGetclawhub {
                 newSettings.activeServiceSource = "getclawhub"
-            } else if hasCustom {
+            } else if activeProviderKey == "getclawhub" || (activeProviderKey == nil && hasGetclawhub && !hasCustom) {
+                newSettings.activeServiceSource = "getclawhub"
+            } else if activeProviderKey != nil || hasCustom {
                 newSettings.activeServiceSource = "custom"
             }
 
             // Load the user's custom provider (non-getclawhub)
-            if let firstKey = providers.keys.first(where: { $0 != "getclawhub" }),
-               let firstProvider = providers[firstKey] as? [String: Any] {
-                newSettings.selectedProviderKey = firstKey
+            let customProviderKey: String? = {
+                if let savedCustomProvider,
+                   Self.customProviderEntry(for: savedCustomProvider, providers: providers, snapshots: customProviderSnapshots) != nil,
+                   savedCustomProvider != "getclawhub" {
+                    return savedCustomProvider
+                }
+                if let activeProviderKey,
+                   activeProviderKey != "getclawhub",
+                   Self.customProviderEntry(for: activeProviderKey, providers: providers, snapshots: customProviderSnapshots) != nil {
+                    return activeProviderKey
+                }
+                return customKeys.first
+            }()
+            if let providerKey = customProviderKey,
+               let firstProvider = Self.customProviderEntry(for: providerKey, providers: providers, snapshots: customProviderSnapshots) {
+                newSettings.selectedProviderKey = providerKey
                 if let baseUrl = firstProvider["baseUrl"] as? String {
                     newSettings.modelBaseUrl = baseUrl
                 }
@@ -101,6 +141,7 @@ class AppSettingsManager: ObservableObject {
     /// Creates the full models.providers node if it doesn't exist.
     func saveToFile() -> Bool {
         var dict = readConfigDict() ?? [:]
+        dict.removeValue(forKey: Self.legacyAppStateKey)
 
         // Update gateway section
         var gateway = dict["gateway"] as? [String: Any] ?? [:]
@@ -145,24 +186,27 @@ class AppSettingsManager: ObservableObject {
             "models": modelsArray
         ]
 
-        // Build models node — only keep the active provider
+        // Build models node. Preserve inactive providers so switching between
+        // official and custom services does not erase the user's saved keys.
+        let previousActiveProviderKey = Self.activeProviderKey(in: dict)
         var modelsNode = dict["models"] as? [String: Any] ?? [:]
         modelsNode["mode"] = "merge"
+        var providers = modelsNode["providers"] as? [String: Any] ?? [:]
 
-        if settings.activeServiceSource == "getclawhub" {
-            // GetClawHub selected: read getclawhub provider from existing config (written by MembershipManager),
-            // remove all other providers
-            let existingProviders = modelsNode["providers"] as? [String: Any] ?? [:]
-            if let hubProvider = existingProviders["getclawhub"] {
-                modelsNode["providers"] = ["getclawhub": hubProvider]
-            } else {
-                modelsNode["providers"] = [String: Any]()
-            }
-        } else {
-            // Custom selected: write only the user's custom provider, remove getclawhub
-            modelsNode["providers"] = [providerKey: providerEntry]
+        if settings.activeServiceSource != "getclawhub" {
+            providers[providerKey] = providerEntry
         }
+        modelsNode["providers"] = providers
         dict["models"] = modelsNode
+
+        let shouldSnapshotEditedProvider = settings.activeServiceSource != "getclawhub"
+            || !settings.modelApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        Self.updateAppState(
+            providers: providers,
+            activeServiceSource: settings.activeServiceSource,
+            selectedCustomProviderKey: providerKey,
+            customProviderEntry: shouldSnapshotEditedProvider ? providerEntry : nil
+        )
 
         // Build agents.defaults
         var agents = dict["agents"] as? [String: Any] ?? [:]
@@ -174,13 +218,7 @@ class AppSettingsManager: ObservableObject {
 
         if settings.activeServiceSource == "getclawhub" {
             activeProviderKey = "getclawhub"
-            let existingProviders = (dict["models"] as? [String: Any])?["providers"] as? [String: Any] ?? [:]
-            if let hubProvider = existingProviders["getclawhub"] as? [String: Any],
-               let hubModels = hubProvider["models"] as? [[String: Any]] {
-                activeModelIds = hubModels.compactMap { $0["id"] as? String }
-            } else {
-                activeModelIds = []
-            }
+            activeModelIds = Self.providerModelIds(from: providers["getclawhub"])
         } else {
             activeProviderKey = providerKey
             activeModelIds = settings.configuredModels.map { $0.id }
@@ -204,18 +242,7 @@ class AppSettingsManager: ObservableObject {
         // Update imageModel — only image-capable models, fallback is one model different from primary
         let imageModelIds: [String]
         if settings.activeServiceSource == "getclawhub" {
-            let existingProviders = (dict["models"] as? [String: Any])?["providers"] as? [String: Any] ?? [:]
-            if let hubProvider = existingProviders["getclawhub"] as? [String: Any],
-               let hubModels = hubProvider["models"] as? [[String: Any]] {
-                imageModelIds = hubModels.compactMap { m in
-                    guard let mid = m["id"] as? String,
-                          let input = m["input"] as? [String],
-                          input.contains("image") else { return nil }
-                    return mid
-                }
-            } else {
-                imageModelIds = []
-            }
+            imageModelIds = Self.providerImageModelIds(from: providers["getclawhub"])
         } else {
             imageModelIds = settings.configuredModels.filter { $0.input.contains("image") }.map { $0.id }
         }
@@ -232,15 +259,20 @@ class AppSettingsManager: ObservableObject {
 
         agents["defaults"] = defaults
 
-        // Update agents.list — replace model refs that point to removed providers
-        let activeProviderKeys = Set((modelsNode["providers"] as? [String: Any] ?? [:]).keys)
+        // Update agents.list. Since providers are preserved, switch agents that
+        // were following the previous active provider over to the newly active
+        // default, while leaving explicit third-party overrides intact.
+        let activeProviderKeys = Set(providers.keys)
         if var agentList = agents["list"] as? [[String: Any]] {
             let defaultModel = activeModelIds.first.map { "\(activeProviderKey)/\($0)" } ?? ""
             for i in agentList.indices {
                 guard let model = agentList[i]["model"] as? String,
                       let slash = model.firstIndex(of: "/") else { continue }
                 let modelProvider = String(model[model.startIndex..<slash])
-                if !activeProviderKeys.contains(modelProvider) {
+                let wasPreviousActive = previousActiveProviderKey != nil
+                    && previousActiveProviderKey != activeProviderKey
+                    && modelProvider == previousActiveProviderKey
+                if !defaultModel.isEmpty && (!activeProviderKeys.contains(modelProvider) || wasPreviousActive) {
                     agentList[i]["model"] = defaultModel
                 }
             }
@@ -268,9 +300,10 @@ class AppSettingsManager: ObservableObject {
     // MARK: - GetClawHub Provider
 
     /// Write (or update) the `getclawhub` provider entry in openclaw.json.
-    /// Called by MembershipManager; does not touch other providers.
-    static func writeGetClawHubProvider(apiKey: String, models: [PresetModel], baseUrl: String = "https://ai.getclawhub.com/v1") {
-        let configPath = NSString("~/.openclaw/openclaw.json").expandingTildeInPath
+    /// By default this only syncs the provider entry. Passing `activate: true`
+    /// switches the runtime default model to GetClawHub after an explicit user save.
+    static func writeGetClawHubProvider(apiKey: String, models: [PresetModel], baseUrl: String = "https://ai.getclawhub.com/v1", activate: Bool = false) {
+        let configPath = defaultConfigPath
         let fm = FileManager.default
 
         // Ensure directory exists
@@ -285,6 +318,9 @@ class AppSettingsManager: ObservableObject {
            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             dict = existing
         }
+        let existingAppState = readAppStateDict(legacyConfig: dict)
+        dict.removeValue(forKey: legacyAppStateKey)
+        let previousActiveProviderKey = activeProviderKey(in: dict)
 
         // Build getclawhub provider entry with full model details (same as custom provider)
         let modelEntries: [[String: Any]] = models.map { model in
@@ -314,9 +350,26 @@ class AppSettingsManager: ObservableObject {
 
         var modelsNode = dict["models"] as? [String: Any] ?? [:]
         modelsNode["mode"] = "merge"
-        // Replace all providers with only getclawhub
-        modelsNode["providers"] = ["getclawhub": providerEntry]
+        var providers = modelsNode["providers"] as? [String: Any] ?? [:]
+        providers["getclawhub"] = providerEntry
+        modelsNode["providers"] = providers
         dict["models"] = modelsNode
+
+        let selectedCustomProvider = (existingAppState?[selectedCustomProviderKey] as? String)
+            ?? providers.keys.filter { $0 != "getclawhub" }.sorted().first
+        updateAppState(
+            providers: providers,
+            activeServiceSource: activate ? "getclawhub" : nil,
+            selectedCustomProviderKey: selectedCustomProvider,
+            customProviderEntry: nil
+        )
+
+        guard activate else {
+            if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: URL(fileURLWithPath: configPath), options: .atomic)
+            }
+            return
+        }
 
         // Update agents.defaults: model, models, imageModel
         let modelIds = models.map { $0.id }
@@ -350,14 +403,17 @@ class AppSettingsManager: ObservableObject {
         defaults["models"] = modelsMapping
         agents["defaults"] = defaults
 
-        // Update agents.list — replace refs to removed providers
+        // Update agents.list — switch refs from the previously active provider.
         if var agentList = agents["list"] as? [[String: Any]] {
             let defaultModel = modelIds.first.map { "getclawhub/\($0)" } ?? ""
             for i in agentList.indices {
                 guard let model = agentList[i]["model"] as? String,
                       let slash = model.firstIndex(of: "/") else { continue }
                 let modelProvider = String(model[model.startIndex..<slash])
-                if modelProvider != "getclawhub" {
+                let wasPreviousActive = previousActiveProviderKey != nil
+                    && previousActiveProviderKey != "getclawhub"
+                    && modelProvider == previousActiveProviderKey
+                if !defaultModel.isEmpty && (!providers.keys.contains(modelProvider) || wasPreviousActive) {
                     agentList[i]["model"] = defaultModel
                 }
             }
@@ -387,17 +443,177 @@ class AppSettingsManager: ObservableObject {
     }
 
     private func readConfigDict() -> [String: Any]? {
-        guard FileManager.default.fileExists(atPath: configPath),
-              let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+        Self.readConfigDict(at: configPath)
+    }
+
+    private static func readConfigDict(at path: String) -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
         return dict
     }
 
+    static func shouldAutoApplyGetClawHubProvider() -> Bool {
+        guard let dict = readConfigDict(at: defaultConfigPath) else { return true }
+        removeLegacyAppState(fromConfigAt: defaultConfigPath, dict: dict)
+        if let appState = readAppStateDict(legacyConfig: dict),
+           let savedSource = appState[activeServiceSourceKey] as? String {
+            return savedSource == "getclawhub"
+        }
+        guard let models = dict["models"] as? [String: Any],
+              let providers = models["providers"] as? [String: Any],
+              !providers.isEmpty else {
+            return true
+        }
+
+        let activeProvider = activeProviderKey(in: dict)
+        if let activeProvider {
+            return activeProvider == "getclawhub"
+        }
+
+        let hasCustom = providers.keys.contains { $0 != "getclawhub" }
+        return !hasCustom
+    }
+
+    private static func activeProviderKey(in dict: [String: Any]) -> String? {
+        guard let agents = dict["agents"] as? [String: Any],
+              let defaults = agents["defaults"] as? [String: Any],
+              let model = defaults["model"] as? [String: Any],
+              let primary = model["primary"] as? String,
+              let slash = primary.firstIndex(of: "/") else {
+            return nil
+        }
+        let provider = String(primary[..<slash])
+        return provider.isEmpty ? nil : provider
+    }
+
+    private static func providerModelIds(from provider: Any?) -> [String] {
+        guard let provider = provider as? [String: Any],
+              let models = provider["models"] as? [[String: Any]] else {
+            return []
+        }
+        return models.compactMap { $0["id"] as? String }
+    }
+
+    private static func providerImageModelIds(from provider: Any?) -> [String] {
+        guard let provider = provider as? [String: Any],
+              let models = provider["models"] as? [[String: Any]] else {
+            return []
+        }
+        return models.compactMap { model in
+            guard let id = model["id"] as? String,
+                  let input = model["input"] as? [String],
+                  input.contains("image") else {
+                return nil
+            }
+            return id
+        }
+    }
+
+    private static func customProviderEntry(
+        for key: String,
+        providers: [String: Any],
+        snapshots: [String: Any]
+    ) -> [String: Any]? {
+        if let provider = providers[key] as? [String: Any] {
+            return provider
+        }
+        return snapshots[key] as? [String: Any]
+    }
+
+    private static func updateAppState(
+        providers: [String: Any],
+        activeServiceSource: String?,
+        selectedCustomProviderKey selectedCustomProvider: String?,
+        customProviderEntry: [String: Any]?
+    ) {
+        var appState = readAppStateDict() ?? [:]
+        var snapshots = appState[customProviderSnapshotsKey] as? [String: Any] ?? [:]
+
+        for (key, provider) in providers where key != "getclawhub" {
+            snapshots[key] = provider
+        }
+        if let selectedCustomProvider,
+           selectedCustomProvider != "getclawhub",
+           let customProviderEntry {
+            snapshots[selectedCustomProvider] = customProviderEntry
+        }
+
+        if let activeServiceSource {
+            appState[activeServiceSourceKey] = activeServiceSource
+        }
+        if let selectedCustomProvider, selectedCustomProvider != "getclawhub" {
+            appState[selectedCustomProviderKey] = selectedCustomProvider
+        }
+        if !snapshots.isEmpty {
+            appState[customProviderSnapshotsKey] = snapshots
+        }
+        if !appState.isEmpty {
+            writeAppStateDict(appState)
+        }
+    }
+
+    private static func readAppStateDict(legacyConfig: [String: Any]? = nil) -> [String: Any]? {
+        var appState: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: appStatePath),
+           let data = try? Data(contentsOf: URL(fileURLWithPath: appStatePath)),
+           let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            appState = saved
+        }
+
+        if let legacyState = legacyConfig?[legacyAppStateKey] as? [String: Any] {
+            appState = mergeAppState(fileState: appState, legacyState: legacyState)
+            writeAppStateDict(appState)
+        }
+
+        return appState.isEmpty ? nil : appState
+    }
+
+    private static func mergeAppState(fileState: [String: Any], legacyState: [String: Any]) -> [String: Any] {
+        var merged = legacyState
+        let legacySnapshots = legacyState[customProviderSnapshotsKey] as? [String: Any] ?? [:]
+        let fileSnapshots = fileState[customProviderSnapshotsKey] as? [String: Any] ?? [:]
+        var snapshots = legacySnapshots
+        for (key, value) in fileSnapshots {
+            snapshots[key] = value
+        }
+        for (key, value) in fileState where key != customProviderSnapshotsKey {
+            merged[key] = value
+        }
+        if !snapshots.isEmpty {
+            merged[customProviderSnapshotsKey] = snapshots
+        }
+        return merged
+    }
+
+    private static func writeAppStateDict(_ appState: [String: Any]) {
+        let dirPath = NSString("~/.openclaw").expandingTildeInPath
+        if !FileManager.default.fileExists(atPath: dirPath) {
+            try? FileManager.default.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: appState, options: [.prettyPrinted, .sortedKeys]) else {
+            return
+        }
+        try? data.write(to: URL(fileURLWithPath: appStatePath), options: .atomic)
+    }
+
+    private static func removeLegacyAppState(fromConfigAt path: String, dict: [String: Any]) {
+        guard dict[legacyAppStateKey] != nil else { return }
+        var sanitized = dict
+        sanitized.removeValue(forKey: legacyAppStateKey)
+        guard let data = try? JSONSerialization.data(withJSONObject: sanitized, options: [.prettyPrinted, .sortedKeys]) else {
+            return
+        }
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
     private func writeConfigDict(_ dict: [String: Any]) -> Bool {
         do {
-            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+            var sanitized = dict
+            sanitized.removeValue(forKey: Self.legacyAppStateKey)
+            let data = try JSONSerialization.data(withJSONObject: sanitized, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: URL(fileURLWithPath: configPath), options: .atomic)
             return true
         } catch {
