@@ -1476,21 +1476,28 @@ struct ChatView: View {
     @ViewBuilder
     private func chatScrollContent(proxy: ScrollViewProxy) -> some View {
         let scrollView = ScrollView {
-            if viewModel.chatMessages.isEmpty {
-                ChatWelcomeView()
-            } else {
-                LazyVStack(spacing: 16) {
-                    Color.clear
-                        .frame(height: 1)
-                        .id("chatTop")
+            // Single LazyVStack is the scroll container for both the empty
+            // state and the message thread. Was an outer if-else that
+            // swapped ChatWelcomeView ↔ LazyVStack — on the FIRST sent
+            // message the whole subtree was torn down and remounted,
+            // which forced every fresh ChatBubble's WKWebView to run a
+            // cold `loadHTMLString` navigation. Until that async navigation
+            // painted, the entire chat panel went white. Keeping the
+            // LazyVStack permanent means the first message is just a
+            // diff-insert: the empty-state block disappears, the new
+            // ChatBubble appears, the container never re-mounts.
+            LazyVStack(spacing: 16) {
+                Color.clear
+                    .frame(height: 1)
+                    .id("chatTop")
 
-                    // Loading placeholder — shown while ChatSessionStore
-                    // is decoding the session JSON off the main thread.
-                    // The chatMessages array is empty during this window,
-                    // so without this the view would flash blank.
+                if viewModel.chatMessages.isEmpty {
                     if let sid = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId],
-                       viewModel.loadingSessionIds.contains(sid),
-                       viewModel.chatMessages.isEmpty {
+                       viewModel.loadingSessionIds.contains(sid) {
+                        // Session JSON is decoding off the main thread.
+                        // Before the LazyVStack-merge, this branch was
+                        // unreachable (outer if matched empty first and
+                        // showed the welcome screen instead).
                         HStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
@@ -1500,57 +1507,67 @@ struct ChatView: View {
                         }
                         .padding(.vertical, 24)
                         .frame(maxWidth: .infinity)
+                    } else {
+                        // Truly empty agent / brand-new session. minHeight
+                        // gives the welcome layout room to breathe inside
+                        // the LazyVStack (which would otherwise hug
+                        // content). The number is rough — Logo (200) +
+                        // brand + subtitle + 5 cards + spacing — and is
+                        // intentionally generous so the cards aren't
+                        // squashed up against the chat input.
+                        ChatWelcomeView()
+                            .frame(minHeight: 520)
                     }
+                }
 
-                    ForEach(viewModel.chatMessages, id: \.id) { message in
-                        // Hide bubbles that are "transient placeholders"
-                        // — empty assistant messages still in the
-                        // `.loading` state. Those get a dedicated
-                        // ThinkingIndicator below.
-                        //
-                        // EXCEPTION: `.background` placeholders pass
-                        // through. Was a real bug — ThinkingIndicator's
-                        // 120s timer auto-flips `.loading` → `.background`
-                        // for long-running tasks; the old filter (which
-                        // skipped ALL empty assistant messages regardless
-                        // of status) then dropped these from the ChatBubble
-                        // loop, AND the ThinkingIndicator filter no longer
-                        // matched them (status is .background now), so the
-                        // message vanished from UI while the gateway-side
-                        // task was still running. Letting it through here
-                        // is correct: ChatBubble has a "Running in
-                        // background..." sub-row that renders even with
-                        // empty content, which is exactly the affordance
-                        // the user needs to see.
-                        let isLoadingPlaceholder = message.role == .assistant
-                            && message.content.isEmpty
-                            && message.attachments.isEmpty
-                            && message.taskStatus == .loading
-                        if !isLoadingPlaceholder {
-                            if message.scrollTargetId != nil {
-                                BackgroundTaskNotification(message: message, scrollProxy: proxy)
-                                    .id(message.id)
-                            } else {
-                                ChatBubble(message: message, onRewind: { viewModel.rewindToMessage($0) }, onCancel: { viewModel.cancelChat($0.id) })
-                                    .id(message.id)
-                            }
+                ForEach(viewModel.chatMessages, id: \.id) { message in
+                    // Hide bubbles that are "transient placeholders"
+                    // — empty assistant messages still in the
+                    // `.loading` state. Those get a dedicated
+                    // ThinkingIndicator below.
+                    //
+                    // EXCEPTION: `.background` placeholders pass
+                    // through. Was a real bug — ThinkingIndicator's
+                    // 120s timer auto-flips `.loading` → `.background`
+                    // for long-running tasks; the old filter (which
+                    // skipped ALL empty assistant messages regardless
+                    // of status) then dropped these from the ChatBubble
+                    // loop, AND the ThinkingIndicator filter no longer
+                    // matched them (status is .background now), so the
+                    // message vanished from UI while the gateway-side
+                    // task was still running. Letting it through here
+                    // is correct: ChatBubble has a "Running in
+                    // background..." sub-row that renders even with
+                    // empty content, which is exactly the affordance
+                    // the user needs to see.
+                    let isLoadingPlaceholder = message.role == .assistant
+                        && message.content.isEmpty
+                        && message.attachments.isEmpty
+                        && message.taskStatus == .loading
+                    if !isLoadingPlaceholder {
+                        if message.scrollTargetId != nil {
+                            BackgroundTaskNotification(message: message, scrollProxy: proxy)
+                                .id(message.id)
+                        } else {
+                            ChatBubble(message: message, onRewind: { viewModel.rewindToMessage($0) }, onCancel: { viewModel.cancelChat($0.id) })
+                                .id(message.id)
                         }
                     }
-
-                    ForEach(viewModel.chatMessages.filter { $0.taskStatus == .loading && $0.content.isEmpty }, id: \.id) { loadingMsg in
-                        ThinkingIndicator(
-                            message: loadingMsg,
-                            viewModel: viewModel
-                        )
-                        .id("loading-\(loadingMsg.id)")
-                    }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id("chatBottom")
                 }
-                .padding(20)
+
+                ForEach(viewModel.chatMessages.filter { $0.taskStatus == .loading && $0.content.isEmpty }, id: \.id) { loadingMsg in
+                    ThinkingIndicator(
+                        message: loadingMsg,
+                        viewModel: viewModel
+                    )
+                    .id("loading-\(loadingMsg.id)")
+                }
+
+                Color.clear
+                    .frame(height: 1)
+                    .id("chatBottom")
             }
+            .padding(20)
         }
         // Surface rewind failures — previously `rewindError` was set in the
         // view model but never shown, so a failed 回滚 looked like a dead
