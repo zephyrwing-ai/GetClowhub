@@ -61540,22 +61540,6 @@
         }
       }
     },
-    "Tool Status": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工具状态"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工具狀態"
-          }
-        }
-      }
-    },
     "Session Info": {
       "localizations": {
         "zh-Hans": {

@@ -7728,19 +7728,26 @@ struct SessionDetailsPanel: View {
                        resolvedDefaultModel: resolvedDefaultModel)
     }
 
-    /// Tool Status — sourced from real `openclaw skills list` data via
+    /// Skills panel — sourced from real `openclaw skills list` data via
     /// viewModel.skills. Top 5 skills shown (sorted by status: ready first),
     /// with a "view all" link below if the user has more than 5 — clicking
     /// jumps to the Skills tab where the full list lives.
+    ///
+    /// Originally labeled "Tool Status" (→ "工具状态" in zh-Hans), which
+    /// was a UI/data-source mismatch: every other surface — the left-nav
+    /// label, the Skills tab header, the help FAQ ("技能状态含义？"),
+    /// and the openclaw CLI itself (`openclaw skills list`) — calls
+    /// these "skills". Renamed to keep terminology consistent across
+    /// the app.
     private var toolStatusList: some View {
         let skills = viewModel.skills
         let summary = viewModel.skillsSummary
         let visible = Array(skills.prefix(5))
         return VStack(alignment: .leading, spacing: 6) {
             // Combined section header + count, matching the mockup's
-            // single-line "Tool Status     X / Y enabled" presentation.
+            // single-line "Skills     X / Y enabled" presentation.
             HStack {
-                Text("Tool Status")
+                Text("Skills")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 if summary.total > 0 {
