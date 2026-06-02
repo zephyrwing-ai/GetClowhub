@@ -925,7 +925,6 @@ class SubAgentsViewModel: ObservableObject {
     /// so the resulting card has the same persona files / display name as
     /// the sidebar agent picker.
     static func readMainAgentFromConfig() -> SubAgentInfo? {
-        let baseDir = NSString("~/.openclaw").expandingTildeInPath
         let configPath = NSString("~/.openclaw/openclaw.json").expandingTildeInPath
 
         // The main agent is allowed to NOT exist in agents.list — openclaw
@@ -939,13 +938,10 @@ class SubAgentsViewModel: ObservableObject {
             return list.first(where: { $0["id"] as? String == "main" }) ?? [:]
         }()
 
-        let defaultWorkspace = (baseDir as NSString).appendingPathComponent("workspace")
-        let workspace: String = {
-            if let ws = entry["workspace"] as? String {
-                return (ws as NSString).expandingTildeInPath
-            }
-            return defaultWorkspace
-        }()
+        // Resolve via the shared resolver so "main" maps to its real runtime
+        // dir (e.g. workspace-main when main isn't the default agent), not the
+        // stale bare ~/.openclaw/workspace.
+        let workspace = DashboardViewModel.resolveAgentWorkspace("main")
         // Bail only if the workspace truly doesn't exist — without it we
         // can't even read the agent's name from IDENTITY.md.
         guard FileManager.default.fileExists(atPath: workspace) else {

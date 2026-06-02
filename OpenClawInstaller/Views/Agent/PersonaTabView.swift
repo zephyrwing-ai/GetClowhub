@@ -4,8 +4,11 @@ import Combine
 // MARK: - PersonaTabView
 
 struct PersonaTabView: View {
+    // Resolve the main agent's *real* workspace (e.g. workspace-main when main
+    // isn't the default agent) so persona edits land where the runtime reads
+    // them — not the stale bare ~/.openclaw/workspace.
     @StateObject private var viewModel = PersonaViewModel(
-        basePath: NSString("~/.openclaw/workspace").expandingTildeInPath
+        basePath: DashboardViewModel.resolveAgentWorkspace("main")
     )
     @State private var showSaveSuccess = false
     @State private var saveSuccessMessage = ""

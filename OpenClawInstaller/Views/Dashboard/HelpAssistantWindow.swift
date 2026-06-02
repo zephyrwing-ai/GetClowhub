@@ -288,29 +288,15 @@ struct MessageBubble: View {
                 // reliable path. Click → icon swaps to checkmark + "已
                 // 复制" label for 1.5s.
                 if !message.content.isEmpty {
-                    Button(action: { performCopy(message.content) }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 10))
-                                .foregroundColor(copied ? .green : .secondary)
-                            if copied {
-                                Text("已复制")
-                                    .font(.caption2)
-                                    .foregroundColor(.green)
-                                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                            }
-                        }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(Color(NSColor.windowBackgroundColor))
-                                .shadow(color: .black.opacity(0.06), radius: 1, y: 0.5)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help(copied ? "已复制" : "复制消息")
-                    .opacity(isHovering || copied ? 1.0 : 0.55)
+                    // Shared borderless action icon (matches the main chat).
+                    MessageActionIcon(
+                        systemName: copied ? "checkmark" : "doc.on.doc",
+                        tint: copied ? .green : .secondary,
+                        help: copied ? "已复制" : "复制",
+                        action: { performCopy(message.content) }
+                    )
+                    // Claude-style: hidden until message hover, fade in on hover.
+                    .opacity(isHovering || copied ? 1.0 : 0.0)
                     .animation(.easeInOut(duration: 0.15), value: isHovering)
                     .animation(.easeInOut(duration: 0.18), value: copied)
                 }

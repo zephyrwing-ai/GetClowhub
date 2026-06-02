@@ -609,14 +609,16 @@ class DashboardViewModel: ObservableObject {
     }
 
     /// Seconds an in-flight foreground task spins before the
-    /// ThinkingIndicator auto-flips it to background (unlocking the
-    /// input). Default 120. Returns nil to disable auto-background
-    /// entirely (set the UserDefaults value to 0 or negative).
+    /// ThinkingIndicator auto-flips it to background (unlocking the input).
+    /// Auto-background is OFF by default in this build: the product is a
+    /// synchronous human-in-the-loop flow (generate → review → send), so a
+    /// task stays foreground until it finishes or is cancelled — no
+    /// auto-background, fewer multi-task edge cases. A POSITIVE UserDefaults
+    /// value under `chat.autoBackgroundAfterSeconds` opts back in; 0/negative
+    /// (or unset) keeps it off.
     var autoBackgroundAfterSeconds: Int? {
         let key = "chat.autoBackgroundAfterSeconds"
-        // Differentiate "not set" (use default) from "explicitly 0 =
-        // disabled". UserDefaults.integer returns 0 for missing key.
-        guard UserDefaults.standard.object(forKey: key) != nil else { return 120 }
+        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
         let val = UserDefaults.standard.integer(forKey: key)
         return val > 0 ? val : nil
     }
@@ -1652,6 +1654,177 @@ class DashboardViewModel: ObservableObject {
 
     /// Update the title of a stored session. Empty / whitespace-only strings
     /// are ignored so we never end up with an unreadable row.
+    /// Set when a rewind attempt fails, so the chat view can surface it.
+    @Published var rewindError: String?
+
+    /// One-shot channel to push text back into the composer. On a successful
+    /// "rewind = edit & resend", we drop the clicked message (and everything
+    /// after) and stash its text here; the chat view observes this, copies it
+    /// into its `inputText` field, and clears it. Lets the view model drive the
+    /// view-owned composer without holding a reference to it.
+    @Published var composerPrefill: String?
+
+    /// Rewind = "edit & resend": drop the clicked user message and everything
+    /// after it, put its text back in the composer, and move the session's
+    /// branch point so the next send REPLACES that turn.
+    ///
+    /// Implemented entirely CLIENT-SIDE — no gateway protocol method. The
+    /// gateway runs locally and re-reads the transcript on each run
+    /// (SessionManager.open → fresh file read; the leaf is the file's last
+    /// entry), so truncating the local `.jsonl` to before the clicked message
+    /// moves the branch point for free. Verified against the gateway's own
+    /// SessionManager on real multi-turn transcripts. Rewind is gated to user
+    /// bubbles (see ChatBubble); user turns are single transcript entries (no
+    /// tool sub-entries), so we anchor by user-message ordinal — robust against
+    /// the assistant/tool entry drift that indexing over mixed turns would hit.
+    func rewindToMessage(_ message: ChatMessage) {
+        let agentId = selectedAgentId
+        guard let sessionId = selectedSessionIdByAgent[agentId] else {
+            self.rewindError = "没有活动会话，无法回滚"
+            return
+        }
+        let sessionKey = sessionKeyForAgent(agentId, sessionId: sessionId)
+        let clientMessages = chatMessagesByAgent[agentId] ?? []
+        guard clientMessages.contains(where: { $0.id == message.id }) else {
+            self.rewindError = "找不到该消息，无法回滚"
+            return
+        }
+        // Anchor by ordinal among USER messages (rewind only shows on user
+        // bubbles). User turns are single transcript entries, so this lines up
+        // 1:1 with the transcript's user entries — no drift from assistant/tool
+        // sub-entries.
+        let userMsgs = clientMessages.filter { $0.role == .user }
+        guard let userIdx = userMsgs.firstIndex(where: { $0.id == message.id }) else {
+            self.rewindError = "找不到该消息位置，无法回滚"
+            return
+        }
+
+        Task { @MainActor in
+            // 1. Tear down any in-flight run in THIS session (abort each by its
+            //    runId + clear tracking) so we never truncate a transcript that's
+            //    mid-write and never orphan `isSendingMessage`. Scoped to this
+            //    session — other sessions/agents keep running untouched.
+            self.cancelTasks(inSession: sessionId)
+            _ = await gatewayClient.abortChat(sessionKey: sessionKey)
+            // Let the abort + any final transcript write flush before we touch
+            // the file.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+
+            // 2. Client-side branch: truncate the local transcript to before the
+            //    clicked user message (backs the file up first). No gateway call.
+            if let err = self.truncateTranscriptForRewind(
+                agentId: agentId,
+                sessionKey: sessionKey,
+                userOrdinal: userIdx,
+                clickedText: message.content
+            ) {
+                self.rewindError = err
+                return
+            }
+
+            // 3. Mirror locally: drop the clicked message and everything after,
+            //    and push its text into the composer to edit/resend.
+            if let msgs = self.chatMessagesByAgent[agentId],
+               let curIdx = msgs.firstIndex(where: { $0.id == message.id }) {
+                self.chatMessagesByAgent[agentId] = Array(msgs.prefix(curIdx))
+            }
+            self.composerPrefill = message.content
+            self.rewindError = nil
+        }
+    }
+
+    /// Truncate the local session transcript (`<sid>.jsonl`) so the user message
+    /// at `userOrdinal` (and everything after) is dropped. Returns an error
+    /// string on failure, nil on success. Backs the file up first
+    /// (`.jsonl.rewind.<ts>`). This IS the rewind on the gateway side: the next
+    /// run re-reads the file and the new last entry becomes the leaf — no
+    /// gateway protocol method needed (the gateway is local).
+    private func truncateTranscriptForRewind(
+        agentId: String,
+        sessionKey: String,
+        userOrdinal: Int,
+        clickedText: String
+    ) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let sessionsDir = "\(home)/.openclaw/agents/\(agentId)/sessions"
+        let sessionsJsonPath = "\(sessionsDir)/sessions.json"
+        // Map the UI sessionKey → the gateway transcript's session id.
+        guard let data = FileManager.default.contents(atPath: sessionsJsonPath),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return "无法读取 sessions.json"
+        }
+        // Case-insensitive key match: the client builds sessionKey with Swift's
+        // UPPERCASE `UUID.uuidString`, but the gateway stores keys with a
+        // LOWERCASE uuid (e.g. agent:main:c4b9d48d-…). An exact match misses.
+        let targetKey = sessionKey.lowercased()
+        guard let entryVal = root.first(where: { $0.key.lowercased() == targetKey })?.value,
+              let entry = entryVal as? [String: Any],
+              let gwSessionId = entry["sessionId"] as? String else {
+            return "找不到会话转录（sessions.json 无对应条目）"
+        }
+        let jsonlPath = "\(sessionsDir)/\(gwSessionId).jsonl"
+        guard let content = try? String(contentsOfFile: jsonlPath, encoding: .utf8) else {
+            return "无法读取会话转录文件"
+        }
+        let rawLines = content.components(separatedBy: "\n")
+
+        // Line indices of user-role message entries, in order.
+        var userLines: [(line: Int, text: String)] = []
+        for (i, line) in rawLines.enumerated() {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty { continue }
+            guard let ld = t.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: ld) as? [String: Any],
+                  (obj["type"] as? String) == "message",
+                  let msg = obj["message"] as? [String: Any],
+                  (msg["role"] as? String) == "user" else { continue }
+            userLines.append((i, Self.jsonlMessageText(msg)))
+        }
+
+        // Resolve the cut line: prefer the ordinal (1:1 with user bubbles),
+        // validate by content "contains" (the transcript can wrap user text in
+        // an envelope), and fall back to nearest content match on any drift.
+        let trimmed = clickedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var cutLine: Int? = nil
+        if userOrdinal < userLines.count,
+           trimmed.isEmpty || userLines[userOrdinal].text.contains(trimmed) {
+            cutLine = userLines[userOrdinal].line
+        }
+        if cutLine == nil, !trimmed.isEmpty {
+            let matches = userLines.enumerated().filter { $0.element.text.contains(trimmed) }
+            if let nearest = matches.min(by: { abs($0.offset - userOrdinal) < abs($1.offset - userOrdinal) }) {
+                cutLine = nearest.element.line
+            }
+        }
+        guard let cut = cutLine else {
+            return "无法定位回滚锚点：本地用户消息#\(userOrdinal)/转录\(userLines.count)条"
+        }
+
+        // Back up, then keep everything BEFORE the cut line.
+        let ts = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        try? FileManager.default.copyItem(atPath: jsonlPath, toPath: "\(jsonlPath).rewind.\(ts)")
+        let kept = rawLines.prefix(cut).joined(separator: "\n")
+        let finalContent = kept.isEmpty ? "" : kept + "\n"
+        do {
+            try finalContent.write(toFile: jsonlPath, atomically: true, encoding: .utf8)
+        } catch {
+            return "写入截断后的转录失败：\(error.localizedDescription)"
+        }
+        return nil
+    }
+
+    /// Extract display text from a transcript message entry's `message` object
+    /// (`text`, string `content`, or content-block array).
+    private static func jsonlMessageText(_ msg: [String: Any]) -> String {
+        if let t = msg["text"] as? String { return t }
+        if let c = msg["content"] as? String { return c }
+        if let blocks = msg["content"] as? [[String: Any]] {
+            return blocks.compactMap { ($0["type"] as? String) == "text" ? ($0["text"] as? String) : nil }
+                .joined(separator: "\n")
+        }
+        return ""
+    }
+
     func renameSession(_ sessionId: UUID, to newTitle: String) {
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -2005,6 +2178,60 @@ class DashboardViewModel: ObservableObject {
     /// Internal agents managed by the app, hidden from user-facing lists.
     static let internalAgentIds: Set<String> = ["help-assistant"]
 
+    /// Resolve an agent's on-disk workspace directory, faithfully replicating
+    /// openclaw's `resolveAgentWorkspaceDir(cfg, agentId)`:
+    ///   1. an explicit `agents.list[].workspace` always wins
+    ///   2. otherwise the *default agent* — the first entry with `default: true`,
+    ///      else the first entry in `agents.list`, else "main" — uses
+    ///      `agents.defaults.workspace` (or the bare `~/.openclaw/workspace`)
+    ///   3. every other agent uses `~/.openclaw/workspace-<id>`
+    ///
+    /// Why this exists: the old code hardcoded "main → ~/.openclaw/workspace",
+    /// which is only correct when "main" happens to be the default agent. When
+    /// another agent is listed first (e.g. `commander`), the runtime resolves
+    /// main to `~/.openclaw/workspace-main`, but the UI kept pointing at the
+    /// stale bare `workspace` dir — so the file browser, terminal, persona
+    /// editor and IDENTITY.md parsing all looked at the wrong folder.
+    static func resolveAgentWorkspace(_ agentId: String, config: [String: Any]) -> String {
+        let baseDir = NSString("~/.openclaw").expandingTildeInPath
+        let agentsSection = config["agents"] as? [String: Any]
+        let list = agentsSection?["list"] as? [[String: Any]] ?? []
+
+        // 1. explicit per-agent workspace
+        if let entry = list.first(where: { ($0["id"] as? String) == agentId }),
+           let ws = (entry["workspace"] as? String)?.trimmingCharacters(in: .whitespaces),
+           !ws.isEmpty {
+            return (ws as NSString).expandingTildeInPath
+        }
+
+        // 2. default agent id: first default:true, else first list entry, else "main"
+        let defaultAgentId: String =
+            (list.first(where: { ($0["default"] as? Bool) == true })?["id"] as? String)
+            ?? (list.first?["id"] as? String)
+            ?? "main"
+
+        if agentId == defaultAgentId {
+            if let defWs = ((agentsSection?["defaults"] as? [String: Any])?["workspace"] as? String)?
+                .trimmingCharacters(in: .whitespaces), !defWs.isEmpty {
+                return (defWs as NSString).expandingTildeInPath
+            }
+            return (baseDir as NSString).appendingPathComponent("workspace")
+        }
+
+        // 3. non-default agent
+        return (baseDir as NSString).appendingPathComponent("workspace-\(agentId)")
+    }
+
+    /// Disk-reading convenience: parses `~/.openclaw/openclaw.json` then defers
+    /// to `resolveAgentWorkspace(_:config:)`. Safe to call from view-layer
+    /// computed properties (openclaw.json is tiny).
+    static func resolveAgentWorkspace(_ agentId: String) -> String {
+        let configPath = NSString("~/.openclaw/openclaw.json").expandingTildeInPath
+        let config = FileManager.default.contents(atPath: configPath)
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        return resolveAgentWorkspace(agentId, config: config)
+    }
+
     func loadAvailableAgents() {
         let configPath = NSString("~/.openclaw/openclaw.json").expandingTildeInPath
         let baseDir = NSString("~/.openclaw").expandingTildeInPath
@@ -2039,15 +2266,9 @@ class DashboardViewModel: ObservableObject {
                 // Skip internal agents (commander, help-assistant) from user-facing lists
                 if Self.internalAgentIds.contains(agentId) { continue }
 
-                // Determine workspace path for this agent
-                let workspace: String
-                if let ws = entry["workspace"] as? String {
-                    workspace = (ws as NSString).expandingTildeInPath
-                } else if agentId == "main" {
-                    workspace = (baseDir as NSString).appendingPathComponent("workspace")
-                } else {
-                    workspace = (baseDir as NSString).appendingPathComponent("workspace-\(agentId)")
-                }
+                // Determine workspace path for this agent (faithful to openclaw's
+                // resolveAgentWorkspaceDir — NOT a hardcoded "main → workspace").
+                let workspace = Self.resolveAgentWorkspace(agentId, config: json)
 
                 // Read IDENTITY.md and parse emoji/name from file first, fall back to config
                 let identityPath = (workspace as NSString).appendingPathComponent("IDENTITY.md")
@@ -2089,7 +2310,7 @@ class DashboardViewModel: ObservableObject {
         // Ensure "main" is always present
         if !agents.contains(where: { $0.id == "main" }) {
             // Even for main fallback, try reading from IDENTITY.md
-            let mainWorkspace = (baseDir as NSString).appendingPathComponent("workspace")
+            let mainWorkspace = Self.resolveAgentWorkspace("main")
             let mainIdentityPath = (mainWorkspace as NSString).appendingPathComponent("IDENTITY.md")
             let mainContent = (try? String(contentsOfFile: mainIdentityPath, encoding: .utf8)) ?? ""
             let mainParsed = PersonaViewModel.parseIdentity(mainContent)
@@ -2862,18 +3083,23 @@ class DashboardViewModel: ObservableObject {
         let fm = FileManager.default
 
         // Look up the gateway session-id mapped to *this* UI session's
-        // sessionKey, not the legacy "agent:X:main" catch-all.
-        let sessionKey = sessionKeyForAgent(agentId, sessionId: sessionId)
+        // sessionKey, not the legacy "agent:X:main" catch-all. Match the key
+        // CASE-INSENSITIVELY: the client builds sessionKey with Swift's
+        // UPPERCASE `UUID.uuidString`, but the gateway stores it LOWERCASE — an
+        // exact match silently missed, so this reset was a no-op on the gateway
+        // side (it only cleared the local mirror, never the gateway context).
+        let sessionKey = sessionKeyForAgent(agentId, sessionId: sessionId).lowercased()
         guard let data = fm.contents(atPath: sessionsJsonPath),
               var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entry = root[sessionKey] as? [String: Any],
-              let sessionId = entry["sessionId"] as? String else {
+              let actualKey = root.keys.first(where: { $0.lowercased() == sessionKey }),
+              let entry = root[actualKey] as? [String: Any],
+              let gwSessionId = entry["sessionId"] as? String else {
             NSLog("[Chat] resetAgentSession: no active session found for %@", agentId)
             return
         }
 
         // Rename the .jsonl file to .jsonl.reset.<timestamp>
-        let jsonlPath = "\(sessionsDir)/\(sessionId).jsonl"
+        let jsonlPath = "\(sessionsDir)/\(gwSessionId).jsonl"
         let timestamp = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
         let backupPath = "\(jsonlPath).reset.\(timestamp)"
@@ -2883,10 +3109,10 @@ class DashboardViewModel: ObservableObject {
         }
 
         // Remove the session entry from sessions.json so backend creates a new one
-        root.removeValue(forKey: sessionKey)
+        root.removeValue(forKey: actualKey)
         if let updatedData = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) {
             try? updatedData.write(to: URL(fileURLWithPath: sessionsJsonPath))
-            NSLog("[Chat] resetAgentSession: removed session key %@ from sessions.json", sessionKey)
+            NSLog("[Chat] resetAgentSession: removed session key %@ from sessions.json", actualKey)
         }
     }
 
@@ -4308,7 +4534,6 @@ class DashboardViewModel: ObservableObject {
     /// Load full agent detail (SubAgentInfo) for the currently selected agent.
     func loadSelectedAgentDetail() {
         let configPath = NSString("~/.openclaw/openclaw.json").expandingTildeInPath
-        let baseDir = NSString("~/.openclaw").expandingTildeInPath
 
         let agentList: [[String: Any]] = {
             guard let data = FileManager.default.contents(atPath: configPath),
@@ -4329,15 +4554,8 @@ class DashboardViewModel: ObservableObject {
             return
         }
 
-        // Determine workspace
-        let workspace: String
-        if let ws = entry["workspace"] as? String {
-            workspace = (ws as NSString).expandingTildeInPath
-        } else if agentId == "main" {
-            workspace = (baseDir as NSString).appendingPathComponent("workspace")
-        } else {
-            workspace = (baseDir as NSString).appendingPathComponent("workspace-\(agentId)")
-        }
+        // Determine workspace (faithful to openclaw's resolveAgentWorkspaceDir).
+        let workspace = Self.resolveAgentWorkspace(agentId)
 
         let agentDir = entry["agentDir"] as? String ?? ""
         let model = entry["model"] as? String ?? ""
