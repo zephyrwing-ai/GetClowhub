@@ -265,11 +265,37 @@ class InstallationViewModel: ObservableObject {
             gatewayStarted = true
         } catch let err as ServiceError {
             gatewayError = err.localizedDescription
+            startRecoveryWatcher()
         } catch {
             gatewayError = error.localizedDescription
+            startRecoveryWatcher()
         }
 
         gatewayStarting = false
+    }
+
+    /// Even after start() throws, the gateway often is still spinning up
+    /// — on first installs we routinely see the launchctl PID + port
+    /// become healthy 30-60s after the install command returned. Watch
+    /// for up to 60s; if the service comes up, flip gatewayStarted = true
+    /// and clear the error. This is the safety net that turns the
+    /// "网关启动失败" toast into silent success when the boot was just
+    /// slow.
+    private func startRecoveryWatcher() {
+        Task { @MainActor in
+            let deadline = Date().addingTimeInterval(60)
+            while Date() < deadline {
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s cadence
+                // User retried and it worked, or moved on — stop polling.
+                if gatewayStarted { return }
+                await openclawService.checkStatus()
+                if openclawService.status == .running {
+                    gatewayStarted = true
+                    gatewayError = nil
+                    return
+                }
+            }
+        }
     }
 
     /// Get overall progress

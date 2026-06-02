@@ -130,16 +130,30 @@ class OpenClawService: ObservableObject {
         let output = await runShellQuietly(cmd, timeout: 30)
         addLog("Start output: \(output ?? "(no output)")")
 
-        // Wait and retry status check - service may need time to start
-        for attempt in 1...3 {
-            try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+        // Wait and retry status check — service may need time to start.
+        //
+        // Was: 3 × 2s = 6s. On first-install machines that's too tight:
+        // launchd has to spawn a fresh node process, openclaw has to
+        // generate keys, write the local registry, and only THEN bind
+        // the gateway port. On slower disks or when ~/.openclaw is
+        // being initialized from scratch this routinely takes 15-25s,
+        // and the old window false-failed users whose gateway came up
+        // moments later (they'd see "网关启动失败" on the install
+        // completion screen and dismiss it, then everything worked).
+        //
+        // New: 9 attempts, progressive backoff, ~28s budget. Any
+        // earlier success returns immediately so fast machines aren't
+        // penalized.
+        let backoffSeconds: [Double] = [1.5, 2.0, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+        for (i, secs) in backoffSeconds.enumerated() {
+            try await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
             await checkStatus()
             if status == .running {
-                addLog("OpenClaw service started successfully")
+                addLog("OpenClaw service started successfully on attempt \(i + 1)")
                 startTime = Date()
                 return
             }
-            addLog("Status check attempt \(attempt): \(status.rawValue)")
+            addLog("Status check attempt \(i + 1): \(status.rawValue)")
         }
 
         status = .error
