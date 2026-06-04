@@ -3175,11 +3175,21 @@ struct MessageActionIcon: View {
 /// instead of just a spinning indicator. Uses `TimelineView(.periodic)` so we
 /// don't need a `Timer`/`@State` per bubble — SwiftUI refreshes the closure
 /// every 30s and the rest of the bubble stays still.
+///
+/// HOTFIX v1.1.59: `from` MUST be a stable anchor. Was `from: .now`, which
+/// is evaluated fresh on every body re-eval — SwiftUI then sees a new
+/// `PeriodicTimelineSchedule` and re-subscribes its schedule. On a chat
+/// with many active bubbles + high-frequency streaming deltas, that
+/// constant re-subscription compounds into a main-thread SwiftUI body
+/// avalanche (see Intel-Mac hang spindump, 17.7s, com.apple.WebKit.WebContent
+/// × 10 + AG::Subgraph::update reentry). Anchoring `from` to the run's
+/// `start` time (constant for this view's lifetime) keeps the schedule
+/// stable: same `from`, same `by` → SwiftUI reuses one subscription.
 private struct ElapsedSinceView: View {
     let start: Date?
     var body: some View {
         if let start = start {
-            TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            TimelineView(.periodic(from: start, by: 30)) { ctx in
                 let minutes = Int(ctx.date.timeIntervalSince(start) / 60)
                 if minutes >= 1 {
                     Text("已运行 \(minutes) 分")
