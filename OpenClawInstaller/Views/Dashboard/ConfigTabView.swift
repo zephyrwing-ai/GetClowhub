@@ -2,22 +2,32 @@ import SwiftUI
 
 struct ConfigTabView: View {
     @ObservedObject var viewModel: DashboardViewModel
+    @EnvironmentObject var languageManager: LanguageManager
+    @AppStorage("appAppearance") private var appAppearance: String = "system"
+    #if REQUIRE_LOGIN
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var membershipManager: MembershipManager
+    #endif
+
+    private let settingsColumns = [
+        GridItem(.adaptive(minimum: 300, maximum: 460), spacing: 16)
+    ]
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                // Gateway Configuration — red border
-                GatewayConfigSection(viewModel: viewModel)
-
-                #if REQUIRE_LOGIN
-                // GetClawHub Official Service + Custom API Provider — side by side
-                HStack(alignment: .top, spacing: 16) {
-                    GetClawHubServiceSection(viewModel: viewModel)
-                    ModelConfigSection(viewModel: viewModel)
+                LazyVGrid(columns: settingsColumns, alignment: .leading, spacing: 16) {
+                    #if REQUIRE_LOGIN
+                    ProfileSettingsCard()
+                        .environmentObject(authManager)
+                        .environmentObject(membershipManager)
+                    #endif
+                    PreferencesSettingsCard(appAppearance: $appAppearance)
+                        .environmentObject(languageManager)
+                    PersonaSettingsCard(viewModel: viewModel)
                 }
-                #else
-                ModelConfigSection(viewModel: viewModel)
-                #endif
+
+                GatewaySettingsGroup(viewModel: viewModel)
 
                 // Save Buttons
                 SaveButtonsSection(viewModel: viewModel)
@@ -33,16 +43,183 @@ struct ConfigTabView: View {
     }
 }
 
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let content: Content
+
+    init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .foregroundColor(.secondary)
+                Text(title)
+                    .font(.headline)
+            }
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(12)
+    }
+}
+
+#if REQUIRE_LOGIN
+private struct ProfileSettingsCard: View {
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var membershipManager: MembershipManager
+
+    var body: some View {
+        SettingsCard(title: "Profile", systemImage: "person.crop.circle") {
+            switch authManager.state {
+            case .loggedIn(let nickname):
+                HStack {
+                    Text(nickname)
+                        .font(.system(size: 14, weight: .medium))
+                    if let membership = membershipManager.membership {
+                        Text("[\(membership.level.displayName)]")
+                            .font(.caption.bold())
+                            .foregroundColor(badgeColor(membership.level))
+                    }
+                    Spacer()
+                }
+                HStack(spacing: 10) {
+                    Button("Manage") {
+                        openMemberAccount()
+                    }
+                    .buttonStyle(.bordered)
+                    Button("Log Out") {
+                        authManager.logout()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            default:
+                Text("Not Logged In")
+                    .foregroundColor(.secondary)
+                Button("Log In") {
+                    authManager.login()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func badgeColor(_ level: MembershipLevel) -> Color {
+        switch level {
+        case .free: return .gray
+        case .pro: return .blue
+        case .max: return .purple
+        }
+    }
+
+    private func openMemberAccount() {
+        var urlString = "\(AuthConfig.baseURL)/member/account/"
+        var params: [String] = []
+        if let token = authManager.accessToken {
+            params.append("token=\(token)")
+        }
+        if let uid = authManager.userId {
+            params.append("user_id=\(uid)")
+        }
+        if !params.isEmpty {
+            urlString += "?" + params.joined(separator: "&")
+        }
+        if let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+#endif
+
+private struct PreferencesSettingsCard: View {
+    @EnvironmentObject var languageManager: LanguageManager
+    @Binding var appAppearance: String
+
+    var body: some View {
+        SettingsCard(title: "Preferences", systemImage: "slider.horizontal.3") {
+            Picker("Language", selection: $languageManager.selectedLanguage) {
+                ForEach(languageManager.supportedLanguages) { lang in
+                    Text(lang.name).tag(lang.id)
+                }
+            }
+            Picker("Appearance", selection: $appAppearance) {
+                Text("System").tag("system")
+                Text("Light").tag("light")
+                Text("Dark").tag("dark")
+            }
+        }
+    }
+}
+
+private struct PersonaSettingsCard: View {
+    @ObservedObject var viewModel: DashboardViewModel
+
+    var body: some View {
+        SettingsCard(title: "Persona", systemImage: "person.text.rectangle") {
+            Text("Edit identity, memory, and persona files from one place.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Button("Open Persona") {
+                viewModel.selectedTab = .persona
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+}
+
+// MARK: - Gateway Settings Group
+
+struct GatewaySettingsGroup: View {
+    @ObservedObject var viewModel: DashboardViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Gateway")
+                .font(.title3.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 16) {
+                GatewayConfigSection(viewModel: viewModel, showsTitle: false)
+
+                #if REQUIRE_LOGIN
+                HStack(alignment: .top, spacing: 16) {
+                    GetClawHubServiceSection(viewModel: viewModel)
+                    ModelConfigSection(viewModel: viewModel)
+                }
+                #else
+                ModelConfigSection(viewModel: viewModel)
+                #endif
+            }
+            .padding(16)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.55))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.gray.opacity(0.22), lineWidth: 1)
+            )
+        }
+    }
+}
+
 // MARK: - Gateway Configuration (Red Border)
 
 struct GatewayConfigSection: View {
     @ObservedObject var viewModel: DashboardViewModel
+    var showsTitle: Bool = true
     @State private var showAuthToken = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Gateway")
-                .font(.headline)
+            if showsTitle {
+                Text("Gateway")
+                    .font(.headline)
+            }
 
             // Port
             HStack {
@@ -95,63 +272,6 @@ struct GatewayConfigSection: View {
     }
 }
 
-// MARK: - Shared Model Table
-
-private func formatTokenCount(_ count: Int) -> String {
-    if count >= 1_000_000 {
-        let value = Double(count) / 1_000_000.0
-        return value.truncatingRemainder(dividingBy: 1) == 0
-            ? "\(Int(value))M"
-            : String(format: "%.1fM", value)
-    } else if count >= 1000 {
-        let value = Double(count) / 1000.0
-        return value.truncatingRemainder(dividingBy: 1) == 0
-            ? "\(Int(value))K"
-            : String(format: "%.1fK", value)
-    }
-    return "\(count)"
-}
-
-/// Readonly model table used by GetClawHub section
-private struct ReadonlyModelTable: View {
-    let models: [PresetModel]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Table header
-            HStack(spacing: 0) {
-                Text("Model ID")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text("Context")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                    .frame(width: 80, alignment: .trailing)
-            }
-            .padding(.horizontal, 4)
-
-            ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
-                HStack(spacing: 0) {
-                    Text(model.id)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(formatTokenCount(model.contextWindow))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(width: 80, alignment: .trailing)
-                }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 4)
-                .background(index % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.5))
-                .cornerRadius(4)
-            }
-        }
-    }
-}
-
 #if REQUIRE_LOGIN
 // MARK: - GetClawHub Official Service (Blue Border + Radio)
 
@@ -164,17 +284,6 @@ struct GetClawHubServiceSection: View {
 
     private var isSelected: Bool {
         viewModel.editedActiveServiceSource == "getclawhub"
-    }
-
-    private var presetModels: [PresetModel] {
-        let allModels = viewModel.presetManager.findProvider(byKey: "getclawhub")?.models ?? []
-        // Use fallback models based on membership level, ignore backend models
-        let allowedModels = membershipManager.membership?.level.defaultModels ?? []
-        if !allowedModels.isEmpty {
-            let allowedSet = Set(allowedModels)
-            return allModels.filter { allowedSet.contains($0.id) }
-        }
-        return allModels
     }
 
     private var presetBaseUrl: String {
@@ -356,22 +465,6 @@ struct GetClawHubServiceSection: View {
                 noKeyGuidanceView(membership)
             }
 
-            Divider()
-
-            // Models (readonly from preset)
-            HStack {
-                Text("Models")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-
-                Spacer()
-
-                Text("\(presetModels.count) models")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            ReadonlyModelTable(models: presetModels)
         }
     }
 
@@ -493,11 +586,6 @@ struct GetClawHubServiceSection: View {
 struct ModelConfigSection: View {
     @ObservedObject var viewModel: DashboardViewModel
     @State private var showApiKey = false
-    @State private var showAddModelSheet = false
-    @State private var newModelId = ""
-    @State private var newModelName = ""
-    @State private var newModelContextWindow = "128000"
-    @State private var newModelMaxTokens = "8192"
     @State private var isExpanded = true
 
     #if REQUIRE_LOGIN
@@ -589,74 +677,6 @@ struct ModelConfigSection: View {
                     .help(showApiKey ? "Hide" : "Show")
                 }
 
-                Divider()
-
-                // Models List
-                HStack {
-                    Text("Models")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-
-                    Spacer()
-
-                    Button(action: { showAddModelSheet = true }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                            Text("Add Model")
-                        }
-                        .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                if viewModel.editedConfiguredModels.isEmpty {
-                    Text("No models configured. Add models or select a provider preset.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 8)
-                } else {
-                    // Table header
-                    HStack(spacing: 0) {
-                        Text("Model ID")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("Context")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                            .frame(width: 80, alignment: .trailing)
-                        Spacer().frame(width: 32)
-                    }
-                    .padding(.horizontal, 4)
-
-                    ForEach(Array(viewModel.editedConfiguredModels.enumerated()), id: \.element.id) { index, model in
-                        HStack(spacing: 0) {
-                            Text(model.id)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Text(formatTokenCount(model.contextWindow))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .frame(width: 80, alignment: .trailing)
-                            Button(action: {
-                                viewModel.removeModel(at: index)
-                            }) {
-                                Image(systemName: "trash")
-                                    .foregroundColor(.red)
-                                    .font(.caption)
-                            }
-                            .buttonStyle(.borderless)
-                            .frame(width: 32)
-                        }
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 4)
-                        .background(index % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.5))
-                        .cornerRadius(4)
-                    }
-                }
             } // end isExpanded
         }
         .padding(20)
@@ -678,84 +698,8 @@ struct ModelConfigSection: View {
                 viewModel.confirmSwitchProvider()
             }
         } message: {
-            Text("Switching provider will replace the current Base URL and model list. API Key will be cleared. Continue?")
+            Text("Switching provider will replace the current Base URL. API Key will be cleared. Continue?")
         }
-        .sheet(isPresented: $showAddModelSheet) {
-            addModelSheet
-        }
-    }
-
-    private var addModelSheet: some View {
-        VStack(spacing: 16) {
-            Text("Add Model")
-                .font(.headline)
-
-            HStack {
-                Text("Model ID")
-                    .frame(width: 100, alignment: .leading)
-                TextField("e.g. gpt-4o", text: $newModelId)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            HStack {
-                Text("Name")
-                    .frame(width: 100, alignment: .leading)
-                TextField("Display name (optional)", text: $newModelName)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            HStack {
-                Text("Context Window")
-                    .frame(width: 100, alignment: .leading)
-                TextField("128000", text: $newModelContextWindow)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
-            }
-
-            HStack {
-                Text("Max Tokens")
-                    .frame(width: 100, alignment: .leading)
-                TextField("8192", text: $newModelMaxTokens)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
-            }
-
-            HStack {
-                Button("Cancel") {
-                    resetAddModelFields()
-                    showAddModelSheet = false
-                }
-                .buttonStyle(.bordered)
-
-                Spacer()
-
-                Button("Add") {
-                    let model = PresetModel(
-                        id: newModelId,
-                        name: newModelName.isEmpty ? newModelId : newModelName,
-                        reasoning: false,
-                        input: ["text"],
-                        cost: PresetModelCost(),
-                        contextWindow: Int(newModelContextWindow) ?? 128000,
-                        maxTokens: Int(newModelMaxTokens) ?? 8192
-                    )
-                    viewModel.addModel(model)
-                    resetAddModelFields()
-                    showAddModelSheet = false
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(newModelId.isEmpty)
-            }
-        }
-        .padding(24)
-        .frame(width: 400)
-    }
-
-    private func resetAddModelFields() {
-        newModelId = ""
-        newModelName = ""
-        newModelContextWindow = "128000"
-        newModelMaxTokens = "8192"
     }
 }
 

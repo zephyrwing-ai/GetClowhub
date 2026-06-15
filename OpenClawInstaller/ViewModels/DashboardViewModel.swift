@@ -792,10 +792,11 @@ class DashboardViewModel: ObservableObject {
         case persona = "Persona"
         case subAgents = "Multi-Agent"
         case market = "Marketplace"     // skill / agent marketplace (was sidebarMode)
-        case tasksLogs = "Tasks/Logs"   // combined Cron + Logs view
+        case tasksLogs = "Automation"
         case config = "Configuration"
         case skills = "Skills"
         case models = "Models"
+        case outputs = "Outputs"
         case channels = "Channels"
         case plugins = "Plugins"
         case cron = "Cron"
@@ -814,6 +815,7 @@ class DashboardViewModel: ObservableObject {
             case .config: return "gearshape"
             case .skills: return "bolt.fill"
             case .models: return "cube.fill"
+            case .outputs: return "tray.full.fill"
             case .channels: return "bubble.left.and.bubble.right.fill"
             case .plugins: return "puzzlepiece.fill"
             case .cron: return "clock.badge"
@@ -1652,6 +1654,17 @@ class DashboardViewModel: ObservableObject {
         recomputeIsSendingMessage()
     }
 
+    /// Switch to a session that may belong to a different agent.
+    func switchSessionGlobally(to sessionId: UUID) {
+        guard let meta = chatSessionStore.index.first(where: { $0.id == sessionId }) else {
+            return
+        }
+        if selectedAgentId != meta.agentId {
+            selectedAgentId = meta.agentId
+        }
+        switchSession(to: sessionId)
+    }
+
     /// Update the title of a stored session. Empty / whitespace-only strings
     /// are ignored so we never end up with an unreadable row.
     /// Set when a rewind attempt fails, so the chat view can surface it.
@@ -1936,16 +1949,27 @@ class DashboardViewModel: ObservableObject {
     }
 
     /// Mint a fresh empty session for the current agent and switch to it.
-    /// Used by the "+ New Session" sidebar button.
+    /// Used by the "New chat" sidebar button.
     ///
     /// The session is created in memory only — the disk write is deferred
     /// until the user actually adds a message (handled by
-    /// `persistChangedSessions`). This way a "+ New Session" click followed
+    /// `persistChangedSessions`). This way a "New chat" click followed
     /// by an immediate switch to another row leaves no orphan empty session
     /// in the sidebar.
     @discardableResult
     func createNewSession() -> UUID {
-        let agentId = selectedAgentId
+        createNewSession(forAgent: selectedAgentId)
+    }
+
+    /// Mint a fresh empty session for a specific agent and switch the UI to it.
+    /// Used by per-agent sidebar hover actions.
+    @discardableResult
+    func createNewSession(forAgent agentId: String) -> UUID {
+        if selectedAgentId != agentId {
+            flushActiveSession(forAgent: selectedAgentId)
+            selectedAgentId = agentId
+        }
+
         let oldSid = selectedSessionIdByAgent[agentId]
         // Symmetric with switchSession: if a task is streaming in the old
         // session (foreground OR background), preserve its message list

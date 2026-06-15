@@ -11,16 +11,26 @@ struct DashboardView: View {
     #if REQUIRE_LOGIN
     @EnvironmentObject var authManager: AuthManager
     #endif
+    @EnvironmentObject var languageManager: LanguageManager
     @AppStorage("appAppearance") private var appAppearance: String = "system"
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isGlobalSessionSearchPresented = false
+    @State private var globalSessionSearchText: String = ""
+    @FocusState private var isGlobalSessionSearchFocused: Bool
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selectedTab: $viewModel.selectedTab, viewModel: viewModel)
+            SidebarView(
+                selectedTab: $viewModel.selectedTab,
+                viewModel: viewModel,
+                onOpenGlobalSessionSearch: openGlobalSessionSearch
+            )
         } detail: {
             DetailContentView(viewModel: viewModel)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(colorSchemeForAppearance)
+        .background(TitlebarSeparatorSuppressor())
         .alert("Error", isPresented: $viewModel.showError) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -33,7 +43,13 @@ struct DashboardView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .overlay {
+            if isGlobalSessionSearchPresented {
+                globalSessionSearchOverlay
+            }
+        }
         .animation(.easeInOut, value: viewModel.showSuccess)
+        .animation(.easeInOut(duration: 0.16), value: isGlobalSessionSearchPresented)
         .onAppear {
             viewModel.openclawService.startMonitoring()
             Task {
@@ -48,12 +64,172 @@ struct DashboardView: View {
         }
     }
 
+    private var isDark: Bool {
+        if appAppearance == "dark" { return true }
+        if appAppearance == "light" { return false }
+        return colorScheme == .dark
+    }
+
     private var colorSchemeForAppearance: ColorScheme? {
         switch appAppearance {
         case "light": return .light
         case "dark": return .dark
         default: return nil
         }
+    }
+
+    private func openGlobalSessionSearch() {
+        globalSessionSearchText = ""
+        isGlobalSessionSearchPresented = true
+        DispatchQueue.main.async {
+            isGlobalSessionSearchFocused = true
+        }
+    }
+
+    private var globalSearchResults: [ChatSessionMetadata] {
+        Array(viewModel.chatSessionStore
+            .searchSessions(query: globalSessionSearchText)
+            .prefix(12))
+    }
+
+    private var globalSessionSearchOverlay: some View {
+        GeometryReader { proxy in
+            let panelWidth = min(700, max(320, proxy.size.width - 64))
+
+            ZStack {
+                Color.black.opacity(isDark ? 0.28 : 0.16)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        isGlobalSessionSearchPresented = false
+                        isGlobalSessionSearchFocused = false
+                    }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.secondary)
+                        TextField(String(localized: "Search chats", bundle: languageManager.localizedBundle), text: $globalSessionSearchText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 20, weight: .regular))
+                            .focused($isGlobalSessionSearchFocused)
+                        if !globalSessionSearchText.isEmpty {
+                            Button {
+                                globalSessionSearchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 18)
+
+                    Text(globalSessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                         ? String(localized: "Recent chats", bundle: languageManager.localizedBundle)
+                         : String(localized: "Search results", bundle: languageManager.localizedBundle))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 16)
+
+                    if globalSearchResults.isEmpty {
+                        Text(String(localized: "No matches", bundle: languageManager.localizedBundle))
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 18)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 2) {
+                                ForEach(Array(globalSearchResults.enumerated()), id: \.element.id) { index, meta in
+                                    globalSessionSearchRow(meta: meta, shortcutIndex: index + 1)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 12)
+                        }
+                        .frame(maxHeight: 420)
+                    }
+                }
+                .frame(width: panelWidth, alignment: .leading)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.primary.opacity(isDark ? 0.10 : 0.06), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(isDark ? 0.36 : 0.18), radius: 38, x: 0, y: 24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .center)))
+    }
+
+    private func globalSessionSearchRow(meta: ChatSessionMetadata, shortcutIndex: Int) -> some View {
+        Button {
+            viewModel.switchSessionGlobally(to: meta.id)
+            viewModel.selectedTab = .chat
+            isGlobalSessionSearchPresented = false
+            isGlobalSessionSearchFocused = false
+        } label: {
+            HStack(spacing: 12) {
+                Text(meta.title.isEmpty ? String(localized: "New chat", bundle: languageManager.localizedBundle) : meta.title)
+                    .font(.system(size: 15, weight: .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundColor(.primary)
+
+                Spacer(minLength: 12)
+
+                Text(agentName(for: meta.agentId))
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+
+                Text("⌘\(shortcutIndex)")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color(NSColor.controlBackgroundColor).opacity(0.75))
+                    )
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.42))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func agentName(for agentId: String) -> String {
+        viewModel.availableAgents.first(where: { $0.id == agentId })?.name ?? agentId
+    }
+}
+
+private struct TitlebarSeparatorSuppressor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            Self.configure(window: view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            Self.configure(window: nsView.window)
+        }
+    }
+
+    private static func configure(window: NSWindow?) {
+        window?.titlebarSeparatorStyle = .none
     }
 }
 
@@ -62,6 +238,7 @@ struct DashboardView: View {
 struct SidebarView: View {
     @Binding var selectedTab: DashboardViewModel.DashboardTab
     @ObservedObject var viewModel: DashboardViewModel
+    let onOpenGlobalSessionSearch: () -> Void
     @EnvironmentObject var sparkleUpdater: SparkleUpdater
     @EnvironmentObject var languageManager: LanguageManager
     #if REQUIRE_LOGIN
@@ -77,21 +254,25 @@ struct SidebarView: View {
     @State private var deleteAgentConfirmId: String?
 
     // Chat session management state
-    // (rename + delete need a sheet/alert at the sidebar level; pin/archive/
-    //  export are fire-and-forget so they don't need any state at all)
     @State private var sessionRenameId: UUID?
     @State private var sessionRenameDraft: String = ""
-    @State private var sessionDeleteId: UUID?
-    @State private var sessionSearchText: String = ""
+    @State private var confirmingDeleteSessionId: UUID?
 
     // Marketplace state
     @State private var marketplaceSearchText = ""
     @State private var expandedDivisions: Set<String> = []
     @State private var expandedAgentDivisions: Set<String> = []
+    @State private var expandedAgentIds: Set<String> = []
+    @State private var hoveredAgentId: String?
 
-    init(selectedTab: Binding<DashboardViewModel.DashboardTab>, viewModel: DashboardViewModel) {
+    init(
+        selectedTab: Binding<DashboardViewModel.DashboardTab>,
+        viewModel: DashboardViewModel,
+        onOpenGlobalSessionSearch: @escaping () -> Void
+    ) {
         self._selectedTab = selectedTab
         self.viewModel = viewModel
+        self.onOpenGlobalSessionSearch = onOpenGlobalSessionSearch
         self._createAgentVM = StateObject(wrappedValue: SubAgentsViewModel(openclawService: viewModel.openclawService))
     }
 
@@ -104,21 +285,7 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             sidebarTopHeader
-            #if REQUIRE_LOGIN
-            sidebarUserRow
-            #endif
-            sidebarModePicker
-            Divider()
-            // Mode-driven body: 配置 → main list, 我的团队 → agents,
-            // 专家市场 → marketplace overview list.
-            switch viewModel.sidebarMode {
-            case .config:
-                sidebarMainList
-            case .teams:
-                agentsList
-            case .market:
-                marketplaceList
-            }
+            sidebarMainList
             Divider()
             sidebarBottomBar
         }
@@ -141,241 +308,107 @@ struct SidebarView: View {
                        sessionRenameId = nil
                    }
                })
-        // Delete confirmation — destructive action so we always require confirm
-        .confirmationDialog(
-            "Delete this session?",
-            isPresented: Binding(
-                get: { sessionDeleteId != nil },
-                set: { if !$0 { sessionDeleteId = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                if let id = sessionDeleteId {
-                    viewModel.deleteSession(id)
-                }
-                sessionDeleteId = nil
-            }
-            Button("Cancel", role: .cancel) {
-                sessionDeleteId = nil
-            }
-        } message: {
-            Text("Messages in this session will be permanently removed. This cannot be undone.")
-        }
     }
 
-    #if REQUIRE_LOGIN
-    private func membershipBadgeColor(_ level: MembershipLevel) -> SwiftUI.Color {
-        switch level {
-        case .free: return .gray
-        case .pro: return .blue
-        case .max: return .purple
-        }
-    }
-    #endif
+    // MARK: - Sidebar Top Header
 
-    // MARK: - Sidebar Top Header (Logo + dropdown menu)
-
-    /// Top of the sidebar — brand on the left, language picker on the
-    /// right. NavigationSplitView's own toggle in the window toolbar
-    /// handles sidebar collapse, so no extra icon needed here.
+    /// Top of the sidebar — text-only app label. NavigationSplitView's own
+    /// toggle in the window toolbar handles sidebar collapse.
     private var sidebarTopHeader: some View {
-        HStack(spacing: 8) {
-            Image("Logo1")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 22, height: 22)
+        HStack {
             Text("GetClawHub")
                 .font(.system(size: 14, weight: .semibold))
             Spacer()
-            Menu {
-                ForEach(languageManager.supportedLanguages) { lang in
-                    Button {
-                        languageManager.selectedLanguage = lang.id
-                    } label: {
-                        HStack {
-                            Text(lang.name)
-                            if languageManager.selectedLanguage == lang.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 3) {
-                    Text(languageManager.displayName)
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 8)
     }
 
-    // MARK: - Sidebar User Row
-
-    #if REQUIRE_LOGIN
-    /// Avatar + nickname + membership badge + 企业版 upgrade button.
-    /// Hidden when login is not required (open-source builds).
-    private var sidebarUserRow: some View {
-        HStack(spacing: 6) {
-            if case .loggedIn(let nickname) = authManager.state {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(.green)
-                Text(nickname)
-                    .font(.caption)
-                    .lineLimit(1)
-                if let membership = membershipManager.membership {
-                    Text("[\(membership.level.displayName)]")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(membershipBadgeColor(membership.level))
-                }
-                Spacer()
-                if let membership = membershipManager.membership, membership.level != .max {
-                    Button {
-                        var urlString = "\(AuthConfig.baseURL)/pricing"
-                        var params: [String] = []
-                        if let token = authManager.accessToken {
-                            params.append("token=\(token)")
-                        }
-                        if let uid = authManager.userId {
-                            params.append("user_id=\(uid)")
-                        }
-                        if !params.isEmpty {
-                            urlString += "?" + params.joined(separator: "&")
-                        }
-                        if let url = URL(string: urlString) {
-                            NSWorkspace.shared.open(url)
-                        }
-                    } label: {
-                        Label("Member Upgrade", systemImage: "crown.fill")
-                            .font(.system(size: 9, weight: .medium))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.orange.opacity(0.15))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.orange)
-                }
-                // Logout moved to the bottom toolbar per latest design;
-                // user row stays compact with just name + badge + upgrade.
-            } else {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .font(.system(size: 16))
-                    .foregroundColor(.secondary)
-                Text("Not Logged In")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button("Log In") {
-                    authManager.login()
-                }
-                .font(.caption2)
-                .buttonStyle(.plain)
-                .foregroundColor(.accentColor)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 10)
-    }
-    #endif
-
-    // MARK: - Sidebar Mode Picker
-
-    /// Restores the 3-mode segmented picker from the original design:
-    /// 配置 / 我的团队 / 专家市场. Below it the sidebar body switches
-    /// content per mode (managed in `body` itself).
-    private var sidebarModePicker: some View {
-        Picker("", selection: $viewModel.sidebarMode) {
-            Text(String(localized: "Config", bundle: languageManager.localizedBundle))
-                .tag(DashboardViewModel.SidebarMode.config)
-            Text(String(localized: "My Team", bundle: languageManager.localizedBundle))
-                .tag(DashboardViewModel.SidebarMode.teams)
-            Text(String(localized: "Market", bundle: languageManager.localizedBundle))
-                .tag(DashboardViewModel.SidebarMode.market)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-    }
-
     // MARK: - Sidebar Main List (the new unified list)
 
-    /// Body of the sidebar in 配置 mode — three sections: 聊天 / 概览 / 代理
-    /// — matching the latest design mockup. Marketplace and team agent
-    /// browsing live in their own sidebarMode views (专家市场 / 我的团队).
-    /// Help / language / logout / settings live in the language row + the
-    /// bottom toolbar so they don't crowd the main list.
+    /// Primary app sidebar. Rows use custom buttons so selected state can
+    /// stay quiet gray instead of macOS' blue list selection.
     private var sidebarMainList: some View {
-        List(selection: $selectedTab) {
-            ServiceStatusBadge(viewModel: viewModel)
-                .listRowSeparator(.hidden)
-                .padding(.bottom, 8)
-
-            // ─── Chat: search + recent sessions + "+ new" ───
-            Section("Chat") {
-                Label("Channels", systemImage: "bubble.left.and.bubble.right.fill")
-                    .tag(DashboardViewModel.DashboardTab.channels)
-
-                // Explicit "Chat" tag so users can return to the chat
-                // view from any other tab (without needing to click a
-                // specific session row). The right details panel is
-                // chat-only, so this is the canonical way back.
-                Label("Chat", systemImage: "message.fill")
-                    .tag(DashboardViewModel.DashboardTab.chat)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                ServiceStatusBadge(viewModel: viewModel)
+                    .padding(.bottom, 8)
 
                 Button {
                     viewModel.createNewSession()
                     selectedTab = .chat
                 } label: {
-                    Label("New Session", systemImage: "plus.circle")
-                        .foregroundColor(.accentColor)
+                    sidebarRowContent(title: String(localized: "New chat", bundle: languageManager.localizedBundle), systemImage: "plus.circle")
+                        .foregroundColor(.primary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(
+                                    selectedTab == .chat
+                                    && viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId] == nil
+                                    ? Color(NSColor.controlBackgroundColor)
+                                    : Color.clear
+                                )
+                        )
                 }
                 .buttonStyle(.plain)
 
-                sessionsSectionContent
-            }
+                Button {
+                    onOpenGlobalSessionSearch()
+                } label: {
+                    sidebarRowContent(title: String(localized: "Search chats", bundle: languageManager.localizedBundle), systemImage: "magnifyingglass")
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Search chats", bundle: languageManager.localizedBundle))
 
-            // ─── Overview: status / budget / billing ───
-            Section("Overview") {
-                Label("Status", systemImage: "chart.bar.fill")
-                    .tag(DashboardViewModel.DashboardTab.status)
-                Label("Budget", systemImage: "dollarsign.gauge.chart.lefthalf.righthalf")
-                    .tag(DashboardViewModel.DashboardTab.budget)
+                navRow(.skills, title: String(localized: "Skills", bundle: languageManager.localizedBundle), systemImage: "bolt.fill")
+                navRow(.plugins, title: String(localized: "Plugins", bundle: languageManager.localizedBundle), systemImage: "puzzlepiece.fill")
+                navRow(.tasksLogs, title: String(localized: "Automation", bundle: languageManager.localizedBundle), systemImage: "checklist")
+                navRow(.market, title: String(localized: "Market", bundle: languageManager.localizedBundle), systemImage: "storefront")
+
+                agentSectionContent
+
+                Spacer(minLength: 12)
+
+                navRow(.status, title: String(localized: "Status", bundle: languageManager.localizedBundle), systemImage: "chart.bar.fill")
+                navRow(.budget, title: String(localized: "Budget", bundle: languageManager.localizedBundle), systemImage: "dollarsign.gauge.chart.lefthalf.righthalf")
                 #if REQUIRE_LOGIN
-                Label("Billing", systemImage: "creditcard.fill")
-                    .tag(DashboardViewModel.DashboardTab.billing)
+                navRow(.billing, title: String(localized: "Billing", bundle: languageManager.localizedBundle), systemImage: "creditcard.fill")
                 #endif
+                navRow(.config, title: String(localized: "Settings", bundle: languageManager.localizedBundle), systemImage: "gearshape")
             }
-
-            // ─── Agent: persona / multi-agent / plugins / tasks-logs / settings ───
-            Section("Agent") {
-                Label("Persona", systemImage: "person.text.rectangle")
-                    .tag(DashboardViewModel.DashboardTab.persona)
-                Label("Multi-Agent", systemImage: "person.3.fill")
-                    .tag(DashboardViewModel.DashboardTab.subAgents)
-                Label("Plugins", systemImage: "puzzlepiece.fill")
-                    .tag(DashboardViewModel.DashboardTab.plugins)
-                Label("Tasks/Logs", systemImage: "checklist")
-                    .tag(DashboardViewModel.DashboardTab.tasksLogs)
-                Label("Settings", systemImage: "gearshape")
-                    .tag(DashboardViewModel.DashboardTab.config)
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
-        .listStyle(.sidebar)
+    }
+
+    private func navRow(_ tab: DashboardViewModel.DashboardTab, title: String, systemImage: String) -> some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            sidebarRowContent(title: title, systemImage: systemImage)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(selectedTab == tab ? Color(NSColor.controlBackgroundColor) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sidebarRowContent(title: String, systemImage: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .frame(width: 18)
+            Text(title)
+                .lineLimit(1)
+            Spacer()
+        }
+        .font(.system(size: 14, weight: .regular))
+        .foregroundColor(.primary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
     }
 
     // MARK: - Sessions Section Content (extracted so it stays readable)
@@ -384,55 +417,40 @@ struct SidebarView: View {
     private var sessionsSectionContent: some View {
         let agentSessions = viewModel.sessionsByAgent[viewModel.selectedAgentId] ?? []
         let activeId = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId]
-        let filteredSessions = sessionSearchText.isEmpty
-            ? agentSessions
-            : agentSessions.filter {
-                $0.title.localizedCaseInsensitiveContains(sessionSearchText)
-            }
-
-        // Inline search field — only shown when there's any history
-        if !agentSessions.isEmpty {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                TextField("Search", text: $sessionSearchText)
-                    .textFieldStyle(.plain)
-                if !sessionSearchText.isEmpty {
-                    Button {
-                        sessionSearchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .listRowSeparator(.hidden)
-        }
 
         if agentSessions.isEmpty {
-            Text("No sessions yet")
-                .font(.callout)
+            Text(String(localized: "No sessions yet", bundle: languageManager.localizedBundle))
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
-                .listRowSeparator(.hidden)
-        } else if filteredSessions.isEmpty {
-            Text("No matches")
-                .font(.callout)
-                .foregroundColor(.secondary)
-                .listRowSeparator(.hidden)
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
         } else {
-            ForEach(filteredSessions) { meta in
-                Button {
+            ForEach(agentSessions) { meta in
+                ChatSessionRow(
+                    meta: meta,
+                    isActive: activeId == meta.id,
+                    isExecuting: viewModel.hasInflightTask(inSession: meta.id),
+                    isDeleteConfirming: confirmingDeleteSessionId == meta.id,
+                    onDeleteIntent: {
+                        confirmingDeleteSessionId = meta.id
+                    },
+                    onDeleteConfirm: {
+                        viewModel.deleteSession(meta.id)
+                        confirmingDeleteSessionId = nil
+                    }
+                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(activeId == meta.id && selectedTab == .chat ? Color(NSColor.controlBackgroundColor) : Color.clear)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    confirmingDeleteSessionId = nil
                     viewModel.switchSession(to: meta.id)
                     selectedTab = .chat
-                } label: {
-                    ChatSessionRow(meta: meta,
-                                   isActive: activeId == meta.id,
-                                   isExecuting: viewModel.hasInflightTask(inSession: meta.id))
                 }
-                .buttonStyle(.plain)
                 .contextMenu {
                     Button {
                         sessionRenameId = meta.id
@@ -458,12 +476,63 @@ struct SidebarView: View {
                         Label("Archive", systemImage: "archivebox")
                     }
                     Button(role: .destructive) {
-                        sessionDeleteId = meta.id
+                        confirmingDeleteSessionId = meta.id
                     } label: {
-                        Label("Delete…", systemImage: "trash")
+                        Label("Delete", systemImage: "trash")
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Agent Section Content
+
+    @ViewBuilder
+    private var agentSectionContent: some View {
+        let visibleAgents = viewModel.availableAgents.filter {
+            !DashboardViewModel.internalAgentIds.contains($0.id)
+        }
+
+        HStack(spacing: 6) {
+            Text(String(localized: "Agent", bundle: languageManager.localizedBundle))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            Spacer()
+            Button {
+                showCreateAgentSheet = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "New Agent", bundle: languageManager.localizedBundle))
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+
+        if visibleAgents.isEmpty {
+            Text(String(localized: "No agents yet", bundle: languageManager.localizedBundle))
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+        } else {
+            ForEach(visibleAgents) { agent in
+                agentSidebarRow(agent)
+                if expandedAgentIds.contains(agent.id)
+                    && viewModel.selectedAgentId == agent.id
+                    && selectedTab == .chat {
+                    VStack(alignment: .leading, spacing: 0) {
+                        sessionsSectionContent
+                    }
+                        .padding(.leading, 10)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .clipped()
+                }
+            }
+            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: expandedAgentIds)
         }
     }
 
@@ -481,7 +550,8 @@ struct SidebarView: View {
                 Spacer()
             }
 
-            // Bottom line — action buttons: 更新 / 帮助 / 退出 / theme
+            // Bottom line — update + theme. Help, account, language, and
+            // logout now live in Settings.
             HStack(spacing: 14) {
                 // Update — pill goes green when an update is available
                 if sparkleUpdater.updateAvailable {
@@ -514,40 +584,6 @@ struct SidebarView: View {
                     .help("Check for Updates")
                 }
 
-                // Help center
-                Button {
-                    HelpAssistantWindowController.shared.showWindow(dashboardViewModel: viewModel)
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "questionmark.circle")
-                            .font(.system(size: 10))
-                        Text("Help")
-                            .font(.system(size: 10))
-                    }
-                    .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Help Assistant")
-
-                // Logout (only when logged in)
-                #if REQUIRE_LOGIN
-                if case .loggedIn = authManager.state {
-                    Button {
-                        authManager.logout()
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "arrow.right.square")
-                                .font(.system(size: 10))
-                            Text("Log Out")
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Log Out")
-                }
-                #endif
-
                 Spacer()
 
                 // Theme toggle on the trailing edge (Q2=c)
@@ -564,169 +600,6 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-    }
-
-    // MARK: - (legacy — kept for compile only; no longer referenced) Management List
-
-    private var managementList: some View {
-        List(selection: $selectedTab) {
-            ServiceStatusBadge(viewModel: viewModel)
-                .listRowSeparator(.hidden)
-                .padding(.bottom, 8)
-
-            Section("Chat") {
-                Label("Chat", systemImage: "message.fill")
-                    .tag(DashboardViewModel.DashboardTab.chat)
-            }
-
-            Section("Sessions") {
-                let agentSessions = viewModel.sessionsByAgent[viewModel.selectedAgentId] ?? []
-                let activeId = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId]
-                // Title-only filter for now: cheap, runs every keystroke,
-                // covers the "find that named conversation" case. A future
-                // enhancement could fall back to message-body search when
-                // title matches are empty.
-                let filteredSessions = sessionSearchText.isEmpty
-                    ? agentSessions
-                    : agentSessions.filter {
-                        $0.title.localizedCaseInsensitiveContains(sessionSearchText)
-                    }
-
-                // Search field — visually a plain inline TextField, only
-                // shown once the agent has any history (no point offering
-                // search over an empty set). The leading magnifyingglass
-                // and trailing clear button mimic NSSearchField conventions.
-                if !agentSessions.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        TextField("Search", text: $sessionSearchText)
-                            .textFieldStyle(.plain)
-                        if !sessionSearchText.isEmpty {
-                            Button {
-                                sessionSearchText = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .listRowSeparator(.hidden)
-                }
-
-                if agentSessions.isEmpty {
-                    Text("No sessions yet")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .listRowSeparator(.hidden)
-                } else if filteredSessions.isEmpty {
-                    Text("No matches")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .listRowSeparator(.hidden)
-                } else {
-                    ForEach(filteredSessions) { meta in
-                        Button {
-                            viewModel.switchSession(to: meta.id)
-                            selectedTab = .chat
-                        } label: {
-                            ChatSessionRow(meta: meta,
-                                           isActive: activeId == meta.id,
-                                           isExecuting: viewModel.hasInflightTask(inSession: meta.id))
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button {
-                                sessionRenameId = meta.id
-                                sessionRenameDraft = meta.title
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
-                            }
-                            Button {
-                                viewModel.togglePinSession(meta.id)
-                            } label: {
-                                Label(meta.isPinned ? "Unpin" : "Pin",
-                                      systemImage: meta.isPinned ? "pin.slash" : "pin")
-                            }
-                            Button {
-                                viewModel.exportSession(meta.id)
-                            } label: {
-                                Label("Export…", systemImage: "square.and.arrow.up")
-                            }
-                            Divider()
-                            Button {
-                                viewModel.archiveSession(meta.id)
-                            } label: {
-                                Label("Archive", systemImage: "archivebox")
-                            }
-                            Button(role: .destructive) {
-                                sessionDeleteId = meta.id
-                            } label: {
-                                Label("Delete…", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
-
-                Button {
-                    viewModel.createNewSession()
-                    selectedTab = .chat
-                } label: {
-                    Label("New Session", systemImage: "plus.circle")
-                        .foregroundColor(.accentColor)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Section("Overview") {
-                Label(String(localized: "Status", bundle: LanguageManager.shared.localizedBundle), systemImage: "chart.bar.fill")
-                    .tag(DashboardViewModel.DashboardTab.status)
-                Label(String(localized: "Budget", bundle: LanguageManager.shared.localizedBundle), systemImage: "dollarsign.gauge.chart.lefthalf.righthalf")
-                    .tag(DashboardViewModel.DashboardTab.budget)
-                #if REQUIRE_LOGIN
-                Label(String(localized: "Billing", bundle: LanguageManager.shared.localizedBundle), systemImage: "creditcard.fill")
-                    .tag(DashboardViewModel.DashboardTab.billing)
-                #endif
-            }
-
-            Section("Agent") {
-                Label("Persona", systemImage: "person.text.rectangle")
-                    .tag(DashboardViewModel.DashboardTab.persona)
-                Label("Multi-Agent", systemImage: "person.3.fill")
-                    .tag(DashboardViewModel.DashboardTab.subAgents)
-            }
-
-            Section("Settings") {
-                Label("Configuration", systemImage: "gearshape")
-                    .tag(DashboardViewModel.DashboardTab.config)
-                Label("Skills", systemImage: "bolt.fill")
-                    .tag(DashboardViewModel.DashboardTab.skills)
-                Label("Models", systemImage: "cube.fill")
-                    .tag(DashboardViewModel.DashboardTab.models)
-                Label("Channels", systemImage: "bubble.left.and.bubble.right.fill")
-                    .tag(DashboardViewModel.DashboardTab.channels)
-                Label("Plugins", systemImage: "puzzlepiece.fill")
-                    .tag(DashboardViewModel.DashboardTab.plugins)
-            }
-
-            Section("Tools") {
-                Label("Cron", systemImage: "clock.badge")
-                    .tag(DashboardViewModel.DashboardTab.cron)
-                Label("Logs", systemImage: "doc.text.magnifyingglass")
-                    .tag(DashboardViewModel.DashboardTab.logs)
-
-                Button(action: {
-                    Task { await viewModel.runDiagnostics() }
-                }) {
-                    Label("Doctor", systemImage: "stethoscope")
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .listStyle(.sidebar)
     }
 
     // MARK: - Agents List
@@ -747,7 +620,14 @@ struct SidebarView: View {
 
     private func agentRowWithContextMenu(_ agent: AgentOption) -> some View {
         let isExecuting = viewModel.isAgentExecuting(agent.id)
-        return AgentListRow(agent: agent, isActive: viewModel.selectedAgentId == agent.id, isExecuting: isExecuting)
+        let isHovering = hoveredAgentId == agent.id
+        return AgentListRow(
+            agent: agent,
+            isActive: viewModel.selectedAgentId == agent.id,
+            isExecuting: isExecuting,
+            isHovering: isHovering,
+            onCreateSession: { createSession(for: agent) }
+        )
             .tag(agent.id)
             .contextMenu {
                 Button {
@@ -765,6 +645,58 @@ struct SidebarView: View {
                     }
                 }
             }
+    }
+
+    private func agentSidebarRow(_ agent: AgentOption) -> some View {
+        let isActive = viewModel.selectedAgentId == agent.id && selectedTab == .chat
+        let isHovering = hoveredAgentId == agent.id
+
+        return agentRowWithContextMenu(agent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isActive || isHovering
+                          ? Color(NSColor.controlBackgroundColor)
+                          : Color.clear)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                toggleAgentSelection(agent)
+            }
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    if hovering {
+                        hoveredAgentId = agent.id
+                    } else if hoveredAgentId == agent.id {
+                        hoveredAgentId = nil
+                    }
+                }
+            }
+    }
+
+    private func toggleAgentSelection(_ agent: AgentOption) {
+        confirmingDeleteSessionId = nil
+        let repeatsCurrentAgent = viewModel.selectedAgentId == agent.id && selectedTab == .chat
+
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            if repeatsCurrentAgent {
+                if expandedAgentIds.contains(agent.id) {
+                    expandedAgentIds.remove(agent.id)
+                } else {
+                    expandedAgentIds.insert(agent.id)
+                }
+            }
+
+            viewModel.selectedAgentId = agent.id
+            selectedTab = .chat
+        }
+    }
+
+    private func createSession(for agent: AgentOption) {
+        confirmingDeleteSessionId = nil
+        viewModel.createNewSession(forAgent: agent.id)
+        selectedTab = .chat
     }
 
     private var agentsList: some View {
@@ -985,47 +917,59 @@ private struct AgentListRow: View {
     let agent: AgentOption
     let isActive: Bool
     let isExecuting: Bool
+    let isHovering: Bool
+    let onCreateSession: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(agent.emoji)
-                .font(.system(size: 22))
+            AgentAvatarImage(size: 24)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(agent.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
+            Text(agent.name)
+                .font(.system(size: 13, weight: isActive ? .semibold : .medium))
+                .lineLimit(1)
 
-                    Spacer()
+            if isHovering {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
 
-                    if isExecuting {
-                        PulsingDot()
-                    } else if isActive {
-                        Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 6, height: 6)
-                    }
-                }
+            Spacer(minLength: 8)
 
-                if !agent.description.isEmpty {
-                    Text(agent.description)
-                        .font(.system(size: 11))
+            if isHovering {
+                Button(action: onCreateSession) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .frame(width: 20, height: 20)
+                        .background {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(Color(NSColor.controlBackgroundColor))
+                        }
                 }
-
-                if !agent.model.isEmpty {
-                    let displayModel = agent.model.contains("/")
-                        ? String(agent.model.split(separator: "/").last ?? Substring(agent.model))
-                        : agent.model
-                    TagView(text: displayModel, color: .blue)
-                }
+                .buttonStyle(.plain)
+                .help(String(localized: "New chat", bundle: LanguageManager.shared.localizedBundle))
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+        .help(isExecuting
+              ? String(localized: "Task running", bundle: LanguageManager.shared.localizedBundle)
+              : agent.name)
+    }
+}
+
+private struct AgentAvatarImage: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image("AgentAvatar")
+            .resizable()
+            .interpolation(.high)
+            .antialiased(true)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 
@@ -1119,42 +1063,79 @@ struct ServiceStatusBadge: View {
 
 // MARK: - Detail Content
 
+private struct WorkspaceSidebarController {
+    var isExpanded: Binding<Bool>
+    var hasEditor: Bool
+    var toggle: () -> Void
+}
+
+private struct WorkspaceSidebarControllerKey: EnvironmentKey {
+    static let defaultValue = WorkspaceSidebarController(
+        isExpanded: .constant(false),
+        hasEditor: false,
+        toggle: {}
+    )
+}
+
+private extension EnvironmentValues {
+    var workspaceSidebarController: WorkspaceSidebarController {
+        get { self[WorkspaceSidebarControllerKey.self] }
+        set { self[WorkspaceSidebarControllerKey.self] = newValue }
+    }
+}
+
 struct DetailContentView: View {
     @ObservedObject var viewModel: DashboardViewModel
     @State private var collabPanelWidth: CGFloat = 320
     @State private var dragStartWidth: CGFloat = 320
-    /// Whether the right-side session details panel is visible. Auto-shown
-    /// on the .chat tab; user can hide via a toggle in ChatHeaderBar (future).
-    @State private var showSessionPanel: Bool = true
+    @State private var workspaceSidebarExpanded = false
+    @State private var workspaceEditingFilePath: String?
+    @State private var workspaceEditingFileDirty = false
+    @State private var workspaceEditorFullscreen = false
 
     private let collabPanelMinWidth: CGFloat = 220
     private let collabPanelMaxWidth: CGFloat = 500
     private let collabCollapsedWidth: CGFloat = 24
+    private static let workspaceLayoutMetrics = OutputsSidebarLayoutMetrics()
+
+    private var isWorkspaceSidebarExpanded: Bool {
+        workspaceSidebarExpanded || workspaceEditingFilePath != nil
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Collab panel (left column)
-            if viewModel.showCollabPanel {
-                if viewModel.collabPanelCollapsed {
-                    // Collapsed strip
-                    collabCollapsedStrip
-                } else {
-                    // Panel + drag handle
-                    collabPanelContent
-                        .frame(width: collabPanelWidth)
-                    collabDragHandle
+        GeometryReader { geometry in
+            let workspaceWidth = Self.workspaceLayoutMetrics.sidebarWidth(
+                isExpanded: isWorkspaceSidebarExpanded,
+                hasEditor: workspaceEditingFilePath != nil,
+                availableWidth: geometry.size.width
+            )
+
+            HStack(spacing: 0) {
+                // Collab panel (left column)
+                if viewModel.showCollabPanel {
+                    if viewModel.collabPanelCollapsed {
+                        // Collapsed strip
+                        collabCollapsedStrip
+                    } else {
+                        // Panel + drag handle
+                        collabPanelContent
+                            .frame(width: collabPanelWidth)
+                        collabDragHandle
+                    }
+                }
+
+                // Main detail content
+                mainContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if workspaceWidth > 0 {
+                    workspaceSidebarColumn(width: workspaceWidth)
                 }
             }
-
-            // Main detail content
-            mainContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Session details panel (right column) — only on chat tab
-            if viewModel.selectedTab == .chat && showSessionPanel {
-                SessionDetailsPanel(viewModel: viewModel)
-            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
+        .animation(.spring(response: 0.36, dampingFraction: 0.88), value: workspaceSidebarExpanded)
+        .animation(.spring(response: 0.36, dampingFraction: 0.88), value: workspaceEditingFilePath)
         .onChange(of: viewModel.selectedTab) { newTab in
             // Only reload agents when entering chat tab, but preserve current agent selection
             if newTab == .chat {
@@ -1177,14 +1158,29 @@ struct DetailContentView: View {
         ZStack {
             // ChatView stays alive — hidden when not active to preserve WKWebView instances.
             // sidebarMode is being phased out; selectedTab == .chat is the canonical signal now.
-            let showChat = viewModel.selectedTab == .chat
+            let activeTab = viewModel.selectedTab == .outputs ? DashboardViewModel.DashboardTab.chat : viewModel.selectedTab
+            let showChat = activeTab == .chat
             ChatView(viewModel: viewModel, hideAgentPicker: false)
+                .environment(\.workspaceSidebarController, WorkspaceSidebarController(
+                    isExpanded: Binding(
+                        get: { isWorkspaceSidebarExpanded },
+                        set: { expanded in
+                            if expanded {
+                                revealWorkspaceSidebar()
+                            } else {
+                                hideWorkspaceSidebar(resetEditor: true)
+                            }
+                        }
+                    ),
+                    hasEditor: workspaceEditingFilePath != nil,
+                    toggle: { toggleWorkspaceSidebar() }
+                ))
                 .opacity(showChat ? 1 : 0)
                 .allowsHitTesting(showChat)
 
             if !showChat {
                 Group {
-                    switch viewModel.selectedTab {
+                    switch activeTab {
                     case .chat:
                         EmptyView()
                     case .status:
@@ -1242,6 +1238,8 @@ struct DetailContentView: View {
                         SkillsTabView(viewModel: viewModel)
                     case .models:
                         ModelsTabView(viewModel: viewModel)
+                    case .outputs:
+                        EmptyView()
                     case .channels:
                         ChannelsTabView(viewModel: viewModel)
                     case .plugins:
@@ -1254,6 +1252,73 @@ struct DetailContentView: View {
                 }
             }
         }
+    }
+
+    private func toggleWorkspaceSidebar() {
+        if isWorkspaceSidebarExpanded {
+            hideWorkspaceSidebar(resetEditor: true)
+        } else {
+            revealWorkspaceSidebar()
+        }
+    }
+
+    private func revealWorkspaceSidebar() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            workspaceSidebarExpanded = true
+        }
+    }
+
+    private func hideWorkspaceSidebar(resetEditor: Bool) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            workspaceSidebarExpanded = false
+            if resetEditor {
+                workspaceEditingFilePath = nil
+                workspaceEditingFileDirty = false
+            }
+        }
+    }
+
+    private func workspaceSidebarColumn(width: CGFloat) -> some View {
+        workspaceExpandedSidebar
+            .frame(width: width)
+            .frame(maxHeight: .infinity, alignment: .topTrailing)
+            .background(Color(NSColor.windowBackgroundColor))
+            .overlay(alignment: .leading) {
+                Divider()
+            }
+            .clipped()
+    }
+
+    private var workspaceExpandedSidebar: some View {
+        HStack(spacing: 0) {
+            WorkspaceFilePanel(
+                agentId: viewModel.selectedAgentId,
+                editingFilePath: $workspaceEditingFilePath,
+                editingFileDirty: workspaceEditingFileDirty,
+                onClose: {
+                    hideWorkspaceSidebar(resetEditor: true)
+                }
+            )
+
+            if let path = workspaceEditingFilePath {
+                FileEditorPanel(
+                    filePath: path,
+                    onClose: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            workspaceEditingFilePath = nil
+                            workspaceEditingFileDirty = false
+                        }
+                    },
+                    onDirtyChanged: { dirty in
+                        workspaceEditingFileDirty = dirty
+                    },
+                    isFullscreen: $workspaceEditorFullscreen
+                )
+                .id(path)
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     }
 
     // MARK: - Collab Panel
@@ -1294,7 +1359,7 @@ struct DetailContentView: View {
                     Image(systemName: "arrow.triangle.branch")
                         .font(.system(size: 28))
                         .foregroundColor(.secondary.opacity(0.5))
-                    Text("暂无协同任务")
+                    Text(String(localized: "No collaboration tasks", bundle: LanguageManager.shared.localizedBundle))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -1414,6 +1479,7 @@ private let slashCommands: [SlashCommand] = [
 struct ChatView: View {
     @ObservedObject var viewModel: DashboardViewModel
     var hideAgentPicker: Bool = false
+    @Environment(\.workspaceSidebarController) private var workspaceSidebarController
     @State private var inputText = ""
     // The `ChatInputMode` picker (聊天/执行任务/代码模式) used to live here
     // but was hidden in v1.1.46 — see the toolbar row below and the
@@ -1431,6 +1497,9 @@ struct ChatView: View {
     // @ Agent mention panel
     @State private var agentSelectedIndex: Int = 0
     @State private var agentJustSelected: Bool = false
+    // Composer agent/model selector
+    @State private var showComposerSelector = false
+    @State private var composerSelectorShowsModels = false
     // File attachments
     @State private var attachedFiles: [URL] = []
     // Scroll debounce for streaming content
@@ -1443,15 +1512,10 @@ struct ChatView: View {
     // Create agent sheet
     @State private var showCreateAgentSheet = false
     @StateObject private var createAgentVM: SubAgentsViewModel
-    // Workspace file browser
-    @State private var fileBrowserOpen = false
-    @State private var editingFilePath: String?
-    @State private var editingFileDirty = false
     // Built-in terminal
     @State private var terminalOpen = false
     @State private var terminalHeight: CGFloat = 120
-    // File editor fullscreen state (persists across file switches)
-    @State private var editorFullscreen = false
+    private static let layoutMetrics = OutputsSidebarLayoutMetrics()
 
     init(viewModel: DashboardViewModel, hideAgentPicker: Bool = false) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
@@ -1471,107 +1535,77 @@ struct ChatView: View {
         DashboardViewModel.resolveAgentWorkspace(viewModel.selectedAgentId)
     }
 
+    private var currentSessionMetadata: ChatSessionMetadata? {
+        guard let sessionId = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId] else {
+            return nil
+        }
+        return (viewModel.sessionsByAgent[viewModel.selectedAgentId] ?? []).first { $0.id == sessionId }
+    }
+
+    private var currentSessionTitle: String? {
+        guard !viewModel.chatMessages.isEmpty else { return nil }
+        let title = currentSessionMetadata?.title
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? nil : title
+    }
+
     // MARK: - Chat Message List (extracted for compiler performance)
 
     @ViewBuilder
     private func chatScrollContent(proxy: ScrollViewProxy) -> some View {
         let scrollView = ScrollView {
-            // Single LazyVStack is the scroll container for both the empty
-            // state and the message thread. Was an outer if-else that
-            // swapped ChatWelcomeView ↔ LazyVStack — on the FIRST sent
-            // message the whole subtree was torn down and remounted,
-            // which forced every fresh ChatBubble's WKWebView to run a
-            // cold `loadHTMLString` navigation. Until that async navigation
-            // painted, the entire chat panel went white. Keeping the
-            // LazyVStack permanent means the first message is just a
-            // diff-insert: the empty-state block disappears, the new
-            // ChatBubble appears, the container never re-mounts.
-            LazyVStack(spacing: 16) {
-                Color.clear
-                    .frame(height: 1)
-                    .id("chatTop")
+            HStack(alignment: .top, spacing: 0) {
+                Spacer(minLength: 0)
 
-                if viewModel.chatMessages.isEmpty {
-                    if let sid = viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId],
-                       viewModel.loadingSessionIds.contains(sid) {
-                        // Session JSON is decoding off the main thread.
-                        // Before the LazyVStack-merge, this branch was
-                        // unreachable (outer if matched empty first and
-                        // showed the welcome screen instead).
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("加载会话…")
-                                .foregroundColor(.secondary)
-                                .font(.callout)
-                        }
-                        .padding(.vertical, 24)
-                        .frame(maxWidth: .infinity)
-                    } else {
-                        // Truly empty agent / brand-new session. minHeight
-                        // gives the welcome layout room to breathe inside
-                        // the LazyVStack (which would otherwise hug
-                        // content). The number is rough — Logo (200) +
-                        // brand + subtitle + 5 cards + spacing — and is
-                        // intentionally generous so the cards aren't
-                        // squashed up against the chat input.
-                        ChatWelcomeView()
-                            .frame(minHeight: 520)
-                    }
-                }
+                LazyVStack(spacing: 16) {
+                    Color.clear
+                        .frame(width: 0, height: 0)
+                        .id("chatTop")
 
-                ForEach(viewModel.chatMessages, id: \.id) { message in
-                    // Hide bubbles that are "transient placeholders"
-                    // — empty assistant messages still in the
-                    // `.loading` state. Those get a dedicated
-                    // ThinkingIndicator below.
-                    //
-                    // EXCEPTION: `.background` placeholders pass
-                    // through. Was a real bug — ThinkingIndicator's
-                    // 120s timer auto-flips `.loading` → `.background`
-                    // for long-running tasks; the old filter (which
-                    // skipped ALL empty assistant messages regardless
-                    // of status) then dropped these from the ChatBubble
-                    // loop, AND the ThinkingIndicator filter no longer
-                    // matched them (status is .background now), so the
-                    // message vanished from UI while the gateway-side
-                    // task was still running. Letting it through here
-                    // is correct: ChatBubble has a "Running in
-                    // background..." sub-row that renders even with
-                    // empty content, which is exactly the affordance
-                    // the user needs to see.
-                    let isLoadingPlaceholder = message.role == .assistant
-                        && message.content.isEmpty
-                        && message.attachments.isEmpty
-                        && message.taskStatus == .loading
-                    if !isLoadingPlaceholder {
-                        if message.scrollTargetId != nil {
-                            BackgroundTaskNotification(message: message, scrollProxy: proxy)
-                                .id(message.id)
-                        } else {
-                            ChatBubble(message: message, onRewind: { viewModel.rewindToMessage($0) }, onCancel: { viewModel.cancelChat($0.id) })
-                                .id(message.id)
+                    ForEach(viewModel.chatMessages, id: \.id) { message in
+                        // Hide bubbles that are "transient placeholders" —
+                        // empty assistant messages still in `.loading`. Empty
+                        // `.background` messages still pass through so users see
+                        // the background-running affordance.
+                        let isLoadingPlaceholder = message.role == .assistant
+                            && message.content.isEmpty
+                            && message.attachments.isEmpty
+                            && message.taskStatus == .loading
+                        if !isLoadingPlaceholder {
+                            if message.scrollTargetId != nil {
+                                BackgroundTaskNotification(message: message, scrollProxy: proxy)
+                                    .id(message.id)
+                            } else {
+                                ChatBubble(
+                                    message: message,
+                                    onRewind: { viewModel.rewindToMessage($0) },
+                                    onCancel: { viewModel.cancelChat($0.id) }
+                                )
+                                    .id(message.id)
+                            }
                         }
                     }
-                }
 
-                ForEach(viewModel.chatMessages.filter { $0.taskStatus == .loading && $0.content.isEmpty }, id: \.id) { loadingMsg in
-                    ThinkingIndicator(
-                        message: loadingMsg,
-                        viewModel: viewModel
-                    )
-                    .id("loading-\(loadingMsg.id)")
-                }
+                    ForEach(viewModel.chatMessages.filter { $0.taskStatus == .loading && $0.content.isEmpty }, id: \.id) { loadingMsg in
+                        ThinkingIndicator(
+                            message: loadingMsg,
+                            viewModel: viewModel
+                        )
+                        .id("loading-\(loadingMsg.id)")
+                    }
 
-                Color.clear
-                    .frame(height: 1)
-                    .id("chatBottom")
+                    Color.clear
+                        .frame(width: 0, height: 0)
+                        .id("chatBottom")
+                }
+                .frame(maxWidth: Self.layoutMetrics.chatColumnMaxWidth)
+
+                Spacer(minLength: 0)
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 20)
         }
-        // Surface rewind failures — previously `rewindError` was set in the
-        // view model but never shown, so a failed 回滚 looked like a dead
-        // button ("点击无法回退"). Now the reason is visible.
         .alert(
             "回滚失败",
             isPresented: Binding(
@@ -1681,32 +1715,52 @@ struct ChatView: View {
         return true
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // New top header bar — always visible in chat. Replaces the old
-            // hideAgentPicker-only AgentHeaderBar; the file-browser /
-            // terminal entry points from the legacy header are wired
-            // here as callbacks.
-            ChatHeaderBar(
-                viewModel: viewModel,
-                onFileBrowser: {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        fileBrowserOpen.toggle()
-                    }
-                },
-                onTerminal: {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        terminalOpen.toggle()
-                    }
-                }
-            )
+    private var emptyChatSurface: some View {
+        VStack(spacing: 22) {
+            Spacer(minLength: 0)
 
+            VStack(spacing: 22) {
+                Text(String(localized: "What should we build today?", bundle: LanguageManager.shared.localizedBundle))
+                    .font(.system(size: 30, weight: .regular))
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
+
+                composerArea(maxWidth: Self.layoutMetrics.chatColumnMaxWidth, horizontalPadding: 0, bottomPadding: 0)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 48)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var chatTopChrome: some View {
+        HStack(spacing: 12) {
+            if let title = currentSessionTitle {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Spacer(minLength: 0)
+
+            chatPanelToggleButton
+        }
+        .frame(minHeight: 30)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, viewModel.chatMessages.isEmpty ? 4 : 2)
+    }
+
+    private var timelineChatSurface: some View {
+        VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ZStack(alignment: .bottomTrailing) {
                     chatScrollContent(proxy: proxy)
                         .onAppear {
                             chatScrollProxy = proxy
-                            // When switching back to chat page from another tab, scroll to latest message
                             if !viewModel.chatMessages.isEmpty && shouldAutoScroll {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                     proxy.scrollTo("chatBottom", anchor: .bottom)
@@ -1716,373 +1770,434 @@ struct ChatView: View {
                                 }
                             }
                         }
-
-                    // Floating scroll-to-top/bottom buttons removed —
-                    // trackpad / scroll-wheel + standard Cmd+Up / Cmd+Down
-                    // are sufficient, and the floating chevrons added
-                    // visual noise without much gain.
                 }
             }
             .id("chatScrollView")
 
-            // Floating card input bar with slash command overlay
-            ZStack(alignment: .bottom) {
-                // Slash command autocomplete panel
-                if showSlashPanel {
-                    VStack(spacing: 0) {
-                        ScrollViewReader { slashProxy in
-                            ScrollView {
-                                VStack(spacing: 0) {
-                                    ForEach(Array(filteredSlashCommands.enumerated()), id: \.element.id) { index, cmd in
-                                        HStack(spacing: 8) {
-                                            Text(cmd.name)
-                                                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                                .foregroundColor(index == slashSelectedIndex ? .white : .primary)
-                                            Spacer()
-                                            Text(cmd.description)
-                                                .font(.system(size: 12))
-                                                .foregroundColor(index == slashSelectedIndex ? .white.opacity(0.8) : .secondary)
-                                        }
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                        .background(index == slashSelectedIndex ? Color.accentColor : Color.clear)
-                                        .cornerRadius(6)
-                                        .contentShape(Rectangle())
-                                        .onTapGesture {
-                                            selectSlashCommand(filteredSlashCommands[index])
-                                        }
-                                        .id(cmd.id)
-                                    }
-                                }
-                                .padding(6)
-                            }
-                            .onChange(of: slashSelectedIndex) { newIndex in
-                                if newIndex >= 0 && newIndex < filteredSlashCommands.count {
-                                    withAnimation {
-                                        slashProxy.scrollTo(filteredSlashCommands[newIndex].id, anchor: .center)
-                                    }
-                                }
-                            }
-                        }
-                        .frame(maxHeight: 280)
-                    }
-                    .background(Color(NSColor.windowBackgroundColor))
-                    .cornerRadius(12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.12), radius: 12, y: -4)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 110) // offset above the input card
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
+            composerArea(maxWidth: Self.layoutMetrics.chatColumnMaxWidth, horizontalPadding: 16, bottomPadding: 16)
 
-                // Skills autocomplete panel
-                if showSkillsPanel {
-                    VStack(spacing: 0) {
-                        if filteredSkills.isEmpty {
-                            HStack {
-                                Text("No matching skills")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                        } else {
-                            ScrollViewReader { skillProxy in
-                                ScrollView {
-                                    VStack(spacing: 0) {
-                                        ForEach(Array(filteredSkills.enumerated()), id: \.element.id) { index, skill in
-                                            HStack(spacing: 8) {
-                                                Circle()
-                                                    .fill(skill.status == .ready ? Color.green : Color.orange)
-                                                    .frame(width: 8, height: 8)
-                                                Text(skill.name)
-                                                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                                    .foregroundColor(index == skillsSelectedIndex ? .white : .primary)
-                                                Spacer()
-                                                if !skill.description.isEmpty {
-                                                    Text(skill.description)
-                                                        .font(.system(size: 11))
-                                                        .foregroundColor(index == skillsSelectedIndex ? .white.opacity(0.8) : .secondary)
-                                                        .lineLimit(1)
-                                                }
-                                                if !skill.source.isEmpty {
-                                                    Text(skill.source)
-                                                        .font(.system(size: 10))
-                                                        .padding(.horizontal, 5)
-                                                        .padding(.vertical, 2)
-                                                        .background(
-                                                            (index == skillsSelectedIndex ? Color.white.opacity(0.2) : Color.secondary.opacity(0.12))
-                                                        )
-                                                        .cornerRadius(4)
-                                                        .foregroundColor(index == skillsSelectedIndex ? .white.opacity(0.9) : .secondary)
-                                                }
-                                            }
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 8)
-                                            .background(index == skillsSelectedIndex ? Color.accentColor : Color.clear)
-                                            .cornerRadius(6)
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                selectSkill(filteredSkills[index])
-                                            }
-                                            .id("skill-\(skill.name)")
-                                        }
-                                    }
-                                    .padding(6)
-                                }
-                                .onChange(of: skillsSelectedIndex) { newIndex in
-                                    if newIndex >= 0 && newIndex < filteredSkills.count {
-                                        withAnimation {
-                                            skillProxy.scrollTo("skill-\(filteredSkills[newIndex].name)", anchor: .center)
-                                        }
-                                    }
-                                }
-                            }
-                            .frame(maxHeight: 280)
-                        }
-                    }
-                    .background(Color(NSColor.windowBackgroundColor))
-                    .cornerRadius(12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.12), radius: 12, y: -4)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 110)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                // @ Agent mention panel
-                if showAgentPanel {
-                    VStack(spacing: 0) {
-                        if filteredAgents.isEmpty {
-                            HStack {
-                                Text("No matching agents")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                        } else {
-                            ScrollViewReader { agentProxy in
-                                ScrollView {
-                                    VStack(spacing: 0) {
-                                        ForEach(Array(filteredAgents.enumerated()), id: \.element.id) { index, agent in
-                                            HStack(spacing: 8) {
-                                                Text(agent.emoji)
-                                                    .font(.system(size: 16))
-                                                    .frame(width: 24)
-                                                Text(agent.name)
-                                                    .font(.system(size: 13, weight: .medium))
-                                                    .foregroundColor(index == agentSelectedIndex ? .white : .primary)
-                                                if agent.id != agent.name {
-                                                    Text(agent.id)
-                                                        .font(.system(size: 11))
-                                                        .foregroundColor(index == agentSelectedIndex ? .white.opacity(0.7) : .secondary)
-                                                }
-                                                Spacer()
-                                                if agent.id == viewModel.selectedAgentId {
-                                                    Image(systemName: "checkmark")
-                                                        .font(.system(size: 11, weight: .semibold))
-                                                        .foregroundColor(index == agentSelectedIndex ? .white : .accentColor)
-                                                }
-                                            }
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 8)
-                                            .background(index == agentSelectedIndex ? Color.accentColor : Color.clear)
-                                            .cornerRadius(6)
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                selectAgent(filteredAgents[index])
-                                            }
-                                            .id("agent-\(agent.id)")
-                                        }
-                                    }
-                                    .padding(6)
-                                }
-                                .onChange(of: agentSelectedIndex) { newIndex in
-                                    if newIndex >= 0 && newIndex < filteredAgents.count {
-                                        withAnimation {
-                                            agentProxy.scrollTo("agent-\(filteredAgents[newIndex].id)", anchor: .center)
-                                        }
-                                    }
-                                }
-                            }
-                            .frame(maxHeight: 280)
-                        }
-                    }
-                    .background(Color(NSColor.windowBackgroundColor))
-                    .cornerRadius(12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.12), radius: 12, y: -4)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 110)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                // Input card — Claude-style layout:
-                //   ┌────────────────────────────────┐
-                //   │ [attachment chips, if any]    │
-                //   │ TextEditor (full width)       │
-                //   │ 📎 attach          ↑ send     │  ← bottom toolbar
-                //   └────────────────────────────────┘
-                // Attach + send both sit at the bottom of the card (one
-                // bordered unit). This matches Claude's input pattern and
-                // unifies the affordances — previously attach lived
-                // outside-above and send was overlaid on the editor; users
-                // found that confusing.
-                VStack(spacing: 0) {
-                    // Attachment preview bar (top)
-                    if !attachedFiles.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(attachedFiles, id: \.absoluteString) { url in
-                                    AttachmentPreview(url: url) {
-                                        attachedFiles.removeAll { $0 == url }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                        }
-                    }
-
-                    // TextEditor — full width, no overlay button. Goes the
-                    // full available width because attach + send are below
-                    // in their own row.
-                    ZStack(alignment: .topLeading) {
-                        // Placeholder — hidden when focused
-                        if inputText.isEmpty && !isInputFocused {
-                            Text("Ask anything...")
-                                .font(.subheadline)
-                                .foregroundColor(Color(NSColor.placeholderTextColor).opacity(0.6))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .allowsHitTesting(false)
-                                .transition(.opacity)
-                        }
-
-                        // Hidden text for height calculation
-                        Text(inputText.isEmpty ? " " : inputText)
-                            .font(.body)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .opacity(0)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        TextEditor(text: $inputText)
-                            .font(.body)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .scrollContentBackground(.hidden)
-                            .disabled(isInputLocked)
-                            .onChange(of: viewModel.composerPrefill) { newVal in
-                                // "回滚 = 编辑重发": the view model dropped the
-                                // clicked message (and everything after) and
-                                // stashed its text here. Load it into the
-                                // composer for editing, then clear the one-shot.
-                                guard let prefill = newVal else { return }
-                                inputText = prefill
-                                viewModel.composerPrefill = nil
-                            }
-                    }
-                    .frame(minHeight: 44, maxHeight: 200)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
-                    .padding(.bottom, 2)
-
-                    // Bottom toolbar: attach (left), send (right).
-                    HStack(spacing: 6) {
-                        Button(action: { openFilePicker() }) {
-                            Image(systemName: "paperclip")
-                                .font(.system(size: 13))
-                                .foregroundColor(.secondary)
-                                .frame(width: 26, height: 26)
-                        }
-                        .buttonStyle(.plain)
-                        .help(String(localized: "Attach File", bundle: LanguageManager.shared.localizedBundle))
-                        .disabled(isInputLocked)
-
-                        Spacer()
-
-                        Button(action: { sendMessage() }) {
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(canSend ? .white : Color(NSColor.tertiaryLabelColor))
-                                .frame(width: 26, height: 26)
-                                .background(
-                                    Circle()
-                                        .fill(canSend
-                                              ? Color.accentColor
-                                              : Color(NSColor.quaternaryLabelColor))
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!canSend)
-                        .animation(.easeInOut(duration: 0.15), value: canSend)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 2)
-                    .padding(.bottom, 8)
-                }
-                .background(Color(NSColor.windowBackgroundColor))
-                .cornerRadius(16)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.08), radius: 8, y: -2)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
-                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                    for provider in providers {
-                        provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { data, _ in
-                            guard let urlData = data as? Data,
-                                  let url = URL(dataRepresentation: urlData, relativeTo: nil) else { return }
-                            DispatchQueue.main.async {
-                                if !attachedFiles.contains(url) {
-                                    attachedFiles.append(url)
-                                }
-                            }
-                        }
-                    }
-                    return true
-                }
-            }
-            .animation(.easeInOut(duration: 0.15), value: showSlashPanel)
-            .animation(.easeInOut(duration: 0.15), value: showSkillsPanel)
-
-            // Terminal panel (below input bar)
             if terminalOpen {
-                VStack(spacing: 0) {
-                    TerminalDragHandle(height: $terminalHeight)
-                    TerminalPanelView(
-                        workspacePath: terminalWorkspacePath,
-                        onClose: { withAnimation { terminalOpen = false } }
-                    )
-                    .frame(height: terminalHeight)
-                }
-                .background(Color(NSColor.windowBackgroundColor))
-                .cornerRadius(16)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.08), radius: 8, y: -2)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                terminalPanel
             }
         }
+    }
+
+    private func composerArea(maxWidth: CGFloat, horizontalPadding: CGFloat, bottomPadding: CGFloat) -> some View {
+        composerInputCard
+            .overlay(alignment: .bottomTrailing) {
+                composerFloatingPanels
+            }
+        .frame(maxWidth: maxWidth)
+        .padding(.horizontal, horizontalPadding)
+        .padding(.bottom, bottomPadding)
+        .animation(.easeInOut(duration: 0.15), value: showSlashPanel)
+        .animation(.easeInOut(duration: 0.15), value: showSkillsPanel)
+        .animation(.easeInOut(duration: 0.18), value: showComposerSelector)
+        .animation(.easeInOut(duration: 0.18), value: composerSelectorShowsModels)
+    }
+
+    private var composerFloatingPanels: some View {
+        composerSuggestionPanels
+            .zIndex(4)
+            .allowsHitTesting(showSlashPanel || showSkillsPanel || showAgentPanel)
+    }
+
+    @ViewBuilder
+    private var composerSuggestionPanels: some View {
+        if showSlashPanel {
+            slashCommandPanel
+        }
+
+        if showSkillsPanel {
+            skillsPanel
+        }
+
+        if showAgentPanel {
+            agentMentionPanel
+        }
+    }
+
+    private var slashCommandPanel: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { slashProxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(filteredSlashCommands.enumerated()), id: \.element.id) { index, cmd in
+                            HStack(spacing: 8) {
+                                Text(cmd.name)
+                                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                    .foregroundColor(index == slashSelectedIndex ? .white : .primary)
+                                Spacer()
+                                Text(cmd.description)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(index == slashSelectedIndex ? .white.opacity(0.8) : .secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(index == slashSelectedIndex ? Color.accentColor : Color.clear)
+                            .cornerRadius(6)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectSlashCommand(filteredSlashCommands[index])
+                            }
+                            .id(cmd.id)
+                        }
+                    }
+                    .padding(6)
+                }
+                .onChange(of: slashSelectedIndex) { newIndex in
+                    if newIndex >= 0 && newIndex < filteredSlashCommands.count {
+                        withAnimation {
+                            slashProxy.scrollTo(filteredSlashCommands[newIndex].id, anchor: .center)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+        }
+        .autocompletePanelStyle(bottomOffset: 110)
+    }
+
+    private var skillsPanel: some View {
+        VStack(spacing: 0) {
+            if filteredSkills.isEmpty {
+                HStack {
+                    Text(String(localized: "No matching skills", bundle: LanguageManager.shared.localizedBundle))
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            } else {
+                ScrollViewReader { skillProxy in
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(Array(filteredSkills.enumerated()), id: \.element.id) { index, skill in
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(skill.status == .ready ? Color.green : Color.orange)
+                                        .frame(width: 8, height: 8)
+                                    Text(skill.name)
+                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                        .foregroundColor(index == skillsSelectedIndex ? .white : .primary)
+                                    Spacer()
+                                    if !skill.description.isEmpty {
+                                        Text(skill.description)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(index == skillsSelectedIndex ? .white.opacity(0.8) : .secondary)
+                                            .lineLimit(1)
+                                    }
+                                    if !skill.source.isEmpty {
+                                        Text(skill.source)
+                                            .font(.system(size: 10))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2)
+                                            .background(index == skillsSelectedIndex ? Color.white.opacity(0.2) : Color.secondary.opacity(0.12))
+                                            .cornerRadius(4)
+                                            .foregroundColor(index == skillsSelectedIndex ? .white.opacity(0.9) : .secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(index == skillsSelectedIndex ? Color.accentColor : Color.clear)
+                                .cornerRadius(6)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectSkill(filteredSkills[index])
+                                }
+                                .id("skill-\(skill.name)")
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .onChange(of: skillsSelectedIndex) { newIndex in
+                        if newIndex >= 0 && newIndex < filteredSkills.count {
+                            withAnimation {
+                                skillProxy.scrollTo("skill-\(filteredSkills[newIndex].name)", anchor: .center)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 280)
+            }
+        }
+        .autocompletePanelStyle(bottomOffset: 110)
+    }
+
+    private var agentMentionPanel: some View {
+        VStack(spacing: 0) {
+            if filteredAgents.isEmpty {
+                HStack {
+                    Text(String(localized: "No matching agents", bundle: LanguageManager.shared.localizedBundle))
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            } else {
+                ScrollViewReader { agentProxy in
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(Array(filteredAgents.enumerated()), id: \.element.id) { index, agent in
+                                HStack(spacing: 8) {
+                                    AgentAvatarImage(size: 18)
+                                        .frame(width: 24)
+                                    Text(agent.name)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(index == agentSelectedIndex ? .white : .primary)
+                                    if agent.id != agent.name {
+                                        Text(agent.id)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(index == agentSelectedIndex ? .white.opacity(0.7) : .secondary)
+                                    }
+                                    Spacer()
+                                    if agent.id == viewModel.selectedAgentId {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(index == agentSelectedIndex ? .white : .accentColor)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(index == agentSelectedIndex ? Color.accentColor : Color.clear)
+                                .cornerRadius(6)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectAgent(filteredAgents[index])
+                                }
+                                .id("agent-\(agent.id)")
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .onChange(of: agentSelectedIndex) { newIndex in
+                        if newIndex >= 0 && newIndex < filteredAgents.count {
+                            withAnimation {
+                                agentProxy.scrollTo("agent-\(filteredAgents[newIndex].id)", anchor: .center)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 280)
+            }
+        }
+        .autocompletePanelStyle(bottomOffset: 110)
+    }
+
+    private var composerInputCard: some View {
+        VStack(spacing: 0) {
+            if !attachedFiles.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(attachedFiles, id: \.absoluteString) { url in
+                            AttachmentPreview(url: url) {
+                                attachedFiles.removeAll { $0 == url }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
+            }
+
+            ZStack(alignment: .topLeading) {
+                if inputText.isEmpty && !isInputFocused {
+                    Text(String(localized: "Do Anything", bundle: LanguageManager.shared.localizedBundle))
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundColor(Color(NSColor.placeholderTextColor).opacity(0.6))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
+                Text(inputText.isEmpty ? " " : inputText)
+                    .font(.body)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .opacity(0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                TextEditor(text: $inputText)
+                    .font(.body)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .scrollContentBackground(.hidden)
+                    .disabled(isInputLocked)
+            }
+            .frame(minHeight: 44, maxHeight: 200)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+
+            HStack(spacing: 6) {
+                Button(action: { openFilePicker() }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Attach File", bundle: LanguageManager.shared.localizedBundle))
+                .disabled(isInputLocked)
+
+                Spacer(minLength: 8)
+
+                ComposerAgentModelSelector(
+                    viewModel: viewModel,
+                    isOpen: $showComposerSelector,
+                    showingModels: $composerSelectorShowsModels
+                )
+
+                Button(action: { sendMessage() }) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(canSend ? .white : Color(NSColor.tertiaryLabelColor))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(canSend
+                                      ? Color.accentColor
+                                      : Color(NSColor.quaternaryLabelColor))
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .animation(.easeInOut(duration: 0.15), value: canSend)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 2)
+            .padding(.bottom, 8)
+        }
+        .background(Color(NSColor.windowBackgroundColor))
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 8, y: -2)
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            for provider in providers {
+                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { data, _ in
+                    guard let urlData = data as? Data,
+                          let url = URL(dataRepresentation: urlData, relativeTo: nil) else { return }
+                    DispatchQueue.main.async {
+                        if !attachedFiles.contains(url) {
+                            attachedFiles.append(url)
+                        }
+                    }
+                }
+            }
+            return true
+        }
+    }
+
+    private var terminalPanel: some View {
+        VStack(spacing: 0) {
+            TerminalDragHandle(height: $terminalHeight)
+            TerminalPanelView(
+                workspacePath: terminalWorkspacePath,
+                onClose: { withAnimation { terminalOpen = false } }
+            )
+            .frame(height: terminalHeight)
+        }
+        .background(Color(NSColor.windowBackgroundColor))
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 8, y: -2)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+    }
+
+    private var chatPanelToggleButton: some View {
+        Button {
+            workspaceSidebarController.toggle()
+        } label: {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(workspaceSidebarController.isExpanded.wrappedValue ? .primary : .secondary)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color(NSColor.windowBackgroundColor).opacity(0.92))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Outputs")
+    }
+
+    private func closeComposerSelector() {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            showComposerSelector = false
+            composerSelectorShowsModels = false
+        }
+    }
+
+    private var composerSelectorDismissLayer: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture {
+                closeComposerSelector()
+            }
+    }
+
+    @ViewBuilder
+    private func composerSelectorOverlay(anchor: Anchor<CGRect>?) -> some View {
+        GeometryReader { proxy in
+            if let anchor, showComposerSelector {
+                let selectorFrame = proxy[anchor]
+                let trailingOffset = max(12, proxy.size.width - selectorFrame.maxX)
+                let bottomOffset = max(12, proxy.size.height - selectorFrame.minY + 8)
+
+                ZStack(alignment: .bottomTrailing) {
+                    composerSelectorDismissLayer
+                        .zIndex(0)
+
+                    ComposerAgentModelPanel(
+                        viewModel: viewModel,
+                        isOpen: $showComposerSelector,
+                        showingModels: $composerSelectorShowsModels
+                    )
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(.trailing, trailingOffset)
+                    .padding(.bottom, bottomOffset)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
+                    .zIndex(1)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .animation(.easeInOut(duration: 0.18), value: showComposerSelector)
+                .animation(.easeInOut(duration: 0.18), value: composerSelectorShowsModels)
+            }
+        }
+    }
+
+    private var chatContent: some View {
+        VStack(spacing: 0) {
+            chatTopChrome
+            if viewModel.chatMessages.isEmpty {
+                emptyChatSurface
+            } else {
+                timelineChatSurface
+            }
+        }
+    }
+
+    var body: some View {
+        chatContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlayPreferenceValue(ComposerSelectorButtonBoundsKey.self) { anchor in
+                composerSelectorOverlay(anchor: anchor)
+            }
         .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             viewModel.loadAvailableAgents()
@@ -2362,48 +2477,9 @@ struct ChatView: View {
                 .transition(.move(edge: .trailing))
             }
         }
-        .overlay(alignment: .trailing) {
-            if fileBrowserOpen {
-                HStack(spacing: 0) {
-                    WorkspaceFilePanel(
-                        agentId: viewModel.selectedAgentId,
-                        editingFilePath: $editingFilePath,
-                        editingFileDirty: editingFileDirty,
-                        onClose: {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                editingFilePath = nil
-                                editingFileDirty = false
-                                fileBrowserOpen = false
-                            }
-                        }
-                    )
-
-                    if let path = editingFilePath {
-                        FileEditorPanel(
-                            filePath: path,
-                            onClose: {
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    editingFilePath = nil
-                                    editingFileDirty = false
-                                }
-                            },
-                            onDirtyChanged: { dirty in
-                                editingFileDirty = dirty
-                            },
-                            isFullscreen: $editorFullscreen
-                        )
-                        .id(path)
-                        .transition(.move(edge: .trailing))
-                    }
-                }
-                .transition(.move(edge: .trailing))
-            }
-        }
         .onChange(of: viewModel.selectedAgentId) { _ in
             withAnimation(.easeInOut(duration: 0.25)) {
                 viewModel.agentSettingsOpen = false
-                fileBrowserOpen = false
-                editingFilePath = nil
                 terminalOpen = false
             }
         }
@@ -2767,59 +2843,325 @@ struct ChatView: View {
     }
 }
 
+private extension View {
+    func autocompletePanelStyle(bottomOffset: CGFloat) -> some View {
+        self
+            .background(Color(NSColor.windowBackgroundColor))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.12), radius: 12, y: -4)
+            .padding(.horizontal, 16)
+            .padding(.bottom, bottomOffset)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+}
+
+private struct ComposerSelectorButtonBoundsKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
+private struct ComposerAgentModelSelector: View {
+    @ObservedObject var viewModel: DashboardViewModel
+    @Binding var isOpen: Bool
+    @Binding var showingModels: Bool
+
+    private var currentAgent: AgentOption? {
+        viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
+    }
+
+    private var agentLabel: String {
+        currentAgent?.name ?? viewModel.selectedAgentId
+    }
+
+    private var modelLabel: String {
+        let raw = currentAgent?.model ?? ""
+        let resolved = raw.isEmpty ? viewModel.modelOverview.defaultModel : raw
+        let cleaned = stripProviderPrefix(resolved)
+        return cleaned.isEmpty || cleaned == "-" ? "Model" : cleaned
+    }
+
+    var body: some View {
+        Button {
+            if !isOpen {
+                Task { await viewModel.loadModelsForSettings() }
+            }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isOpen.toggle()
+                if !isOpen {
+                    showingModels = false
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                AgentAvatarImage(size: 16)
+
+                Text("\(agentLabel) · \(modelLabel)")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(isOpen ? 180 : 0))
+            }
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Agent and model")
+        .anchorPreference(key: ComposerSelectorButtonBoundsKey.self, value: .bounds) { anchor in
+            isOpen ? anchor : nil
+        }
+    }
+}
+
+private struct ComposerAgentModelPanel: View {
+    @ObservedObject var viewModel: DashboardViewModel
+    @Binding var isOpen: Bool
+    @Binding var showingModels: Bool
+
+    private var currentAgent: AgentOption? {
+        viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
+    }
+
+    private var currentRawModel: String {
+        currentAgent?.model ?? ""
+    }
+
+    private var resolvedDefaultModel: String {
+        let defaultModel = viewModel.modelOverview.defaultModel
+        let cleaned = stripProviderPrefix(defaultModel)
+        return cleaned.isEmpty || cleaned == "-" ? "" : cleaned
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .bottom, spacing: 8) {
+                primaryPanel
+                if showingModels {
+                    modelPanel
+                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomLeading)))
+                }
+            }
+
+            VStack(alignment: .trailing, spacing: 8) {
+                if showingModels {
+                    modelPanel
+                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+                }
+                primaryPanel
+            }
+        }
+    }
+
+    private var primaryPanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Agent")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+
+            ForEach(viewModel.availableAgents) { agent in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        viewModel.selectedAgentId = agent.id
+                        showingModels = false
+                        isOpen = false
+                    }
+                } label: {
+                    selectorRow(
+                        title: agent.name,
+                        subtitle: agent.id == agent.name ? nil : agent.id,
+                        selected: agent.id == viewModel.selectedAgentId,
+                        showsDisclosure: false,
+                        showsAgentAvatar: true
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+                .padding(.vertical, 4)
+
+            Button {
+                Task { await viewModel.loadModelsForSettings() }
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showingModels.toggle()
+                }
+            } label: {
+                selectorRow(
+                    title: "Model",
+                    subtitle: currentModelDisplay,
+                    selected: false,
+                    showsDisclosure: true,
+                    showsAgentAvatar: false
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 6)
+        }
+        .frame(width: 240)
+        .panelChrome(cornerRadius: 12)
+    }
+
+    private var modelPanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Model")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+
+            Button {
+                selectModel("")
+            } label: {
+                selectorRow(
+                    title: resolvedDefaultModel.isEmpty ? "Default" : "Default (\(resolvedDefaultModel))",
+                    subtitle: "Inherit",
+                    selected: currentRawModel.isEmpty,
+                    showsDisclosure: false,
+                    showsAgentAvatar: false
+                )
+            }
+            .buttonStyle(.plain)
+
+            if !currentRawModel.isEmpty
+                && !viewModel.availableModelsForSettings.contains(where: { $0.id == currentRawModel }) {
+                Button {
+                    selectModel(currentRawModel)
+                } label: {
+                    selectorRow(
+                        title: stripProviderPrefix(currentRawModel),
+                        subtitle: nil,
+                        selected: true,
+                        showsDisclosure: false,
+                        showsAgentAvatar: false
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            ForEach(viewModel.availableModelsForSettings) { model in
+                Button {
+                    selectModel(model.id)
+                } label: {
+                    selectorRow(
+                        title: stripProviderPrefix(model.name),
+                        subtitle: nil,
+                        selected: model.id == currentRawModel,
+                        showsDisclosure: false,
+                        showsAgentAvatar: false
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(width: 230)
+        .panelChrome(cornerRadius: 12)
+    }
+
+    private var currentModelDisplay: String {
+        let raw = currentRawModel.isEmpty ? viewModel.modelOverview.defaultModel : currentRawModel
+        let cleaned = stripProviderPrefix(raw)
+        return cleaned.isEmpty || cleaned == "-" ? "Model" : cleaned
+    }
+
+    private func selectorRow(
+        title: String,
+        subtitle: String?,
+        selected: Bool,
+        showsDisclosure: Bool,
+        showsAgentAvatar: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            if showsAgentAvatar {
+                AgentAvatarImage(size: 18)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            if selected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, subtitle == nil ? 8 : 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(selected ? Color.secondary.opacity(0.12) : Color.clear)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private func selectModel(_ model: String) {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            viewModel.updateAgentModel(model: model)
+            showingModels = false
+            isOpen = false
+        }
+    }
+}
+
+private extension View {
+    func panelChrome(cornerRadius: CGFloat) -> some View {
+        self
+            .padding(6)
+            .background(Color(NSColor.windowBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.14), radius: 16, y: 8)
+    }
+}
+
+private func stripProviderPrefix(_ s: String) -> String {
+    if let slash = s.lastIndex(of: "/") {
+        return String(s[s.index(after: slash)...])
+    }
+    return s
+}
+
 // MARK: - Chat Welcome View
 
 struct ChatWelcomeView: View {
-    private let cards: [(title: LocalizedStringKey, desc: LocalizedStringKey)] = [
-        ("Daily Weather Alerts", "Auto push weather updates with outfit & travel tips"),
-        ("Remote File Control", "Edit and manage local files from your phone anytime"),
-        ("Mobile Remote Work", "Browse and handle tasks on-the-go without a laptop"),
-        ("Social Media Auto Growth", "Auto engage and post to grow followers effortlessly"),
-        ("GitHub Auto Development", "You bring ideas, I build repos and ship to stars"),
-    ]
-
     var body: some View {
-        VStack(spacing: 24) {
+        VStack {
             Spacer()
-
-            // Logo
-            Image("Logo1")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 200, height: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 40))
-
-            BrandTextView()
-
-            // Subtitle
-            Text("Your 24/7 all-in-one AI assistant, always at your service")
-                .font(.body)
-                .foregroundColor(.secondary)
-
+            Text(String(localized: "What should we build today?", bundle: LanguageManager.shared.localizedBundle))
+                .font(.system(size: 26, weight: .regular))
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.center)
             Spacer()
-
-            // Suggestion cards
-            HStack(spacing: 12) {
-                ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(card.title)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-
-                        Text(card.desc)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(3)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(10)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -3285,21 +3627,6 @@ struct ChatBubble: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            if message.role == .assistant {
-                // AI avatar: sub-agent shows emoji, main keeps system icon
-                if let agentId = message.agentId, agentId != "main",
-                   let emoji = message.agentEmoji {
-                    Text(emoji)
-                        .font(.system(size: 22))
-                        .frame(width: 32, height: 32)
-                } else {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 24))
-                        .foregroundColor(.orange)
-                        .frame(width: 32, height: 32)
-                }
-            }
-
             if message.role == .user { Spacer(minLength: 60) }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
@@ -3384,20 +3711,20 @@ struct ChatBubble: View {
                                 SelectableMarkdownView(content: message.content)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(10)
-                                    .background(backgroundColor)
+                                    .background(bubbleBackgroundColor)
                                     .cornerRadius(12)
                             } else {
                                 Text(message.content)
                                     .padding(10)
-                                    .background(backgroundColor)
-                                    .foregroundColor(.white)
+                                    .background(bubbleBackgroundColor)
+                                    .foregroundColor(.primary)
                                     .cornerRadius(12)
                                     .textSelection(.enabled)
                             }
                         }
                         .contextMenu {
                             Button(action: { performCopy(message.content) }) {
-                                Label("Copy", systemImage: "doc.on.doc")
+                                Label("Copy", systemImage: "square.on.square")
                             }
                         }
 
@@ -3411,7 +3738,7 @@ struct ChatBubble: View {
                         if !isStreamingState && !message.content.isEmpty {
                             HStack(spacing: 2) {
                                 MessageActionIcon(
-                                    systemName: copied ? "checkmark" : "doc.on.doc",
+                                    systemName: copied ? "checkmark" : "square.on.square",
                                     tint: copied ? .green : .secondary,
                                     help: copied ? "已复制" : "复制",
                                     action: { performCopy(message.content) }
@@ -3564,14 +3891,6 @@ struct ChatBubble: View {
             }
 
             if message.role == .assistant { Spacer(minLength: 60) }
-
-            if message.role == .user {
-                // User avatar
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(.accentColor)
-                    .frame(width: 32, height: 32)
-            }
         }
         .onAppear {
             // Initial scan for media URLs when bubble first appears
@@ -3588,8 +3907,10 @@ struct ChatBubble: View {
         }
     }
 
-    private var backgroundColor: SwiftUI.Color {
-        message.role == .user ? .accentColor : Color(NSColor.controlBackgroundColor)
+    private var bubbleBackgroundColor: SwiftUI.Color {
+        message.role == .user
+            ? Color.gray.opacity(0.14)
+            : Color(NSColor.controlBackgroundColor)
     }
 
     /// True while the message is still being generated — covers both the
@@ -4576,7 +4897,7 @@ enum MarkdownHTML {
 
     static func buildHTML(_ markdown: String, isDark: Bool) -> String {
         let textColor = isDark ? "#e0e0e0" : "#1d1d1f"
-        let codeBg = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)"
+        let codeBg = isDark ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.10)"
         let borderColor = isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"
         let tableBg = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)"
         let blockquoteBorder = isDark ? "#555" : "#ccc"
@@ -5046,95 +5367,6 @@ enum MarkdownHTML {
     }
 }
 
-// MARK: - Agent Header Bar
-
-private struct AgentHeaderBar: View {
-    let agent: AgentOption
-    let defaultModel: String
-    let onNewAgent: () -> Void
-    let onSettingsTap: () -> Void
-    let onFileBrowser: () -> Void
-    let onTerminal: () -> Void
-    var onCollab: (() -> Void)? = nil
-
-    private var resolvedModel: String {
-        let raw = agent.model.isEmpty ? defaultModel : agent.model
-        guard !raw.isEmpty, raw != "-" else { return "" }
-        return raw.contains("/") ? String(raw.split(separator: "/").last ?? Substring(raw)) : raw
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text(agent.emoji)
-                    .font(.system(size: 28))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(agent.name)
-                        .font(.headline)
-                    if !agent.description.isEmpty {
-                        Text(agent.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    if !resolvedModel.isEmpty {
-                        TagView(text: resolvedModel, color: .blue)
-                    }
-                }
-
-                Spacer()
-
-                Button(action: onNewAgent) {
-                    Image(systemName: "plus.bubble")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("New Agent")
-
-                Button(action: onSettingsTap) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-
-                Button(action: onFileBrowser) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Workspace Files")
-
-                Button(action: onTerminal) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Terminal")
-
-                if let onCollab = onCollab {
-                    Button(action: onCollab) {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.system(size: 16))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Collab Tasks")
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-
-            Divider()
-        }
-    }
-}
-
 // MARK: - Agent Settings Panel
 
 private struct AgentSettingsPanel: View {
@@ -5362,6 +5594,126 @@ private struct AgentSettingsPanel: View {
 
 // MARK: - Workspace File Panel
 
+private struct OutputsTabView: View {
+    let agentId: String
+    @State private var refreshId = UUID()
+
+    private var workspacePath: String {
+        let base = NSString("~/.openclaw").expandingTildeInPath
+        if agentId == "main" {
+            return (base as NSString).appendingPathComponent("workspace")
+        }
+        return (base as NSString).appendingPathComponent("workspace-\(agentId)")
+    }
+
+    private var outputItems: [URL] {
+        let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        let excludedNames: Set<String> = [
+            "IDENTITY.md", "SOUL.md", "MEMORY.md", "USER.md",
+            "AGENTS.md", "BOOTSTRAP.md", "HEARTBEAT.md", "TOOLS.md"
+        ]
+
+        return enumerator.compactMap { item -> URL? in
+            guard let url = item as? URL else { return nil }
+            let name = url.lastPathComponent
+            if excludedNames.contains(name) { return nil }
+            if name.hasPrefix(".") { return nil }
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            if values?.isDirectory == true { return nil }
+            return url
+        }
+        .sorted { lhs, rhs in
+            let lDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return lDate > rDate
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Outputs")
+                    .font(.system(size: 22, weight: .semibold))
+                Spacer()
+                Button {
+                    refreshId = UUID()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .help("Refresh")
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: workspacePath))
+                } label: {
+                    Image(systemName: "arrow.up.forward.square")
+                }
+                .buttonStyle(.plain)
+                .help("Open Outputs Folder")
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+
+            Divider()
+
+            if outputItems.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 32))
+                        .foregroundColor(.secondary)
+                    Text("No outputs yet")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(outputItems, id: \.path) { url in
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: iconName(for: url))
+                                .foregroundColor(.secondary)
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(url.lastPathComponent)
+                                    .foregroundColor(.primary)
+                                Text(relativePath(for: url))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .id(refreshId)
+            }
+        }
+        .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    private func relativePath(for url: URL) -> String {
+        url.path.replacingOccurrences(of: workspacePath + "/", with: "")
+    }
+
+    private func iconName(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "png", "jpg", "jpeg", "gif", "webp", "heic": return "photo"
+        case "mp4", "mov", "webm": return "film"
+        case "md", "txt", "json", "csv", "xml", "yaml", "yml": return "doc.text"
+        default: return "doc"
+        }
+    }
+}
+
 private struct WorkspaceFilePanel: View {
     let agentId: String
     @Binding var editingFilePath: String?
@@ -5385,6 +5737,11 @@ private struct WorkspaceFilePanel: View {
     @State private var refreshTrigger: Int = 0
     @FocusState private var isRenameFocused: Bool
     @FocusState private var isNewItemFocused: Bool
+
+    private static let hiddenAgentConfigFileNames: Set<String> = [
+        "AGENTS.md", "IDENTITY.md", "SOUL.md", "MEMORY.md",
+        "USER.md", "BOOTSTRAP.md", "HEARTBEAT.md", "TOOLS.md"
+    ]
 
     private var workspacePath: String {
         DashboardViewModel.resolveAgentWorkspace(agentId)
@@ -5605,7 +5962,7 @@ private struct WorkspaceFilePanel: View {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: directory) else { return }
         for name in names {
-            if name.hasPrefix(".") { continue }
+            if isHiddenWorkspaceItem(name: name) { continue }
             let fullPath = (directory as NSString).appendingPathComponent(name)
             var isDir: ObjCBool = false
             fm.fileExists(atPath: fullPath, isDirectory: &isDir)
@@ -5945,7 +6302,7 @@ private struct WorkspaceFilePanel: View {
         guard let names = try? fm.contentsOfDirectory(atPath: path) else { return [] }
         var items: [FileItem] = []
         for name in names.sorted() {
-            if name.hasPrefix(".") { continue }
+            if isHiddenWorkspaceItem(name: name) { continue }
             let fullPath = (path as NSString).appendingPathComponent(name)
             var isDir: ObjCBool = false
             fm.fileExists(atPath: fullPath, isDirectory: &isDir)
@@ -5956,6 +6313,10 @@ private struct WorkspaceFilePanel: View {
             if a.isDirectory != b.isDirectory { return a.isDirectory }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
         }
+    }
+
+    private func isHiddenWorkspaceItem(name: String) -> Bool {
+        name.hasPrefix(".") || Self.hiddenAgentConfigFileNames.contains(name)
     }
 }
 
@@ -7978,241 +8339,6 @@ struct SessionDetailsPanel: View {
     }
 }
 
-// MARK: - Chat Header Bar (top of chat view)
-
-/// New top-of-chat header bar matching the redesign: editable session
-/// title, agent picker, model display, service status, share / more menu.
-/// Self-contained — owns its own rename alert state so the parent
-/// (ChatView) doesn't need to thread bindings through.
-struct ChatHeaderBar: View {
-    @ObservedObject var viewModel: DashboardViewModel
-    /// Toggle the workspace file browser side panel.
-    var onFileBrowser: (() -> Void)? = nil
-    /// Toggle the inline terminal panel.
-    var onTerminal: (() -> Void)? = nil
-    @State private var renameOpen = false
-    @State private var renameDraft = ""
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Session title + inline edit pencil
-            HStack(spacing: 6) {
-                Text(currentSessionTitle)
-                    .font(.system(size: 15, weight: .medium))
-                    .lineLimit(1)
-                if currentSessionId != nil {
-                    Button {
-                        renameDraft = currentSessionTitle
-                        renameOpen = true
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Rename session")
-                }
-            }
-
-            Spacer()
-
-            // Agent — read-only display.
-            // The canonical edit entry-point is the pencil in the right-side
-            // SessionDetailsPanel (Current Agent card). Putting a second
-            // editable picker up here was confusing — users would change it
-            // in one spot, then look puzzled when the sidebar didn't update
-            // until SwiftUI got around to re-publishing. Now the header
-            // just mirrors `selectedAgentId` and the side panel owns
-            // switching.
-            HStack(spacing: 6) {
-                Text("Agent:")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                if let agent = viewModel.availableAgents.first(where: { $0.id == viewModel.selectedAgentId }) {
-                    Text("\(agent.emoji) \(agent.name)")
-                        .font(.caption)
-                        .lineLimit(1)
-                } else {
-                    Text(viewModel.selectedAgentId)
-                        .font(.caption)
-                        .lineLimit(1)
-                }
-            }
-
-            // Model — read-only display (same rationale as Agent above; the
-            // right-side panel owns the picker).
-            HStack(spacing: 6) {
-                Text("Model:")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text(modelDisplay)
-                    .font(.caption)
-                    .lineLimit(1)
-            }
-
-            // Concurrent-task counter — informational only. Visible when
-            // anything is in flight (foreground OR background) so the
-            // user can gauge how close they are to the gateway's `Main`
-            // lane concurrency cap (default 4). Counts BOTH kinds
-            // because gateway's lane is occupied either way; counting
-            // only fg under-reported and let the badge claim
-            // "still 1/4 free" while gateway was already at cap.
-            //
-            // At cap: orange + tooltip explains new sends will queue.
-            // We don't block sends client-side — the gateway already
-            // handles queueing correctly.
-            if viewModel.concurrentTaskCount > 0 {
-                let atCap = viewModel.concurrentTaskCount >= viewModel.maxConcurrentTasks
-                HStack(spacing: 4) {
-                    Image(systemName: atCap ? "exclamationmark.circle.fill" : "circle.dotted")
-                        .font(.system(size: 10))
-                    Text("\(viewModel.concurrentTaskCount)/\(viewModel.maxConcurrentTasks)")
-                        .font(.caption.monospacedDigit())
-                }
-                .foregroundColor(atCap ? .orange : .accentColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill((atCap ? Color.orange : Color.accentColor).opacity(0.10))
-                )
-                .help(atCap
-                      ? "Concurrent task limit reached — new sends will queue at the gateway until a running task finishes."
-                      : "\(viewModel.concurrentTaskCount) of \(viewModel.maxConcurrentTasks) concurrent tasks running.")
-            }
-
-            // Service status pill
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(viewModel.openclawService.status == .running ? Color.green : Color.secondary)
-                    .frame(width: 7, height: 7)
-                Text(viewModel.openclawService.status == .running ? "运行中" : "已停止")
-                    .font(.caption)
-                    .foregroundColor(viewModel.openclawService.status == .running ? .green : .secondary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(NSColor.controlBackgroundColor))
-            )
-
-            // Workspace files — opens the side panel rooted at the
-            // current agent's workspace directory. Migrated from the
-            // legacy AgentHeaderBar; users lost this entry when we
-            // collapsed to the redesigned header in v1.1.46. Label
-            // ("工作区") is shown next to the icon so the affordance is
-            // discoverable without a hover tooltip.
-            if let onFileBrowser = onFileBrowser {
-                Button(action: onFileBrowser) {
-                    Label("工作区", systemImage: "folder")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Workspace Files")
-            }
-
-            // Inline terminal — opens TerminalPanelView pinned to the
-            // current agent's workspace directory.
-            if let onTerminal = onTerminal {
-                Button(action: onTerminal) {
-                    Label("终端", systemImage: "terminal")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Terminal")
-            }
-
-            // More menu — consolidated overflow for session actions.
-            // Share (Markdown export) was previously a separate bordered
-            // button alongside; folded into this menu to declutter the
-            // top bar (per redesign mockup).
-            Menu {
-                Button {
-                    viewModel.createNewSession()
-                } label: {
-                    Label("New Session", systemImage: "plus.circle")
-                }
-                if let sid = currentSessionId {
-                    Button {
-                        viewModel.exportSession(sid)
-                    } label: {
-                        Label("Share / Export…", systemImage: "square.and.arrow.up")
-                    }
-                    Divider()
-                    Button(role: .destructive) {
-                        viewModel.chatMessagesByAgent[viewModel.selectedAgentId] = []
-                    } label: {
-                        Label("Clear Conversation", systemImage: "trash")
-                    }
-                }
-            } label: {
-                // Text + chevron-down — standard dropdown affordance,
-                // visually consistent with the agent / model dropdowns
-                // elsewhere in the app. Earlier attempts (`ellipsis`,
-                // `square.grid.3x2.fill` icons) either looked busy or
-                // disagreed with Menu's font sizing.
-                HStack(spacing: 3) {
-                    Text("更多")
-                        .font(.caption)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9))
-                }
-                .foregroundColor(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color(NSColor.windowBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
-        .alert("Rename Session", isPresented: $renameOpen, actions: {
-            TextField("Session name", text: $renameDraft)
-            Button("Save") {
-                if let sid = currentSessionId {
-                    viewModel.renameSession(sid, to: renameDraft)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        })
-    }
-
-    private var currentSessionId: UUID? {
-        viewModel.selectedSessionIdByAgent[viewModel.selectedAgentId]
-    }
-
-    private var currentSessionTitle: String {
-        guard let sid = currentSessionId,
-              let meta = viewModel.sessionsByAgent[viewModel.selectedAgentId]?.first(where: { $0.id == sid }) else {
-            return "新会话"
-        }
-        return meta.title
-    }
-
-    /// Best-effort model name for display in the top header. Shows the
-    /// *resolved* model the current agent is actually running with —
-    /// agent's own model override if set, otherwise the global default.
-    /// Strips provider prefix ("getclawhub/") so the chat header reads
-    /// cleanly.
-    private var modelDisplay: String {
-        let agentModel = viewModel.availableAgents
-            .first { $0.id == viewModel.selectedAgentId }?
-            .model ?? ""
-        let resolved = !agentModel.isEmpty
-            ? agentModel
-            : viewModel.modelOverview.defaultModel
-        if resolved.isEmpty { return "—" }
-        if let slash = resolved.lastIndex(of: "/") {
-            return String(resolved[resolved.index(after: slash)...])
-        }
-        return resolved
-    }
-}
-
 // MARK: - Input Mode Picker (above the chat input area)
 
 /// Three-mode segmented picker matching the redesign: 聊天 / 执行任务 /
@@ -8280,99 +8406,67 @@ struct ChatInputModePicker: View {
     }
 }
 
-// MARK: - Tasks / Logs Combined Tab
+// MARK: - Automation Tab
 
-/// Wraps Cron + Logs behind one sidebar entry "任务/执行记录". A segmented
-/// picker on top swaps which inner view is active so users don't have to
-/// hunt across two separate sidebar items.
+/// Shows scheduled automation jobs. Gateway logs are intentionally not shown
+/// in this primary workflow.
 struct TasksLogsTabView: View {
     @ObservedObject var viewModel: DashboardViewModel
 
-    enum SubTab: String, CaseIterable {
-        case tasks  // maps to CronTabView
-        case logs   // maps to LogsTabView
-    }
-    @State private var subTab: SubTab = .tasks
-
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $subTab) {
-                Text(String(localized: "Tasks", bundle: LanguageManager.shared.localizedBundle))
-                    .tag(SubTab.tasks)
-                Text(String(localized: "Logs", bundle: LanguageManager.shared.localizedBundle))
-                    .tag(SubTab.logs)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-
-            Divider()
-
-            switch subTab {
-            case .tasks:
-                CronTabView(viewModel: viewModel)
-            case .logs:
-                LogsTabView(viewModel: viewModel)
-            }
-        }
+        CronTabView(viewModel: viewModel)
     }
 }
 
 // MARK: - Chat Session Row (sidebar)
 
-/// Single row inside the Sessions sidebar section. Renders the title, an
-/// optional pin marker, and a relative-time tooltip; the parent sidebar
-/// section wraps each row in a Button that drives `switchSession(to:)`.
+/// Single row inside the Sessions sidebar section. Renders the title and
+/// hover-only actions; the parent sidebar section drives `switchSession(to:)`.
 struct ChatSessionRow: View {
     let meta: ChatSessionMetadata
     let isActive: Bool
     /// True when a foreground task is currently streaming inside this
-    /// session (whether or not the session is the visible one). Replaces
-    /// the default bubble/pin icon with a small accent-colored dot so
-    /// the user can see at a glance which sessions are "working" — same
-    /// affordance Claude Code uses for its task list.
+    /// session (whether or not the session is the visible one).
     let isExecuting: Bool
+    let isDeleteConfirming: Bool
+    let onDeleteIntent: () -> Void
+    let onDeleteConfirm: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 8) {
-            // Icon precedence: running > pinned > default bubble.
-            // The running indicator uses an accent-orange filled dot
-            // (slightly smaller than the other glyphs) so it reads as
-            // a status light, not a topic icon.
-            Group {
-                if isExecuting {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(.orange)
-                        .accessibilityLabel("Task running")
-                } else if meta.isPinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(.orange)
-                } else {
-                    Image(systemName: "bubble.left")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .frame(width: 14, alignment: .center)
-
-            Text(meta.title.isEmpty ? "新会话" : meta.title)
+            Text(meta.title.isEmpty ? String(localized: "New chat", bundle: LanguageManager.shared.localizedBundle) : meta.title)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .foregroundColor(isActive ? .accentColor : .primary)
+                .foregroundColor(.primary)
                 .fontWeight(isActive ? .medium : .regular)
             Spacer(minLength: 4)
-            // Inline timestamp (HH:mm today / "昨天" / "N 天前" / MM-dd)
-            // — mirrors the recent-sessions list in the redesign mockup.
-            Text(Self.shortRelative(meta.updatedAt))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+
+            if isHovering || isDeleteConfirming {
+                Button(action: isDeleteConfirming ? onDeleteConfirm : onDeleteIntent) {
+                    Image(systemName: isDeleteConfirming ? "trash.fill" : "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(isDeleteConfirming ? .white : .secondary)
+                        .frame(width: 20, height: 20)
+                        .background {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(isDeleteConfirming ? Color.red : Color(NSColor.controlBackgroundColor))
+                        }
+                }
+                .buttonStyle(.plain)
+                .help(isDeleteConfirming
+                      ? String(localized: "Confirm delete", bundle: LanguageManager.shared.localizedBundle)
+                      : String(localized: "Delete", bundle: LanguageManager.shared.localizedBundle))
+            }
         }
-        .help("\(meta.messageCount) · \(Self.fullRelative(meta.updatedAt))")
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+        .help(isExecuting
+              ? String(localized: "Task running", bundle: LanguageManager.shared.localizedBundle)
+              : "\(meta.messageCount) · \(Self.fullRelative(meta.updatedAt))")
     }
 
     /// Compact form for inline sidebar display.

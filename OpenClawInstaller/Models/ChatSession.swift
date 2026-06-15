@@ -1,7 +1,7 @@
 import Foundation
 
 /// One conversation thread for a given agent. Persisted as a single JSON file
-/// under ~/Library/Application Support/<bundleID>/chat-sessions/<id>.json.
+/// under that agent workspace's `.sessions` directory.
 struct ChatSession: Codable, Identifiable {
     let id: UUID
     let agentId: String
@@ -74,3 +74,5 @@ struct ChatSessionMetadata: Codable, Identifiable, Equatable {
         self.isArchived = session.isArchived
     }
 }
+
+extension ChatSessionMetadata: ChatSessionSearchable {}

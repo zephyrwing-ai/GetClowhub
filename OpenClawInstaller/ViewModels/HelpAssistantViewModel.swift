@@ -371,8 +371,14 @@ class HelpAssistantViewModel: ObservableObject {
         case .tasksLogs:
             return [
                 ("如何创建定时任务？", "How to create a cron job?"),
-                ("如何查看历史日志？", "How to view past logs?"),
-                ("如何导出执行记录？", "How to export logs?"),
+                ("如何暂停自动化？", "How to pause automation?"),
+                ("如何编辑自动化？", "How to edit automation?"),
+            ]
+        case .outputs:
+            return [
+                ("Outputs 里显示什么？", "What appears in Outputs?"),
+                ("为什么看不到配置文件？", "Why are config files hidden?"),
+                ("如何打开生成文件？", "How to open generated files?"),
             ]
         }
     }

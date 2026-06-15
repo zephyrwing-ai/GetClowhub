@@ -5,6 +5,10 @@ import os.log
 /// Local-only chat session persistence.
 ///
 /// Layout:
+///   ~/.openclaw/workspace/.sessions/
+///   ~/.openclaw/workspace-<agentId>/.sessions/
+///
+/// Legacy layout, still read for backward compatibility:
 ///   ~/Library/Application Support/<bundleID>/chat-sessions/
 ///     ├── index.json                    # all metadata, loaded eagerly
 ///     └── <sessionId>.json              # full ChatSession including messages, loaded on demand
@@ -16,8 +20,9 @@ import os.log
 final class ChatSessionStore: ObservableObject {
     private let log = Logger(subsystem: "com.openclaw.installer", category: "ChatSessionStore")
 
-    private let baseDir: URL
-    private let indexURL: URL
+    private let legacyBaseDir: URL
+    private let legacyIndexURL: URL
+    private let openclawBaseDir: URL
 
     /// Cached metadata for every persisted session, sorted only on read.
     @Published private(set) var index: [ChatSessionMetadata] = []
@@ -43,13 +48,14 @@ final class ChatSessionStore: ObservableObject {
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first!
         let bundleId = Bundle.main.bundleIdentifier ?? "com.cc.OpenClawInstaller"
-        self.baseDir = appSupport
+        self.legacyBaseDir = appSupport
             .appendingPathComponent(bundleId)
             .appendingPathComponent("chat-sessions")
-        self.indexURL = baseDir.appendingPathComponent("index.json")
+        self.legacyIndexURL = legacyBaseDir.appendingPathComponent("index.json")
+        self.openclawBaseDir = URL(fileURLWithPath: NSString("~/.openclaw").expandingTildeInPath, isDirectory: true)
 
         try? FileManager.default.createDirectory(
-            at: baseDir,
+            at: legacyBaseDir,
             withIntermediateDirectories: true
         )
         loadIndex()
@@ -58,24 +64,53 @@ final class ChatSessionStore: ObservableObject {
     // MARK: - Index I/O
 
     func loadIndex() {
-        guard let data = try? Data(contentsOf: indexURL) else {
-            index = []
-            return
+        var combined: [UUID: ChatSessionMetadata] = [:]
+
+        for meta in readIndex(from: legacyIndexURL) {
+            combined[meta.id] = meta
         }
+
+        let agentsFromLegacy = Set(combined.values.map(\.agentId))
+        for agentId in agentsFromLegacy.union(discoverAgentIdsFromWorkspaces()) {
+            for meta in readIndex(from: indexURL(forAgent: agentId)) {
+                combined[meta.id] = meta
+            }
+        }
+
+        index = Array(combined.values)
+    }
+
+    private func writeIndex(forAgent agentId: String) {
+        let url = indexURL(forAgent: agentId)
         do {
-            index = try Self.decoder().decode([ChatSessionMetadata].self, from: data)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let agentIndex = index.filter { $0.agentId == agentId }
+            let data = try Self.encoder().encode(agentIndex)
+            try data.write(to: url, options: .atomic)
         } catch {
-            log.error("Failed to decode index.json: \(error.localizedDescription, privacy: .public)")
-            index = []
+            log.error("Failed to write index for \(agentId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    private func writeIndex() {
+    private func readIndex(from url: URL) -> [ChatSessionMetadata] {
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        do {
+            return try Self.decoder().decode([ChatSessionMetadata].self, from: data)
+        } catch {
+            log.error("Failed to decode index at \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
+    private func writeLegacyIndex() {
         do {
             let data = try Self.encoder().encode(index)
-            try data.write(to: indexURL, options: .atomic)
+            try data.write(to: legacyIndexURL, options: .atomic)
         } catch {
-            log.error("Failed to write index.json: \(error.localizedDescription, privacy: .public)")
+            log.error("Failed to write legacy index: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -90,7 +125,7 @@ final class ChatSessionStore: ObservableObject {
             touchCache(id: id)
             return cached
         }
-        let url = sessionURL(for: id)
+        guard let url = sessionURL(for: id) else { return nil }
         guard let data = try? Data(contentsOf: url) else { return nil }
         do {
             let session = try Self.decoder().decode(ChatSession.self, from: data)
@@ -118,7 +153,7 @@ final class ChatSessionStore: ObservableObject {
             touchCache(id: id)
             return cached
         }
-        let url = sessionURL(for: id)
+        guard let url = sessionURL(for: id) else { return nil }
         // Detached so we yield the main actor for the decode.
         let session = await Task.detached(priority: .userInitiated) { () -> ChatSession? in
             guard let data = try? Data(contentsOf: url) else { return nil }
@@ -139,8 +174,12 @@ final class ChatSessionStore: ObservableObject {
     /// Persist a session immediately. Updates `index` in place so the UI
     /// reflects the new metadata (title, message count, …) right away.
     func saveSession(_ session: ChatSession) {
-        let url = sessionURL(for: session.id)
+        let url = sessionURL(for: session)
         do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             let data = try Self.encoder().encode(session)
             try data.write(to: url, options: .atomic)
             // Keep the cache coherent with disk: whatever we just wrote is
@@ -153,7 +192,7 @@ final class ChatSessionStore: ObservableObject {
             } else {
                 index.append(meta)
             }
-            writeIndex()
+            writeIndex(forAgent: session.agentId)
         } catch {
             log.error("Failed to save session \(session.id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
@@ -208,9 +247,16 @@ final class ChatSessionStore: ObservableObject {
         saveDebouncers[id]?.cancel()
         saveDebouncers[id] = nil
         invalidateCache(id: id)
-        try? FileManager.default.removeItem(at: sessionURL(for: id))
+        if let url = sessionURL(for: id) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        try? FileManager.default.removeItem(at: legacySessionURL(for: id))
+        let affectedAgentIds = Set(index.filter { $0.id == id }.map(\.agentId))
         index.removeAll { $0.id == id }
-        writeIndex()
+        for agentId in affectedAgentIds {
+            writeIndex(forAgent: agentId)
+        }
+        writeLegacyIndex()
     }
 
     // MARK: - Queries
@@ -218,18 +264,85 @@ final class ChatSessionStore: ObservableObject {
     /// Sessions for one agent, pinned first then newest first. Hides archived
     /// sessions unless `includeArchived` is true.
     func sessions(forAgent agentId: String, includeArchived: Bool = false) -> [ChatSessionMetadata] {
-        index
-            .filter { $0.agentId == agentId && (includeArchived || !$0.isArchived) }
-            .sorted { lhs, rhs in
-                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return lhs.updatedAt > rhs.updatedAt
-            }
+        ChatSessionSearch.search(
+            index.filter { $0.agentId == agentId },
+            query: "",
+            includeArchived: includeArchived
+        )
+    }
+
+    /// Global session search across every agent workspace. Empty queries
+    /// return recent sessions, which powers the search palette's default state.
+    func searchSessions(query: String, includeArchived: Bool = false) -> [ChatSessionMetadata] {
+        ChatSessionSearch.search(index, query: query, includeArchived: includeArchived)
     }
 
     // MARK: - Helpers
 
-    private func sessionURL(for id: UUID) -> URL {
-        baseDir.appendingPathComponent("\(id.uuidString).json")
+    private func sessionURL(for id: UUID) -> URL? {
+        if let meta = index.first(where: { $0.id == id }) {
+            let scoped = sessionURL(forAgent: meta.agentId, id: id)
+            if FileManager.default.fileExists(atPath: scoped.path) {
+                return scoped
+            }
+        }
+
+        let legacy = legacySessionURL(for: id)
+        if FileManager.default.fileExists(atPath: legacy.path) {
+            return legacy
+        }
+
+        if let meta = index.first(where: { $0.id == id }) {
+            return sessionURL(forAgent: meta.agentId, id: id)
+        }
+        return nil
+    }
+
+    private func sessionURL(for session: ChatSession) -> URL {
+        sessionURL(forAgent: session.agentId, id: session.id)
+    }
+
+    private func sessionURL(forAgent agentId: String, id: UUID) -> URL {
+        sessionsDirectory(forAgent: agentId)
+            .appendingPathComponent("\(id.uuidString).json")
+    }
+
+    private func legacySessionURL(for id: UUID) -> URL {
+        legacyBaseDir.appendingPathComponent("\(id.uuidString).json")
+    }
+
+    private func indexURL(forAgent agentId: String) -> URL {
+        sessionsDirectory(forAgent: agentId)
+            .appendingPathComponent("index.json")
+    }
+
+    private func sessionsDirectory(forAgent agentId: String) -> URL {
+        workspaceDirectory(forAgent: agentId)
+            .appendingPathComponent(".sessions", isDirectory: true)
+    }
+
+    private func workspaceDirectory(forAgent agentId: String) -> URL {
+        if agentId == "main" {
+            return openclawBaseDir.appendingPathComponent("workspace", isDirectory: true)
+        }
+        return openclawBaseDir.appendingPathComponent("workspace-\(agentId)", isDirectory: true)
+    }
+
+    private func discoverAgentIdsFromWorkspaces() -> Set<String> {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: openclawBaseDir.path) else {
+            return []
+        }
+        var ids: Set<String> = []
+        if names.contains("workspace") {
+            ids.insert("main")
+        }
+        for name in names where name.hasPrefix("workspace-") {
+            let id = String(name.dropFirst("workspace-".count))
+            if !id.isEmpty {
+                ids.insert(id)
+            }
+        }
+        return ids
     }
 
     private static func encoder() -> JSONEncoder {

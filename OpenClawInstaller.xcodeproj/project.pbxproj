@@ -27,6 +27,7 @@
 		356410762F5802970045A6F7 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 356410752F5802970045A6F7 /* Sparkle */; };
 		35641A012F6E02970045A6F7 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 35641A002F6E02970045A6F7 /* MarkdownUI */; };
 		356410592F5802970045A6F7 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356410342F5802970045A6F7 /* DashboardView.swift */; };
+		A0B1C2D3E4F5061728394052 /* OutputsSidebarLayoutMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5061728394051 /* OutputsSidebarLayoutMetrics.swift */; };
 		3564105A2F5802970045A6F7 /* CompletionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356410382F5802970045A6F7 /* CompletionView.swift */; };
 		3564105B2F5802970045A6F7 /* LogsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356410352F5802970045A6F7 /* LogsTabView.swift */; };
 		3564105C2F5802970045A6F7 /* InstallationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356410312F5802970045A6F7 /* InstallationViewModel.swift */; };
@@ -69,6 +70,7 @@
 		DI01AB01C2D3E4F5A6B70001 /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = DI01AB02C2D3E4F5A6B70002 /* DeviceIdentity.swift */; };
 		DI01AB03C2D3E4F5A6B70003 /* DeviceAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DI01AB04C2D3E4F5A6B70004 /* DeviceAuthTokenStore.swift */; };
 		CS01AA01D1E2F3A4B5C60001 /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CS01AA02D1E2F3A4B5C60002 /* ChatSession.swift */; };
+		CS01AA05D1E2F3A4B5C60005 /* ChatSessionSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CS01AA06D1E2F3A4B5C60006 /* ChatSessionSearch.swift */; };
 		CS01AA03D1E2F3A4B5C60003 /* ChatSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CS01AA04D1E2F3A4B5C60004 /* ChatSessionStore.swift */; };
 		MB01AC01D3E4F5A6B7C80001 /* MembershipManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB01AC02D3E4F5A6B7C80002 /* MembershipManager.swift */; };
 		MP01AD02E4F5A6B7C8D90002 /* MarketplaceAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = MP01AD01E4F5A6B7C8D90001 /* MarketplaceAgent.swift */; };
@@ -99,6 +101,7 @@
 		356410312F5802970045A6F7 /* InstallationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallationViewModel.swift; sourceTree = "<group>"; };
 		356410332F5802970045A6F7 /* ConfigTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigTabView.swift; sourceTree = "<group>"; };
 		356410342F5802970045A6F7 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		A0B1C2D3E4F5061728394051 /* OutputsSidebarLayoutMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputsSidebarLayoutMetrics.swift; sourceTree = "<group>"; };
 		356410352F5802970045A6F7 /* LogsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsTabView.swift; sourceTree = "<group>"; };
 		356410362F5802970045A6F7 /* StatusTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusTabView.swift; sourceTree = "<group>"; };
 		356410662F5802970045A6F7 /* PluginsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginsTabView.swift; sourceTree = "<group>"; };
@@ -141,6 +144,7 @@
 		DI01AB02C2D3E4F5A6B70002 /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
 		DI01AB04C2D3E4F5A6B70004 /* DeviceAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthTokenStore.swift; sourceTree = "<group>"; };
 		CS01AA02D1E2F3A4B5C60002 /* ChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSession.swift; sourceTree = "<group>"; };
+		CS01AA06D1E2F3A4B5C60006 /* ChatSessionSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionSearch.swift; sourceTree = "<group>"; };
 		CS01AA04D1E2F3A4B5C60004 /* ChatSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionStore.swift; sourceTree = "<group>"; };
 		MB01AC02D3E4F5A6B7C80002 /* MembershipManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipManager.swift; sourceTree = "<group>"; };
 		MP01AD01E4F5A6B7C8D90001 /* MarketplaceAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceAgent.swift; sourceTree = "<group>"; };
@@ -204,6 +208,7 @@
 				3564106E2F5802970045A6F7 /* ProviderPreset.swift */,
 				356410252F5802970045A6F7 /* SystemEnvironment.swift */,
 				CS01AA02D1E2F3A4B5C60002 /* ChatSession.swift */,
+				CS01AA06D1E2F3A4B5C60006 /* ChatSessionSearch.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -260,6 +265,7 @@
 				356410332F5802970045A6F7 /* ConfigTabView.swift */,
 				C1D2E3F4A5B6478890C1D2E3 /* CronTabView.swift */,
 				356410342F5802970045A6F7 /* DashboardView.swift */,
+				A0B1C2D3E4F5061728394051 /* OutputsSidebarLayoutMetrics.swift */,
 				F4A5B6C7D8E94C3A4B5C6D7E /* HelpAssistantWindow.swift */,
 				356410352F5802970045A6F7 /* LogsTabView.swift */,
 				MP01AD03E4F5A6B7C8D90003 /* MarketplaceDetailView.swift */,
@@ -445,6 +451,7 @@
 				356410572F5802970045A6F7 /* WelcomeView.swift in Sources */,
 				356410582F5802970045A6F7 /* SparkleUpdater.swift in Sources */,
 				356410592F5802970045A6F7 /* DashboardView.swift in Sources */,
+				A0B1C2D3E4F5061728394052 /* OutputsSidebarLayoutMetrics.swift in Sources */,
 				3564105A2F5802970045A6F7 /* CompletionView.swift in Sources */,
 				3564105B2F5802970045A6F7 /* LogsTabView.swift in Sources */,
 				3564105C2F5802970045A6F7 /* InstallationViewModel.swift in Sources */,
@@ -484,6 +491,7 @@
 				DI01AB01C2D3E4F5A6B70001 /* DeviceIdentity.swift in Sources */,
 				DI01AB03C2D3E4F5A6B70003 /* DeviceAuthTokenStore.swift in Sources */,
 				CS01AA01D1E2F3A4B5C60001 /* ChatSession.swift in Sources */,
+				CS01AA05D1E2F3A4B5C60005 /* ChatSessionSearch.swift in Sources */,
 				CS01AA03D1E2F3A4B5C60003 /* ChatSessionStore.swift in Sources */,
 				MB01AC01D3E4F5A6B7C80001 /* MembershipManager.swift in Sources */,
 				MP01AD02E4F5A6B7C8D90002 /* MarketplaceAgent.swift in Sources */,
