@@ -54,6 +54,7 @@ struct DashboardView: View {
     @State private var workspaceSearchActive = false
     @State private var workspaceSearchText = ""
     @State private var selectedSkillCatalogItem: SkillCatalogItem?
+    @State private var skillPendingRemoval: SkillInfo?
     @FocusState private var isGlobalSessionSearchFocused: Bool
 
     private let workspaceSidebarMinWidth: CGFloat = 240
@@ -105,12 +106,12 @@ struct DashboardView: View {
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 if let title = currentSessionTitle {
-                    Text(title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 320, alignment: .leading)
-                        .allowsHitTesting(false)
+                    SessionTitlePopoverView(
+                        sessionId: currentSessionMetadata?.id,
+                        title: title,
+                        messages: currentSessionUserMessages,
+                        onTapMessage: { _ in }
+                    )
                 }
             }
         }
@@ -159,6 +160,16 @@ struct DashboardView: View {
         .sheet(isPresented: $viewModel.showDiagnostics) {
             DiagnosticsSheet(report: viewModel.diagnosticReport, isPresented: $viewModel.showDiagnostics)
         }
+        .alert(item: $skillPendingRemoval) { skill in
+            Alert(
+                title: Text("Remove Skill"),
+                message: Text("Remove \"\(skill.name)\" from installed skills?"),
+                primaryButton: .destructive(Text("Remove")) {
+                    Task { await viewModel.removeSkill(skill) }
+                },
+                secondaryButton: .cancel()
+            )
+        }
         .onChange(of: viewModel.selectedTab) { newTab in
             if newTab != .skills {
                 dismissSkillCatalogDetail()
@@ -186,6 +197,12 @@ struct DashboardView: View {
         let title = currentSessionMetadata?.title
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return title.isEmpty ? nil : title
+    }
+
+    private var currentSessionUserMessages: [ChatMessage] {
+        guard isChatTabActive else { return [] }
+        return viewModel.chatMessages
+            .filter { $0.role == .user }
     }
 
     private var isWorkspaceSidebarExpanded: Bool {
@@ -418,7 +435,9 @@ struct DashboardView: View {
     }
 
     private func skillCatalogDetailOverlay(for item: SkillCatalogItem) -> some View {
-        GeometryReader { _ in
+        let installedSkill = installedSkillByName[item.name]
+
+        return GeometryReader { _ in
             ZStack {
                 Color.black
                     .opacity(0.001)
@@ -430,7 +449,18 @@ struct DashboardView: View {
 
                 SkillCatalogDetailSheet(
                     item: item,
-                    installedSkill: installedSkillByName[item.name],
+                    installedSkill: installedSkill,
+                    isInstalling: viewModel.installingCatalogSkillName == item.name,
+                    isRemoving: viewModel.removingSkillName == item.name,
+                    canRemove: installedSkill.map(DashboardViewModel.canRemoveSkill) ?? false,
+                    onInstall: {
+                        Task { await viewModel.installCatalogSkill(item) }
+                    },
+                    onRemove: {
+                        if let skill = installedSkill {
+                            skillPendingRemoval = skill
+                        }
+                    },
                     onClose: dismissSkillCatalogDetail
                 )
                 .background(.regularMaterial)
@@ -756,10 +786,6 @@ private struct RightOutputsTitlebarAccessory: View {
                 .help(isExpanded ? "Hide Outputs" : "Show Outputs")
 
                 if isExpanded {
-                    Image(systemName: "tray.full.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.accentColor)
-
                     Text("Outputs")
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
@@ -1400,10 +1426,10 @@ struct SidebarView: View {
 
     private func sessionRowHighlightColor(isActive: Bool, isHovering: Bool) -> SwiftUI.Color {
         if isActive {
-            return SwiftUI.Color.primary.opacity(isDark ? 0.13 : 0.074)
+            return SwiftUI.Color.primary.opacity(isDark ? 0.16 : 0.11)
         }
         if isHovering {
-            return SwiftUI.Color.primary.opacity(isDark ? 0.085 : 0.048)
+            return SwiftUI.Color.primary.opacity(isDark ? 0.11 : 0.07)
         }
         return SwiftUI.Color.clear
     }
@@ -7436,11 +7462,11 @@ private struct WorkspaceFilePanel: View {
             HStack(spacing: 6) {
                 if item.isDirectory {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
-                        .frame(width: 12)
+                        .frame(width: 16)
                 } else {
-                    Spacer().frame(width: 12)
+                    Spacer().frame(width: 16)
                 }
 
                 workspaceItemIcon(item: item, isExpanded: isExpanded)
@@ -7456,7 +7482,7 @@ private struct WorkspaceFilePanel: View {
             }
             .padding(.leading, CGFloat(depth) * 16 + 12)
             .padding(.trailing, 12)
-            .padding(.vertical, 5)
+            .padding(.vertical, 7)
             .background(Color.accentColor.opacity(0.15))
             .cornerRadius(4)
         } else {
@@ -7479,11 +7505,11 @@ private struct WorkspaceFilePanel: View {
                 HStack(spacing: 6) {
                     if item.isDirectory {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.secondary)
-                            .frame(width: 12)
+                            .frame(width: 16)
                     } else {
-                        Spacer().frame(width: 12)
+                        Spacer().frame(width: 16)
                     }
 
                     workspaceItemIcon(item: item, isExpanded: isExpanded)
@@ -7504,7 +7530,7 @@ private struct WorkspaceFilePanel: View {
                 }
                 .padding(.leading, CGFloat(depth) * 16 + 12)
                 .padding(.trailing, 12)
-                .padding(.vertical, 5)
+                .padding(.vertical, 7)
                 .background(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
                 .cornerRadius(4)
                 .contentShape(Rectangle())
@@ -7700,12 +7726,12 @@ private struct WorkspaceFilePanel: View {
             Image(isExpanded ? "WorkspaceFolderOpenIcon" : "WorkspaceFolderClosedIcon")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 15, height: 15)
+                .frame(width: 20, height: 20)
         } else {
             Image(systemName: fileIcon(for: item.name))
-                .font(.system(size: 13))
+                .font(.system(size: 17))
                 .foregroundColor(.secondary)
-                .frame(width: 15, height: 15)
+                .frame(width: 20, height: 20)
         }
     }
 
@@ -9806,6 +9832,136 @@ struct SessionDetailsPanel: View {
         let s = Int(seconds) % 60
         return String(format: "%02d:%02d:%02d", h, m, s)
     }
+}
+
+private struct SessionTitlePopoverView: View {
+    let sessionId: UUID?
+    let title: String
+    let messages: [ChatMessage]
+    let onTapMessage: (ChatMessage) -> Void
+
+    @State private var isTitleHovering = false
+    @State private var isPopoverPresented = false
+    @State private var hoverOpenTask: Task<Void, Never>?
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 16, weight: .semibold))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 320, alignment: .leading)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                updateHover(hovering)
+            }
+            .popover(isPresented: $isPopoverPresented, arrowEdge: .top) {
+                SessionTitleUserMessagesPopoverContent(
+                    messages: messages,
+                    onTapMessage: { message in
+                        onTapMessage(message)
+                        isPopoverPresented = false
+                    }
+                )
+            }
+            .onChange(of: sessionId) { _ in
+                closePopover()
+            }
+            .onChange(of: title) { _ in
+                closePopover()
+            }
+            .onChange(of: messages.count) { count in
+                if count == 0 {
+                    closePopover()
+                }
+            }
+            .onDisappear {
+                closePopover()
+            }
+    }
+
+    private func updateHover(_ hovering: Bool) {
+        isTitleHovering = hovering
+        hoverOpenTask?.cancel()
+
+        guard hovering, !messages.isEmpty else { return }
+
+        hoverOpenTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, isTitleHovering, !messages.isEmpty else { return }
+            isPopoverPresented = true
+        }
+    }
+
+    private func closePopover() {
+        hoverOpenTask?.cancel()
+        hoverOpenTask = nil
+        isPopoverPresented = false
+    }
+}
+
+private struct SessionTitleUserMessagesPopoverContent: View {
+    let messages: [ChatMessage]
+    let onTapMessage: (ChatMessage) -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(messages) { message in
+                    Button {
+                        onTapMessage(message)
+                    } label: {
+                        SessionTitleUserMessageRow(message: message)
+                    }
+                    .buttonStyle(.plain)
+
+                    if message.id != messages.last?.id {
+                        Divider()
+                            .padding(.leading, 12)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+        }
+        .frame(maxHeight: 320)
+        .frame(width: 360)
+    }
+}
+
+private struct SessionTitleUserMessageRow: View {
+    let message: ChatMessage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let timestamp = message.timestamp {
+                Text(Self.timestampFormatter.string(from: timestamp))
+                    .font(DashboardTypography.messageMeta)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(messagePreview)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private var messagePreview: String {
+        let trimmed = message.content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Empty message" : trimmed
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 }
 
 // MARK: - Input Mode Picker (above the chat input area)

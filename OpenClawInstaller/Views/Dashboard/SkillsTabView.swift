@@ -9,7 +9,6 @@ struct SkillsTabView: View {
     @State private var searchText = ""
     @State private var displayMode: SkillDisplayMode = .all
     @State private var showManualInstallSheet = false
-    @State private var skillPendingRemoval: SkillInfo?
 
     private enum SkillDisplayMode: String, CaseIterable {
         case all = "All"
@@ -111,16 +110,6 @@ struct SkillsTabView: View {
                 set: { if !$0 { viewModel.selectedSkillDetail = nil } }
             ))
         }
-        .alert(item: $skillPendingRemoval) { skill in
-            Alert(
-                title: Text("Remove Skill"),
-                message: Text("Remove \"\(skill.name)\" from installed skills?"),
-                primaryButton: .destructive(Text("Remove")) {
-                    Task { await viewModel.removeSkill(skill) }
-                },
-                secondaryButton: .cancel()
-            )
-        }
     }
 
     private var header: some View {
@@ -174,7 +163,16 @@ struct SkillsTabView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(SkillInstallPalette.amber)
                     .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(SkillInstallPalette.iconBackground(colorScheme: colorScheme, isHovered: false))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(SkillInstallPalette.iconBorder(isHovered: false), lineWidth: 1)
+                    )
             }
             .buttonStyle(.plain)
             .help("Install skill from GitHub repository")
@@ -273,13 +271,8 @@ struct SkillsTabView: View {
                                     skill: skill,
                                     catalogItem: nil,
                                     isLoadingDetail: viewModel.isLoadingSkillDetail,
-                                    isRemoving: viewModel.removingSkillName == skill.name,
-                                    canRemove: DashboardViewModel.canRemoveSkill(skill),
                                     onInfo: {
                                         Task { await viewModel.loadSkillDetail(skill.name) }
-                                    },
-                                    onRemove: {
-                                        skillPendingRemoval = skill
                                     }
                                 )
 
@@ -317,13 +310,8 @@ struct SkillsTabView: View {
                                     skill: skill,
                                     catalogItem: catalogItemsByName[skill.name],
                                     isLoadingDetail: viewModel.isLoadingSkillDetail,
-                                    isRemoving: viewModel.removingSkillName == skill.name,
-                                    canRemove: DashboardViewModel.canRemoveSkill(skill),
                                     onInfo: {
                                         Task { await viewModel.loadSkillDetail(skill.name) }
-                                    },
-                                    onRemove: {
-                                        skillPendingRemoval = skill
                                     }
                                 )
 
@@ -370,6 +358,25 @@ private struct SkillSectionHeader: View {
     }
 }
 
+private enum SkillInstallPalette {
+    static let amber = Color(red: 0.72, green: 0.47, blue: 0.12)
+    static let copper = Color(red: 0.66, green: 0.40, blue: 0.23)
+
+    static func iconBackground(colorScheme: ColorScheme, isHovered: Bool) -> Color {
+        let opacity: Double
+        if colorScheme == .dark {
+            opacity = isHovered ? 0.24 : 0.16
+        } else {
+            opacity = isHovered ? 0.17 : 0.11
+        }
+        return amber.opacity(opacity)
+    }
+
+    static func iconBorder(isHovered: Bool) -> Color {
+        copper.opacity(isHovered ? 0.44 : 0.24)
+    }
+}
+
 private struct CatalogSkillListRow: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
@@ -405,11 +412,20 @@ private struct CatalogSkillListRow: View {
                         Text("Installing...")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
+                            .frame(width: 74, height: 28)
                     } else {
                         Image(systemName: "plus")
                             .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(SkillInstallPalette.amber)
                             .frame(width: 28, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(SkillInstallPalette.iconBackground(colorScheme: colorScheme, isHovered: isHovered))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(SkillInstallPalette.iconBorder(isHovered: isHovered), lineWidth: 1)
+                            )
                     }
                 }
                 .buttonStyle(.plain)
@@ -447,10 +463,7 @@ private struct InstalledSkillListRow: View {
     let skill: SkillInfo
     let catalogItem: SkillCatalogItem?
     let isLoadingDetail: Bool
-    let isRemoving: Bool
-    let canRemove: Bool
     let onInfo: () -> Void
-    let onRemove: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -481,22 +494,6 @@ private struct InstalledSkillListRow: View {
             .foregroundStyle(.secondary)
             .disabled(isLoadingDetail)
             .help("Skill details")
-
-            Button(action: onRemove) {
-                if isRemoving {
-                    Text("...")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 26, height: 26)
-                } else {
-                    Image(systemName: "trash")
-                        .font(.system(size: 15))
-                        .frame(width: 26, height: 26)
-                }
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(canRemove ? .red : .secondary.opacity(0.45))
-            .disabled(!canRemove || isRemoving)
-            .help(canRemove ? "Remove skill" : "Built-in skills cannot be removed")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 9)
@@ -679,7 +676,7 @@ private struct ManualSkillInstallSheet: View {
                             .frame(width: 78)
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(SkillPillButtonStyle(tone: .install, isDisabled: !canInstall))
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canInstall)
             }
@@ -695,6 +692,11 @@ private struct ManualSkillInstallSheet: View {
 struct SkillCatalogDetailSheet: View {
     let item: SkillCatalogItem
     let installedSkill: SkillInfo?
+    let isInstalling: Bool
+    let isRemoving: Bool
+    let canRemove: Bool
+    let onInstall: () -> Void
+    let onRemove: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -716,14 +718,18 @@ struct SkillCatalogDetailSheet: View {
 
                 Spacer(minLength: 16)
 
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 24, height: 24)
+                HStack(spacing: 8) {
+                    actionControl
+
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Close")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Close")
             }
             .padding(.bottom, 16)
 
@@ -785,6 +791,43 @@ struct SkillCatalogDetailSheet: View {
 
         return body.isEmpty && hasTrimmedHeading ? item.description : body
     }
+
+    @ViewBuilder
+    private var actionControl: some View {
+        if installedSkill == nil {
+            Button(action: onInstall) {
+                if isInstalling {
+                    Text("Installing...")
+                        .frame(width: 92, height: 30)
+                } else {
+                    Text("Install")
+                        .frame(width: 92, height: 30)
+                }
+            }
+            .buttonStyle(SkillPillButtonStyle(tone: .install, isDisabled: isInstalling))
+            .disabled(isInstalling)
+        } else if canRemove {
+            Button(role: .destructive, action: onRemove) {
+                if isRemoving {
+                    Text("Removing...")
+                        .frame(width: 92, height: 30)
+                } else {
+                    Text("Uninstall")
+                        .frame(width: 92, height: 30)
+                }
+            }
+            .buttonStyle(SkillPillButtonStyle(tone: .destructive, isDisabled: isRemoving))
+            .disabled(isRemoving)
+        } else {
+            Text("Installed")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
 }
 
 private struct SkillDetailChip: View {
@@ -798,6 +841,77 @@ private struct SkillDetailChip: View {
             .padding(.vertical, 4)
             .background(Color.green.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+private struct SkillPillButtonStyle: ButtonStyle {
+    enum Tone {
+        case install
+        case neutral
+        case destructive
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    let tone: Tone
+    let isDisabled: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(foregroundColor)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(backgroundColor.opacity(configuration.isPressed ? 0.78 : 1))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(borderColor.opacity(configuration.isPressed ? 1 : 0.82), lineWidth: borderWidth)
+            )
+            .opacity(isDisabled ? 0.55 : 1)
+            .animation(.easeInOut(duration: 0.14), value: configuration.isPressed)
+    }
+
+    private var foregroundColor: Color {
+        switch tone {
+        case .install:
+            return SkillInstallPalette.amber
+        case .neutral:
+            return .primary
+        case .destructive:
+            return Color(red: 1.0, green: 0.36, blue: 0.36)
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch tone {
+        case .install:
+            return SkillInstallPalette.amber.opacity(colorScheme == .dark ? 0.18 : 0.12)
+        case .neutral:
+            return colorScheme == .dark
+                ? Color.white.opacity(0.12)
+                : Color.black.opacity(0.08)
+        case .destructive:
+            return Color(red: 0.42, green: 0.13, blue: 0.16)
+        }
+    }
+
+    private var borderColor: Color {
+        switch tone {
+        case .install:
+            return SkillInstallPalette.copper.opacity(colorScheme == .dark ? 0.44 : 0.30)
+        case .neutral, .destructive:
+            return .clear
+        }
+    }
+
+    private var borderWidth: CGFloat {
+        switch tone {
+        case .install:
+            return 1
+        case .neutral, .destructive:
+            return 0
+        }
     }
 }
 

@@ -18,6 +18,31 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+func slice(_ haystack: String, from start: String, to end: String) -> String {
+    guard let startRange = haystack.range(of: start),
+          let endRange = haystack[startRange.upperBound...].range(of: end) else {
+        fputs("FAIL: could not slice source between \(start) and \(end)\n", stderr)
+        exit(1)
+    }
+    return String(haystack[startRange.lowerBound..<endRange.lowerBound])
+}
+
+let catalogRow = slice(
+    skillsView,
+    from: "private struct CatalogSkillListRow: View",
+    to: "private struct InstalledSkillListRow: View"
+)
+let installedRow = slice(
+    skillsView,
+    from: "private struct InstalledSkillListRow: View",
+    to: "private struct InstalledStatusMark: View"
+)
+let detailSheet = slice(
+    skillsView,
+    from: "struct SkillCatalogDetailSheet: View",
+    to: "private struct SkillDetailChip: View"
+)
+
 require(
     viewModel.contains("private var hasLoadedSkillCatalog = false"),
     "Skill catalog should remember when the catalog is already loaded."
@@ -101,6 +126,68 @@ require(
 require(
     skillsView.contains(".frame(width: 640)"),
     "Skill detail sheet should be narrower than the 760px skill list column."
+)
+require(
+    catalogRow.contains("onInstall"),
+    "Catalog skill rows should keep the quick install action."
+)
+require(
+    catalogRow.contains(#"Image(systemName: "plus")"#),
+    "Catalog skill rows should keep the install plus button."
+)
+require(
+    !installedRow.contains("onRemove"),
+    "Installed skill rows should not contain uninstall actions; uninstall belongs in the detail sheet."
+)
+require(
+    !installedRow.contains(#"Image(systemName: "trash")"#),
+    "Installed skill rows should not render the uninstall trash button."
+)
+require(
+    detailSheet.contains("let isInstalling: Bool") &&
+        detailSheet.contains("let isRemoving: Bool") &&
+        detailSheet.contains("let canRemove: Bool") &&
+        detailSheet.contains("let onInstall: () -> Void") &&
+        detailSheet.contains("let onRemove: () -> Void"),
+    "Skill detail sheet should own install and uninstall actions."
+)
+require(
+    detailSheet.contains(#"Text("Install")"#) &&
+        detailSheet.contains(#"Text("Uninstall")"#),
+    "Skill detail sheet should render install and uninstall controls."
+)
+require(
+    skillsView.contains("private struct SkillPillButtonStyle: ButtonStyle"),
+    "Skills UI should use a local pill button style for skill install and uninstall controls."
+)
+require(
+    skillsView.contains(".buttonStyle(SkillPillButtonStyle(tone: .install") &&
+        detailSheet.contains(".buttonStyle(SkillPillButtonStyle(tone: .destructive"),
+    "Skill install actions should use a dedicated install tone and uninstall should use the destructive pill style."
+)
+require(
+    skillsView.contains("private enum SkillInstallPalette"),
+    "Skills UI should centralize the install colors in a small palette."
+)
+require(
+    skillsView.contains("Color(red: 0.42, green: 0.13, blue: 0.16)"),
+    "Skill uninstall should use a muted dark red pill background."
+)
+require(
+    skillsView.contains("Color(red: 0.72, green: 0.47, blue: 0.12)") &&
+        skillsView.contains("Color(red: 0.66, green: 0.40, blue: 0.23)"),
+    "Skill install actions should use muted amber plus a subtle copper accent instead of blue or green."
+)
+require(
+    !skillsView.contains(".buttonStyle(.borderedProminent)"),
+    "Skill install controls should not use the system prominent blue button style."
+)
+require(
+    dashboardView.contains("onInstall: {") &&
+        dashboardView.contains("installCatalogSkill(item)") &&
+        dashboardView.contains("onRemove: {") &&
+        dashboardView.contains("skillPendingRemoval = skill"),
+    "Dashboard skill detail overlay should wire install and uninstall actions."
 )
 
 print("OK: skills UI cache and hover policy verified")

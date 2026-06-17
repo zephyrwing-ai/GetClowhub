@@ -49,7 +49,7 @@ assertContains(
 )
 assertContains(
     dashboard,
-    #"String(localized: "Do Anything", bundle: LanguageManager.shared.localizedBundle)"#,
+    #"String(localized: "Ask Anything", bundle: LanguageManager.shared.localizedBundle)"#,
     "composer placeholder must use the active language bundle"
 )
 assertContains(
@@ -150,6 +150,7 @@ assertContains(dashboard, "ToolbarItem(placement: .navigation)", "conversation t
 assertNotContains(dashboard, "ToolbarItem(placement: .primaryAction)", "Outputs toggle must not use the global toolbar placement")
 assertContains(dashboard, "DashboardTitlebarAccessoryInstaller(", "Outputs controls must be installed into the existing titlebar header")
 assertContains(dashboard, "RightOutputsTitlebarAccessory(", "Outputs title and toggle must share the right-column titlebar accessory")
+assertNotContains(dashboard, #"Image(systemName: "tray.full.fill")"#, "right sidebar header must not show the removed blue tray icon")
 assertContains(dashboard, ".animation(.spring(response: 0.36, dampingFraction: 0.88), value: workspaceSidebarExpanded)", "Outputs sidebar expansion must animate")
 assertNotContains(dashboard, "private var chatTopChrome", "ChatView must not own the conversation header")
 assertNotContains(dashboard, "private var conversationHeader: some View", "conversation header must not consume vertical space inside the chat content")

@@ -48834,9 +48834,6 @@
         }
       }
     },
-    "Remove skill" : {
-
-    },
     "Remove Skill" : {
 
     },
@@ -48849,6 +48846,9 @@
           }
         }
       }
+    },
+    "Removing..." : {
+
     },
     "Rename" : {
       "localizations" : {
