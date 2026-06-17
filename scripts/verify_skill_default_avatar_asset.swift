@@ -40,20 +40,22 @@ let lightSVG = (try? String(contentsOf: lightImage, encoding: .utf8)) ?? ""
 let darkSVG = (try? String(contentsOf: darkImage, encoding: .utf8)) ?? ""
 let agentLightSVG = (try? String(contentsOf: agentLightImage, encoding: .utf8)) ?? ""
 let agentDarkSVG = (try? String(contentsOf: agentDarkImage, encoding: .utf8)) ?? ""
-expect(lightSVG.contains(#"viewBox="0 0 24 24""#), "skill light SVG should match the agent 24x24 viewBox")
-expect(darkSVG.contains(#"viewBox="0 0 24 24""#), "skill dark SVG should match the agent 24x24 viewBox")
-expect(lightSVG.contains(#"stroke-width="2.1""#), "skill light SVG stroke should match the agent icon")
-expect(darkSVG.contains(#"stroke-width="2.1""#), "skill dark SVG stroke should match the agent icon")
-expect(lightSVG.contains(#"r="8""#), "skill light SVG outer ring should match the agent icon")
-expect(darkSVG.contains(#"r="8""#), "skill dark SVG outer ring should match the agent icon")
-expect(lightSVG.contains(#"r="5""#), "skill light SVG middle ring should match the agent icon")
-expect(darkSVG.contains(#"r="5""#), "skill dark SVG middle ring should match the agent icon")
-expect(lightSVG.contains(#"r="2.2""#), "skill light SVG inner ring should match the agent icon")
-expect(darkSVG.contains(#"r="2.2""#), "skill dark SVG inner ring should match the agent icon")
-expect(!lightSVG.contains(#"r="4.5""#), "skill light SVG must not include a center dot")
-expect(!darkSVG.contains(#"r="4.5""#), "skill dark SVG must not include a center dot")
-expect(agentLightSVG.contains(#"stroke-width="2.1""#), "agent light SVG baseline stroke changed unexpectedly")
-expect(agentDarkSVG.contains(#"stroke-width="2.1""#), "agent dark SVG baseline stroke changed unexpectedly")
+expect(lightSVG.contains(#"viewBox="0 0 24 24""#), "skill light SVG should use the compact 24x24 viewBox")
+expect(darkSVG.contains(#"viewBox="0 0 24 24""#), "skill dark SVG should use the compact 24x24 viewBox")
+expect(lightSVG.contains(#"stroke-width="1.8""#), "skill light SVG ring stroke changed unexpectedly")
+expect(darkSVG.contains(#"stroke-width="1.8""#), "skill dark SVG ring stroke changed unexpectedly")
+for radius in ["9", "6", "3"] {
+    expect(lightSVG.contains(#"r="\#(radius)""#), "skill light SVG \(radius)pt ring is missing")
+    expect(darkSVG.contains(#"r="\#(radius)""#), "skill dark SVG \(radius)pt ring is missing")
+    expect(agentLightSVG.contains(#"r="\#(radius)""#), "agent light SVG \(radius)pt ring is missing")
+    expect(agentDarkSVG.contains(#"r="\#(radius)""#), "agent dark SVG \(radius)pt ring is missing")
+}
+expect(lightSVG.contains(##"r="1" fill="#151515""##), "skill light SVG must include a small filled center dot")
+expect(darkSVG.contains(##"r="1" fill="#ffffff""##), "skill dark SVG must include a small filled center dot")
+expect(!lightSVG.contains(##"r="11" fill="#151515""##), "skill light SVG must not use a filled black disk")
+expect(!agentLightSVG.contains(##"r="11" fill="#151515""##), "agent light SVG must not use a filled black disk")
+expect(!agentLightSVG.contains(##"r="1" fill="#151515""##), "agent light SVG must not include the skill center dot")
+expect(!agentDarkSVG.contains(##"r="1" fill="#ffffff""##), "agent dark SVG must not include the skill center dot")
 expect(!lightSVG.contains(#"width="1254""#), "skill light SVG still uses the oversized generated canvas")
 expect(!darkSVG.contains(#"width="1254""#), "skill dark SVG still uses the oversized generated canvas")
 
@@ -62,4 +64,4 @@ expect(viewText.contains(#"Image("SkillAvatarUnifiedDark")"#), "SkillsTabView do
 expect(viewText.contains("isUsingDefaultIcon"), "SkillCatalogIcon should distinguish default icons from custom icons")
 expect(viewText.contains("skillDefaultIconBackground"), "SkillCatalogIcon should give the default icon its own contrast background")
 
-print("Skill default avatar matches the agent icon")
+print("Skill default avatar keeps the center dot while agent avatar stays hollow")

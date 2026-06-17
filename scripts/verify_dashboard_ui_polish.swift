@@ -84,8 +84,13 @@ assertContains(
 )
 assertContains(
     markdownHTML,
-    "font-size: 15px",
-    "WKWebView markdown should use a more readable message size"
+    "font-size: 14px; color:",
+    "WKWebView markdown body text should match the 14pt chat message size"
+)
+assertNotContains(
+    markdownHTML,
+    "font-size: 15px; color:",
+    "WKWebView markdown body text must not be larger than plain chat messages"
 )
 
 assertContains(

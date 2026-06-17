@@ -26,6 +26,11 @@ let typography = slice(
     from: "private enum DashboardTypography",
     to: "private enum DashboardSidebarMetrics"
 )
+let markdownHTML = slice(
+    dashboard,
+    from: "enum MarkdownHTML",
+    to: "#Preview"
+)
 
 guard typography.contains("static let message = Font.system(size: 14, weight: .regular)") else {
     fatalError("Assistant message text should use 14pt regular system typography")
@@ -33,6 +38,14 @@ guard typography.contains("static let message = Font.system(size: 14, weight: .r
 
 guard typography.contains("static let userMessage = Font.system(size: 14, weight: .regular)") else {
     fatalError("User message text should match assistant message typography")
+}
+
+guard markdownHTML.contains("font-size: 14px; color:") else {
+    fatalError("WebView assistant message body text should match the 14pt chat message size")
+}
+
+guard !markdownHTML.contains("font-size: 15px; color:") else {
+    fatalError("WebView assistant message body text must not be larger than user messages")
 }
 
 assertContains(

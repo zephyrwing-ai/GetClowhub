@@ -76,23 +76,45 @@ assertContains(
 )
 assertContains(
     agentDaySVG,
-    #"stroke-width="2.1""#,
+    #"stroke-width="1.8""#,
     "light agent SVG stroke must stay crisp after shrinking in AgentsMarket rows"
 )
 assertContains(
     agentNightSVG,
-    #"stroke-width="2.1""#,
+    #"stroke-width="1.8""#,
     "dark agent SVG stroke must stay crisp after shrinking in AgentsMarket rows"
+)
+for radius in ["9", "6", "3"] {
+    assertContains(
+        agentDaySVG,
+        #"r="\#(radius)""#,
+        "light agent SVG must include the \(radius)pt concentric ring"
+    )
+    assertContains(
+        agentNightSVG,
+        #"r="\#(radius)""#,
+        "dark agent SVG must include the \(radius)pt concentric ring"
+    )
+}
+assertNotContains(
+    agentDaySVG,
+    ##"fill="#151515""##,
+    "light agent SVG must be line-only, not a filled disk"
+)
+assertNotContains(
+    agentNightSVG,
+    ##"fill="#ffffff""##,
+    "dark agent SVG must not include a filled center dot"
 )
 assertNotContains(
     agentDaySVG,
-    ##"r="4.5" fill="#ffffff""##,
+    ##"r="1""##,
     "agent SVG must not include the skill center dot"
 )
 assertNotContains(
     agentNightSVG,
-    ##"r="4.5" fill="#ffffff""##,
-    "agent SVG must not include the skill center dot"
+    ##"r="1""##,
+    "agent SVG must not include a filled center dot"
 )
 assertContains(
     avatarContents,

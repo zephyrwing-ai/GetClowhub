@@ -162,7 +162,7 @@ struct SkillsTabView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 13)
             .frame(height: 36)
             .background(Color(NSColor.controlBackgroundColor))
             .clipShape(Capsule())
@@ -248,7 +248,9 @@ struct SkillsTabView: View {
                                         Task { await viewModel.installCatalogSkill(item) }
                                     },
                                     onOpen: {
-                                        selectedCatalogItem = item
+                                        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
+                                            selectedCatalogItem = item
+                                        }
                                     }
                                 )
 
@@ -354,15 +356,13 @@ struct SkillsTabView: View {
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    selectedCatalogItem = nil
+                    closeCatalogDetail()
                 }
 
             SkillCatalogDetailSheet(
                 item: item,
                 installedSkill: installedSkillsByName[item.name],
-                onClose: {
-                    selectedCatalogItem = nil
-                }
+                onClose: closeCatalogDetail
             )
             .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -373,8 +373,18 @@ struct SkillsTabView: View {
             )
             .padding(28)
         }
-        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .transition(.asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.965, anchor: .center)),
+            removal: .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
+        ))
         .zIndex(10)
+    }
+
+    private func closeCatalogDetail() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+            selectedCatalogItem = nil
+        }
     }
 }
 
@@ -756,12 +766,12 @@ private struct SkillCatalogDetailSheet: View {
             .padding(.bottom, 20)
 
             Text(item.description)
-                .font(.system(size: 24, weight: .regular))
+                .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(.secondary)
-                .lineSpacing(4)
+                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
-                .padding(.bottom, 30)
+                .padding(.bottom, 26)
 
             Text("Description")
                 .font(.system(size: 13, weight: .semibold))
@@ -769,11 +779,11 @@ private struct SkillCatalogDetailSheet: View {
                 .padding(.bottom, 10)
 
             ScrollView {
-                Markdown(item.documentationMarkdown)
+                Markdown(detailMarkdown)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 34)
-                    .padding(.vertical, 30)
+                    .padding(.vertical, 28)
             }
             .frame(height: 344)
             .background(Color(NSColor.textBackgroundColor).opacity(0.38))
@@ -784,7 +794,34 @@ private struct SkillCatalogDetailSheet: View {
             )
         }
         .padding(28)
-        .frame(width: 760)
+        .frame(width: 640)
+    }
+
+    private var detailMarkdown: String {
+        let lines = item.documentationMarkdown.components(separatedBy: .newlines)
+        var firstContentIndex = 0
+        var hasTrimmedHeading = false
+
+        while firstContentIndex < lines.count {
+            let trimmed = lines[firstContentIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                firstContentIndex += 1
+                continue
+            }
+            if trimmed.hasPrefix("#") {
+                firstContentIndex += 1
+                hasTrimmedHeading = true
+                continue
+            }
+            break
+        }
+
+        let body = lines
+            .dropFirst(firstContentIndex)
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return body.isEmpty && hasTrimmedHeading ? item.description : body
     }
 }
 

@@ -930,7 +930,7 @@ struct SidebarView: View {
                 .help(String(localized: "Search chats", bundle: languageManager.localizedBundle))
 
                 navRow(.skills, title: String(localized: "Skills", bundle: languageManager.localizedBundle), systemImage: "bolt.fill")
-                navRow(.plugins, title: String(localized: "Plugins", bundle: languageManager.localizedBundle), systemImage: "puzzlepiece.fill")
+                navRow(.plugins, title: String(localized: "Plugins", bundle: languageManager.localizedBundle), systemImage: "puzzlepiece.fill", assetImage: "PluginIcon")
                 navRow(.tasksLogs, title: String(localized: "Automation", bundle: languageManager.localizedBundle), systemImage: "checklist", assetImage: "AutomationIcon")
                 navRow(.market, title: String(localized: "AgentsMarket", bundle: languageManager.localizedBundle), systemImage: "storefront")
 
@@ -6301,7 +6301,7 @@ enum MarkdownHTML {
         html, body { background: transparent; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-            font-size: 15px; color: \(textColor); line-height: 1.55;
+            font-size: 14px; color: \(textColor); line-height: 1.55;
             -webkit-user-select: text; cursor: text;
             word-wrap: break-word; overflow-wrap: break-word;
             overflow: hidden;
@@ -7260,9 +7260,7 @@ private struct WorkspaceFilePanel: View {
             }
         }) {
             HStack(spacing: 6) {
-                Image(systemName: item.isDirectory ? "folder.fill" : fileIcon(for: item.name))
-                    .font(.system(size: 13))
-                    .foregroundColor(item.isDirectory ? .accentColor : .secondary)
+                workspaceItemIcon(item: item, isExpanded: false)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.name)
@@ -7379,9 +7377,7 @@ private struct WorkspaceFilePanel: View {
                     Spacer().frame(width: 12)
                 }
 
-                Image(systemName: item.isDirectory ? "folder.fill" : fileIcon(for: item.name))
-                    .font(.system(size: 13))
-                    .foregroundColor(item.isDirectory ? .accentColor : .secondary)
+                workspaceItemIcon(item: item, isExpanded: isExpanded)
 
                 CommitTextField(
                     text: $renamingText,
@@ -7424,9 +7420,7 @@ private struct WorkspaceFilePanel: View {
                         Spacer().frame(width: 12)
                     }
 
-                    Image(systemName: item.isDirectory ? "folder.fill" : fileIcon(for: item.name))
-                        .font(.system(size: 13))
-                        .foregroundColor(item.isDirectory ? .accentColor : .secondary)
+                    workspaceItemIcon(item: item, isExpanded: isExpanded)
 
                     Text(item.name)
                         .font(.system(size: 13))
@@ -7632,6 +7626,21 @@ private struct WorkspaceFilePanel: View {
 
         expandedFolders.insert(directory)
         refreshTrigger += 1
+    }
+
+    @ViewBuilder
+    private func workspaceItemIcon(item: FileItem, isExpanded: Bool) -> some View {
+        if item.isDirectory {
+            Image(isExpanded ? "WorkspaceFolderOpenIcon" : "WorkspaceFolderClosedIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 15, height: 15)
+        } else {
+            Image(systemName: fileIcon(for: item.name))
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+                .frame(width: 15, height: 15)
+        }
     }
 
     private func fileIcon(for name: String) -> String {

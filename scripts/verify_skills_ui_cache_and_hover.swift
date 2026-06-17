@@ -49,12 +49,28 @@ require(
     "Skills UI should use quiet text/icon states instead of spinner progress views."
 )
 require(
-    skillsView.contains("Markdown(item.documentationMarkdown)"),
+    skillsView.contains("Markdown(detailMarkdown)"),
     "Skill detail should render the SKILL.md body as Markdown."
+)
+require(
+    skillsView.contains(".transition(.asymmetric("),
+    "Skill detail sheet should animate in and out instead of appearing abruptly."
+)
+require(
+    skillsView.contains("private var detailMarkdown: String"),
+    "Skill detail should trim the repeated leading title from the Markdown body."
 )
 require(
     skillsView.contains(".frame(height: 344)"),
     "Skill detail Markdown should live in a fixed-height scroll box."
+)
+require(
+    skillsView.contains(".frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)"),
+    "Skill detail overlay should fill the available page and center the narrower sheet."
+)
+require(
+    skillsView.contains(".frame(width: 640)"),
+    "Skill detail sheet should be narrower than the 760px skill list column."
 )
 
 print("OK: skills UI cache and hover policy verified")
