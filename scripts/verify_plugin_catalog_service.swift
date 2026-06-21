@@ -47,22 +47,6 @@ struct VerifyPluginCatalogService {
         }
         """)
 
-        try write("plugins/alpha/.codex-plugin/plugin.json", """
-        {
-          "name": "alpha",
-          "version": "1.0.0",
-          "description": "Alpha plugin",
-          "author": { "name": "GetClowHub" },
-          "interface": {
-            "displayName": "Alpha Plugin",
-            "shortDescription": "Alpha short",
-            "longDescription": "Alpha long",
-            "category": "Productivity",
-            "capabilities": ["Read", "Write"],
-            "logo": "./assets/icon.png"
-          }
-        }
-        """)
         try write("plugins/alpha/package.json", """
         {
           "name": "@getclowhub/alpha",
@@ -71,25 +55,22 @@ struct VerifyPluginCatalogService {
         }
         """)
         try write("plugins/alpha/openclaw.plugin.json", """
-        { "id": "alpha", "configSchema": { "type": "object", "properties": {} } }
+        {
+          "id": "alpha",
+          "displayName": "Alpha Plugin",
+          "description": "Alpha short",
+          "longDescription": "Alpha long",
+          "version": "1.0.0",
+          "developerName": "GetClowHub",
+          "category": "Productivity",
+          "capabilities": ["Read", "Write"],
+          "icon": "./assets/icon.png",
+          "configSchema": { "type": "object", "properties": {} }
+        }
         """)
         try write("plugins/alpha/index.ts", "export default function() {}\n")
         try write("plugins/alpha/assets/icon.png", "not-a-real-png")
 
-        try write("plugins/beta/.codex-plugin/plugin.json", """
-        {
-          "name": "beta",
-          "version": "1.0.0",
-          "description": "Beta plugin",
-          "author": { "name": "GetClowHub" },
-          "interface": {
-            "displayName": "Beta Plugin",
-            "shortDescription": "Beta short",
-            "longDescription": "Beta long",
-            "category": "Developer Tools"
-          }
-        }
-        """)
         try write("plugins/beta/package.json", """
         {
           "name": "@getclowhub/beta",
@@ -97,23 +78,19 @@ struct VerifyPluginCatalogService {
           "openclaw": { "extensions": ["./index.ts"] }
         }
         """)
-        try write("plugins/beta/openclaw.plugin.json", "{ \"id\": \"beta\" }\n")
-        try write("plugins/beta/index.ts", "export default function() {}\n")
-
-        try write("plugins/gamma/.codex-plugin/plugin.json", """
+        try write("plugins/beta/openclaw.plugin.json", """
         {
-          "name": "gamma",
+          "id": "beta",
+          "displayName": "Beta Plugin",
+          "description": "Beta short",
+          "longDescription": "Beta long",
           "version": "1.0.0",
-          "description": "Gamma plugin",
-          "author": { "name": "GetClowHub" },
-          "interface": {
-            "displayName": "Gamma Plugin",
-            "shortDescription": "Gamma short",
-            "longDescription": "Gamma long",
-            "category": "Productivity"
-          }
+          "developerName": "GetClowHub",
+          "category": "Developer Tools"
         }
         """)
+        try write("plugins/beta/index.ts", "export default function() {}\n")
+
         try write("plugins/gamma/package.json", """
         {
           "name": "@getclowhub/gamma",
@@ -121,7 +98,17 @@ struct VerifyPluginCatalogService {
           "openclaw": { "extensions": ["./index.ts"] }
         }
         """)
-        try write("plugins/gamma/openclaw.plugin.json", "{ \"id\": \"gamma\" }\n")
+        try write("plugins/gamma/openclaw.plugin.json", """
+        {
+          "id": "gamma",
+          "displayName": "Gamma Plugin",
+          "description": "Gamma short",
+          "longDescription": "Gamma long",
+          "version": "1.0.0",
+          "developerName": "GetClowHub",
+          "category": "Productivity"
+        }
+        """)
         try write("plugins/gamma/index.ts", "export default function() {}\n")
 
         let items = try PluginCatalogService.parseCatalog(rootURL: rootURL)

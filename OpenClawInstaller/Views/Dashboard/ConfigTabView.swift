@@ -487,6 +487,7 @@ struct GetClawHubServiceSection: View {
     @EnvironmentObject var membershipManager: MembershipManager
     @State private var showApiKey = false
     @State private var isExpanded = true
+    @State private var areModelsExpanded = false
 
     private var isSelected: Bool {
         viewModel.editedActiveServiceSource == "getclawhub"
@@ -518,6 +519,15 @@ struct GetClawHubServiceSection: View {
 
         let allowedLowercased = Set(allowList.map { $0.lowercased() })
         return officialPresetModels.filter { allowedLowercased.contains($0.id.lowercased()) }
+    }
+
+    private var officialModelSummary: String {
+        let names = officialAvailableModels.prefix(3).map { $0.name.isEmpty ? $0.id : $0.name }
+        guard !names.isEmpty else {
+            return "No models available"
+        }
+        let suffix = officialAvailableModels.count > names.count ? "..." : ""
+        return names.joined(separator: ", ") + suffix
     }
 
     var body: some View {
@@ -705,21 +715,58 @@ struct GetClawHubServiceSection: View {
             Text("Available Models")
                 .frame(width: 120, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 if officialAvailableModels.isEmpty {
                     Text("No matching models found in the official provider preset.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 168), spacing: 8)], alignment: .leading, spacing: 8) {
-                        ForEach(officialAvailableModels) { model in
-                            officialModelPill(model)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            areModelsExpanded.toggle()
                         }
-                    }
+                    } label: {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(officialAvailableModels.count) models available")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                Text(officialModelSummary)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
 
-                    Text("\(officialAvailableModels.count) models available")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                            Spacer()
+
+                            Image(systemName: areModelsExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.045))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if areModelsExpanded {
+                        ScrollView {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 168), spacing: 8)], alignment: .leading, spacing: 8) {
+                                ForEach(officialAvailableModels) { model in
+                                    officialModelPill(model)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .frame(maxHeight: 260)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

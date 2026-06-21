@@ -120,45 +120,39 @@ enum PluginCatalogService {
         pluginURL: URL,
         source: PluginCatalogSource
     ) -> PluginCatalogItem? {
-        let codexManifestURL = pluginURL
-            .appendingPathComponent(".codex-plugin")
-            .appendingPathComponent("plugin.json")
         let packageURL = pluginURL.appendingPathComponent("package.json")
         let openClawManifestURL = pluginURL.appendingPathComponent("openclaw.plugin.json")
 
-        let codexManifest: CodexPluginManifest? = decodeJSON(codexManifestURL)
         let packageManifest: PackageManifest? = decodeJSON(packageURL)
         let openClawManifest: OpenClawPluginManifest? = decodeJSON(openClawManifestURL)
 
         let folderName = pluginURL.lastPathComponent
-        let name = codexManifest?.name.nilIfBlank
-            ?? (openClawManifest?.id)?.nilIfBlank
+        let name = (openClawManifest?.id)?.nilIfBlank
             ?? unscopedPackageName(packageManifest?.name)
             ?? folderName
         let openClawPluginID = (openClawManifest?.id)?.nilIfBlank
             ?? unscopedPackageName(packageManifest?.name)
             ?? name
-        let displayName = (codexManifest?.interface?.displayName)?.nilIfBlank
+        let displayName = (openClawManifest?.displayName)?.nilIfBlank
+            ?? (openClawManifest?.name)?.nilIfBlank
             ?? displayNameForPlugin(name)
-        let description = (codexManifest?.interface?.shortDescription)?.nilIfBlank
-            ?? (codexManifest?.description)?.nilIfBlank
+        let description = (openClawManifest?.description)?.nilIfBlank
             ?? (packageManifest?.description)?.nilIfBlank
             ?? "OpenClaw plugin"
-        let longDescription = (codexManifest?.interface?.longDescription)?.nilIfBlank
+        let longDescription = (openClawManifest?.longDescription)?.nilIfBlank
             ?? readMarkdownSummary(in: pluginURL)
             ?? description
-        let version = (codexManifest?.version)?.nilIfBlank
+        let version = (openClawManifest?.version)?.nilIfBlank
             ?? (packageManifest?.version)?.nilIfBlank
             ?? ""
-        let developerName = (codexManifest?.interface?.developerName)?.nilIfBlank
-            ?? (codexManifest?.author?.name)?.nilIfBlank
+        let developerName = (openClawManifest?.developerName)?.nilIfBlank
             ?? ""
-        let category = (codexManifest?.interface?.category)?.nilIfBlank
+        let category = (openClawManifest?.category)?.nilIfBlank
             ?? categoryFromOpenClawManifest(openClawManifest, packageManifest: packageManifest)
-        let capabilities = codexManifest?.interface?.capabilities ?? []
-        let keywords = codexManifest?.keywords ?? []
+        let capabilities = openClawManifest?.capabilities ?? []
+        let keywords = openClawManifest?.keywords ?? packageManifest?.keywords ?? []
         let relativePath = relativePath(from: rootURL, to: pluginURL)
-        let iconURL = preferredIconURL(in: pluginURL, manifest: codexManifest)
+        let iconURL = preferredIconURL(in: pluginURL, iconPath: openClawManifest?.icon)
         let hasExtensions = packageManifest?.openclaw?.extensions.isEmpty == false
         let isInstallable = hasExtensions && FileManager.default.fileExists(atPath: openClawManifestURL.path)
 
@@ -176,8 +170,8 @@ enum PluginCatalogService {
             relativePath: relativePath,
             source: source,
             iconURL: iconURL,
-            repositoryURL: (codexManifest?.repository)?.nilIfBlank,
-            homepageURL: (codexManifest?.homepage)?.nilIfBlank ?? (codexManifest?.interface?.websiteURL)?.nilIfBlank,
+            repositoryURL: (openClawManifest?.repositoryURL)?.nilIfBlank,
+            homepageURL: (openClawManifest?.homepageURL)?.nilIfBlank,
             openClawPluginID: openClawPluginID,
             isOpenClawInstallable: isInstallable
         )
@@ -188,13 +182,8 @@ enum PluginCatalogService {
         return try? JSONDecoder().decode(T.self, from: data)
     }
 
-    private static func preferredIconURL(in pluginURL: URL, manifest: CodexPluginManifest?) -> URL? {
-        let candidates = [
-            manifest?.interface?.logo,
-            manifest?.interface?.composerIcon
-        ].compactMap { $0?.nilIfBlank }
-
-        for candidate in candidates {
+    private static func preferredIconURL(in pluginURL: URL, iconPath: String?) -> URL? {
+        if let candidate = iconPath?.nilIfBlank {
             if let url = assetURL(from: candidate, relativeTo: pluginURL) {
                 return url
             }
@@ -414,37 +403,11 @@ private enum PluginCatalogError: LocalizedError {
     }
 }
 
-private struct CodexPluginManifest: Decodable {
-    let name: String
-    let version: String?
-    let description: String?
-    let author: Author?
-    let homepage: String?
-    let repository: String?
-    let keywords: [String]?
-    let interface: Interface?
-
-    struct Author: Decodable {
-        let name: String?
-    }
-
-    struct Interface: Decodable {
-        let displayName: String?
-        let shortDescription: String?
-        let longDescription: String?
-        let developerName: String?
-        let category: String?
-        let capabilities: [String]?
-        let websiteURL: String?
-        let composerIcon: String?
-        let logo: String?
-    }
-}
-
 private struct PackageManifest: Decodable {
     let name: String?
     let version: String?
     let description: String?
+    let keywords: [String]?
     let openclaw: OpenClawPackageMetadata?
 }
 
@@ -457,11 +420,35 @@ private struct OpenClawChannelMetadata: Decodable {}
 
 private struct OpenClawPluginManifest: Decodable {
     let id: String?
+    let name: String?
+    let displayName: String?
+    let description: String?
+    let longDescription: String?
+    let version: String?
+    let developerName: String?
+    let category: String?
+    let capabilities: [String]
+    let keywords: [String]
+    let icon: String?
+    let homepageURL: String?
+    let repositoryURL: String?
     let kind: String?
     let channels: [String]
 
     enum CodingKeys: String, CodingKey {
         case id
+        case name
+        case displayName
+        case description
+        case longDescription
+        case version
+        case developerName
+        case category
+        case capabilities
+        case keywords
+        case icon
+        case homepageURL
+        case repositoryURL
         case kind
         case channels
     }
@@ -469,6 +456,18 @@ private struct OpenClawPluginManifest: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(String.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        longDescription = try container.decodeIfPresent(String.self, forKey: .longDescription)
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        developerName = try container.decodeIfPresent(String.self, forKey: .developerName)
+        category = try container.decodeIfPresent(String.self, forKey: .category)
+        capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+        keywords = try container.decodeIfPresent([String].self, forKey: .keywords) ?? []
+        icon = try container.decodeIfPresent(String.self, forKey: .icon)
+        homepageURL = try container.decodeIfPresent(String.self, forKey: .homepageURL)
+        repositoryURL = try container.decodeIfPresent(String.self, forKey: .repositoryURL)
         kind = try container.decodeIfPresent(String.self, forKey: .kind)
         channels = try container.decodeIfPresent([String].self, forKey: .channels) ?? []
     }

@@ -148,5 +148,13 @@ require(
         officialServiceSection.contains("availableModelsView"),
     "Official GetClawHub provider settings should show the usable model list."
 )
+require(
+    officialServiceSection.contains("@State private var areModelsExpanded = false") &&
+        officialServiceSection.contains("officialModelSummary") &&
+        officialServiceSection.contains("areModelsExpanded.toggle()") &&
+        officialServiceSection.contains("if areModelsExpanded") &&
+        officialServiceSection.contains(".frame(maxHeight: 260)"),
+    "Official GetClawHub model list should be collapsed by default and expand into a height-limited list."
+)
 
 print("Settings shortcut menu verification passed")

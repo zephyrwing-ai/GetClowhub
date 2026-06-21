@@ -8,11 +8,12 @@ struct VerifyGoogleCalendarOpenClawAdapter {
             .appendingPathComponent("google-calendar")
         let packageURL = pluginURL.appendingPathComponent("package.json")
         let manifestURL = pluginURL.appendingPathComponent("openclaw.plugin.json")
-        let indexURL = pluginURL.appendingPathComponent("index.js")
+        let adapterURL = pluginURL.appendingPathComponent("openclaw.adapter.js")
 
         expect(FileManager.default.fileExists(atPath: manifestURL.path), "google-calendar should include openclaw.plugin.json")
         expect(FileManager.default.fileExists(atPath: packageURL.path), "google-calendar should include package.json")
-        expect(FileManager.default.fileExists(atPath: indexURL.path), "google-calendar should include index.js runtime entry")
+        expect(FileManager.default.fileExists(atPath: adapterURL.path), "google-calendar should include OpenClaw runtime entry")
+        expect(!FileManager.default.fileExists(atPath: pluginURL.appendingPathComponent(".codex-plugin/plugin.json").path), "google-calendar should not keep a Codex source manifest")
 
         let manifestData = try Data(contentsOf: manifestURL)
         let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
@@ -22,7 +23,10 @@ struct VerifyGoogleCalendarOpenClawAdapter {
         let package = try JSONSerialization.jsonObject(with: packageData) as? [String: Any]
         let openclaw = package?["openclaw"] as? [String: Any]
         let extensions = openclaw?["extensions"] as? [String]
-        expect(extensions == ["./index.js"], "package.json should expose ./index.js as an OpenClaw extension")
+        expect(extensions == ["./openclaw.adapter.js"], "package.json should expose ./openclaw.adapter.js as an OpenClaw extension")
+
+        let adapterText = try String(contentsOf: adapterURL, encoding: .utf8)
+        expect(adapterText.range(of: "codex", options: [.caseInsensitive]) == nil, "adapter should not mention Codex")
 
         let items = try PluginCatalogService.parseCatalog(rootURL: PluginCatalogService.defaultCacheURL)
         let item = items.first { $0.name == "google-calendar" }
