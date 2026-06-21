@@ -372,6 +372,158 @@
         "maxTokens": 65536,
         "name": "gpt-5.5",
         "reasoning": true
+      },
+      {
+        "contextWindow": 1000000,
+        "cost": {
+          "cacheRead": 0.04,
+          "cacheWrite": 0.5,
+          "input": 0.4,
+          "output": 1.6
+        },
+        "id": "qwen3.7-plus",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "qwen3.7-plus",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 1048576,
+        "cost": {
+          "cacheRead": 0.025,
+          "cacheWrite": 0,
+          "input": 0.25,
+          "output": 1.5
+        },
+        "id": "gemini-3.1-flash-lite",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "gemini-3.1-flash-lite",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 1000000,
+        "cost": {
+          "cacheRead": 0.2,
+          "cacheWrite": 0,
+          "input": 1.25,
+          "output": 2.5
+        },
+        "id": "grok-4.3",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "grok-4.3",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 512000,
+        "cost": {
+          "cacheRead": 0.06,
+          "cacheWrite": 0,
+          "input": 0.3,
+          "output": 1.2
+        },
+        "id": "minimax-m3",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "minimax-m3",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 1000000,
+        "cost": {
+          "cacheRead": 0.5,
+          "cacheWrite": 0,
+          "input": 5,
+          "output": 25
+        },
+        "id": "claude-opus-4.8",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "claude-opus-4.8",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 262144,
+        "cost": {
+          "cacheRead": 0.19,
+          "cacheWrite": 0,
+          "input": 0.95,
+          "output": 4
+        },
+        "id": "kimi-k2.7-code",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "kimi-k2.7-code",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 1000000,
+        "cost": {
+          "cacheRead": 0.125,
+          "cacheWrite": 1.5625,
+          "input": 1.25,
+          "output": 3.75
+        },
+        "id": "qwen3.7-max",
+        "input": [
+          "text"
+        ],
+        "maxTokens": 65536,
+        "name": "qwen3.7-max",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 1048576,
+        "cost": {
+          "cacheRead": 0.15,
+          "cacheWrite": 0,
+          "input": 1.5,
+          "output": 9
+        },
+        "id": "gemini-3.5-flash",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "gemini-3.5-flash",
+        "reasoning": true
+      },
+      {
+        "contextWindow": 1050000,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 30,
+          "output": 180
+        },
+        "id": "gpt-5.5-pro",
+        "input": [
+          "text",
+          "image"
+        ],
+        "maxTokens": 65536,
+        "name": "gpt-5.5-pro",
+        "reasoning": true
       }
     ]
   },

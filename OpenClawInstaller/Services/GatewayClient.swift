@@ -935,9 +935,17 @@ class GatewayClient: ObservableObject {
         case "error":
             var message = ""
 
-            // Try to extract from payload.message.errorMessage (gateway error response format)
+            // Try to extract from payload.message.errorMessage (nested-dict format)
             if let msgDict = payload["message"] as? [String: Any],
                let errorMsg = msgDict["errorMessage"] as? String {
+                message = errorMsg
+            }
+            // Flat format: gateway also emits errorMessage directly on payload.
+            // Was missing — user-visible bug: LLM-timeout errors showed up as
+            // ⚠️ ["errorMessage": LLM request timed out., "seq": 2, "runId": ...,
+            // "state": error, "sessionKey": ...] (whole payload dumped via
+            // String(describing:) because none of the legacy paths matched).
+            else if let errorMsg = payload["errorMessage"] as? String {
                 message = errorMsg
             }
             // Fallback to payload.message if it's a string

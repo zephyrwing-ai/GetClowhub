@@ -37,6 +37,9 @@ enum MembershipLevel: String, Codable {
                 "gemini-2.5-flash-lite", "gemini-3.1-pro-preview",
                 "grok-4.1-fast",
                 "claude-opus-4.6", "claude-sonnet-4.6", "claude-haiku-4.5",
+                // 2026-06 catalog upgrade (additive; mirrors server pro plan)
+                "qwen3.7-plus", "gemini-3.1-flash-lite", "gemini-3.5-flash",
+                "grok-4.3", "minimax-m3",
             ]
         case .max:
             return [
@@ -50,6 +53,9 @@ enum MembershipLevel: String, Codable {
                 "grok-4.1-fast",
                 "claude-opus-4.7", "claude-opus-4.6", "claude-sonnet-4.6", "claude-haiku-4.5",
                 "gpt-5.5",
+                // 2026-06 catalog upgrade (additive; mirrors server max plan)
+                "qwen3.7-plus", "qwen3.7-max", "gemini-3.1-flash-lite", "gemini-3.5-flash",
+                "grok-4.3", "minimax-m3", "claude-opus-4.8", "kimi-k2.7-code", "gpt-5.5-pro",
             ]
         }
     }

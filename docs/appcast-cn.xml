@@ -6,20 +6,20 @@
     <description>OpenClaw Helper 版本更新</description>
     <language>zh-cn</language>
     <item>
-      <title>Version 1.1.59</title>
-      <sparkle:version>67</sparkle:version>
-      <sparkle:shortVersionString>1.1.59</sparkle:shortVersionString>
+      <title>Version 1.1.60</title>
+      <sparkle:version>68</sparkle:version>
+      <sparkle:shortVersionString>1.1.60</sparkle:shortVersionString>
       <description><![CDATA[
-        <h2>OpenClaw Helper 1.1.59</h2>
+        <h2>OpenClaw Helper 1.1.60</h2>
         <ul>
-          <li>版本 1.1.59 更新</li>
+          <li>新增 9 款模型:qwen3.7-plus/max、claude-opus-4.8、gemini-3.1-flash-lite/3.5-flash、grok-4.3、minimax-m3、kimi-k2.7-code、gpt-5.5-pro(Pro/Max 套餐);修复 LLM 超时错误显示为裸 dict 的问题。</li>
         </ul>
       ]]></description>
-      <pubDate>Thu, 04 Jun 2026 15:01:28 +0800</pubDate>
-      <enclosure url="https://fp-getclawhub.oss-cn-hangzhou.aliyuncs.com/v1.1.59/GetClawHub.dmg"
-                 length="277271137"
+      <pubDate>Thu, 18 Jun 2026 21:56:46 +0800</pubDate>
+      <enclosure url="https://fp-getclawhub.oss-cn-hangzhou.aliyuncs.com/v1.1.60/GetClawHub.dmg"
+                 length="277160860"
                  type="application/octet-stream"
-                 sparkle:edSignature="ideR7Ea4dMfhNtXOPJK1DqFWKuO+TUDBDmBZZ8xrV0l6SLkwLYwIHiZmOc2IdsETyumkRw4KDHIcYgCalOQnCg==" />
+                 sparkle:edSignature="1az/HAZqqVcuWVoP/wO/WqvoKearcWEE0iPn6IPGdWt7vvBaLq8lI1wYdnxxbCwS1T9J5FrK67LyKIhFF/V7CA==" />
     </item>
   </channel>
 </rss>
