@@ -10,10 +10,12 @@ enum PluginCatalogService {
 
     static func syncCommand(cacheURL: URL = defaultCacheURL) -> String {
         let cachePath = shellQuote(cacheURL.path)
+        let parentPath = shellQuote(cacheURL.deletingLastPathComponent().path)
         let repo = shellQuote(repositoryURL)
         return """
+        mkdir -p \(parentPath); \
         if [ -d \(cachePath)/.git ]; then \
-        git -C \(cachePath) pull --ff-only; \
+        git -C \(cachePath) fetch origin main && git -C \(cachePath) reset --hard origin/main && git -C \(cachePath) clean -fd; \
         else rm -rf \(cachePath) && git clone --depth 1 \(repo) \(cachePath); fi
         """
     }
@@ -364,9 +366,14 @@ private struct PluginMarketplaceEntry: Decodable {
     let path: String?
     let source: Source?
     let tags: [String]?
+    let recommended: Bool?
     let order: Int?
 
     var catalogSource: PluginCatalogSource {
+        if recommended == true {
+            return .recommend
+        }
+
         if normalizedTags.contains("recommend") {
             return .recommend
         }

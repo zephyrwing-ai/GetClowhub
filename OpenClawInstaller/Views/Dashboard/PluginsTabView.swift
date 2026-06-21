@@ -62,7 +62,6 @@ struct PluginDetailPresentationItem: Identifiable {
 struct PluginsTabView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var viewModel: DashboardViewModel
-    let pluginDetailNamespace: Namespace.ID
     let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void
     @State private var searchText = ""
     @State private var displayMode: PluginDisplayMode = .recommend
@@ -384,8 +383,6 @@ struct PluginsTabView: View {
                     CatalogPluginListRow(
                         item: item,
                         installedPlugin: installedPlugin,
-                        namespace: pluginDetailNamespace,
-                        geometryID: "catalog-\(item.id)",
                         isInstalling: viewModel.installingCatalogPluginName == item.name,
                         onInstall: {
                             Task { await viewModel.installCatalogPlugin(item) }
@@ -415,8 +412,6 @@ struct PluginsTabView: View {
                     InstalledPluginListRow(
                         plugin: plugin,
                         catalogItem: catalogItem,
-                        namespace: pluginDetailNamespace,
-                        geometryID: "installed-\(plugin.pluginId)",
                         onOpen: {
                             onOpenPluginDetail(PluginDetailPresentationItem.fromInstalled(plugin, catalogItem: catalogItem))
                         }
@@ -526,8 +521,6 @@ private struct CatalogPluginListRow: View {
     @State private var isHovered = false
     let item: PluginCatalogItem
     let installedPlugin: PluginInfo?
-    let namespace: Namespace.ID
-    let geometryID: String
     let isInstalling: Bool
     let onInstall: () -> Void
     let onOpen: () -> Void
@@ -590,7 +583,6 @@ private struct CatalogPluginListRow: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(rowBackground)
-                .matchedGeometryEffect(id: "plugin-card-\(geometryID)", in: namespace)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -615,8 +607,6 @@ private struct InstalledPluginListRow: View {
     @State private var isHovered = false
     let plugin: PluginInfo
     let catalogItem: PluginCatalogItem?
-    let namespace: Namespace.ID
-    let geometryID: String
     let onOpen: () -> Void
 
     var body: some View {
@@ -644,7 +634,6 @@ private struct InstalledPluginListRow: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(rowBackground)
-                .matchedGeometryEffect(id: "plugin-card-\(geometryID)", in: namespace)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -1279,8 +1268,6 @@ struct InstallPluginSheet: View {
 }
 
 private struct PluginsTabPreviewWrapper: View {
-    @Namespace private var pluginDetailNamespace
-
     var body: some View {
         PluginsTabView(
             viewModel: DashboardViewModel(
@@ -1299,7 +1286,6 @@ private struct PluginsTabPreviewWrapper: View {
                     permissionManager: PermissionManager()
                 )
             ),
-            pluginDetailNamespace: pluginDetailNamespace,
             onOpenPluginDetail: { _ in }
         )
     }

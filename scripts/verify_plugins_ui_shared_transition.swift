@@ -11,9 +11,20 @@ let dashboardViewURL = root
     .appendingPathComponent("Views")
     .appendingPathComponent("Dashboard")
     .appendingPathComponent("DashboardView.swift")
+let configViewURL = root
+    .appendingPathComponent("OpenClawInstaller")
+    .appendingPathComponent("Views")
+    .appendingPathComponent("Dashboard")
+    .appendingPathComponent("ConfigTabView.swift")
 
 let pluginsView = try String(contentsOf: pluginsViewURL, encoding: .utf8)
 let dashboardView = try String(contentsOf: dashboardViewURL, encoding: .utf8)
+let configView = try String(contentsOf: configViewURL, encoding: .utf8)
+let pluginDetailOverlayView = section(
+    in: dashboardView,
+    from: "private func pluginDetailOverlay(for item: PluginDetailPresentationItem)",
+    to: "private var installedSkillByName"
+)
 
 func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
@@ -23,8 +34,8 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 require(
-    dashboardView.contains("@Namespace private var pluginDetailNamespace"),
-    "DashboardView should own the plugin detail namespace so the overlay is not constrained by the Plugins scroll view."
+    !dashboardView.contains("pluginDetailNamespace"),
+    "DashboardView should not keep a plugin detail namespace; Plugins should match the Skills sheet transition."
 )
 require(
     dashboardView.contains("@State private var selectedPluginDetailItem: PluginDetailPresentationItem?"),
@@ -43,8 +54,12 @@ require(
     "DashboardView should route plugin row clicks into the global plugin detail presenter."
 )
 require(
-    dashboardView.contains("if let selectedPluginDetailItem, activeTab == .plugins"),
+    dashboardView.contains("if let selectedPluginDetailItem, shouldShowPluginDetailOverlay"),
     "DashboardView should render the plugin detail overlay at the app overlay level."
+)
+require(
+    dashboardView.contains("private var shouldShowPluginDetailOverlay: Bool"),
+    "DashboardView should centralize plugin detail overlay visibility."
 )
 require(
     dashboardView.contains("private func pluginDetailOverlay(for item: PluginDetailPresentationItem)"),
@@ -55,36 +70,32 @@ require(
     "DashboardView should host the plugin detail sheet."
 )
 require(
-    dashboardView.contains(".background(.regularMaterial)") || dashboardView.contains(".fill(.regularMaterial)"),
-    "Plugin detail overlay should match the Skills detail material background."
+    pluginDetailOverlayView.contains(".background(.regularMaterial)"),
+    "Plugin detail overlay should match the Skills detail material background modifier."
 )
 require(
-    pluginsView.contains("let pluginDetailNamespace: Namespace.ID"),
-    "PluginsTabView should receive the shared namespace from DashboardView."
+    pluginDetailOverlayView.contains(".transition(.asymmetric("),
+    "Plugin detail overlay should keep the Skills-style opacity and scale transition."
+)
+require(
+    !pluginDetailOverlayView.contains("matchedGeometryEffect"),
+    "Plugin detail overlay should not use matchedGeometryEffect because the Skills sheet does not use a shared element transition."
+)
+require(
+    !pluginsView.contains("matchedGeometryEffect"),
+    "Plugin list rows should not use matchedGeometryEffect; row clicks should open the same style sheet as Skills."
+)
+require(
+    !pluginsView.contains("Namespace.ID"),
+    "PluginsTabView should not accept a Namespace.ID after removing shared element transitions."
+)
+require(
+    !configView.contains("pluginDetailNamespace"),
+    "ConfigTabView should not pass a plugin detail namespace after removing shared element transitions."
 )
 require(
     pluginsView.contains("let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void"),
     "PluginsTabView should emit detail presentation items instead of owning the overlay."
-)
-require(
-    pluginsView.contains(".matchedGeometryEffect(id: \"plugin-card-\\(geometryID)\""),
-    "Plugin rows and the detail sheet should share a card geometry id."
-)
-require(
-    dashboardView.contains(".matchedGeometryEffect(\n                            id: \"plugin-card-\\(item.id)\""),
-    "The global plugin detail overlay should provide the card geometry destination."
-)
-require(
-    !pluginsView.contains("plugin-icon-\\(geometryID)"),
-    "Plugin icon should not use matchedGeometryEffect because it leaves a visible ghost inside the detail sheet."
-)
-require(
-    !pluginsView.contains("plugin-title-\\(geometryID)"),
-    "Plugin title should not use matchedGeometryEffect because the Skills sheet keeps title layout local to the sheet."
-)
-require(
-    pluginsView.contains("namespace: pluginDetailNamespace"),
-    "Plugin rows should receive the shared namespace from DashboardView."
 )
 require(
     !dashboardView.contains("Color(NSColor.windowBackgroundColor).opacity"),
@@ -103,4 +114,12 @@ require(
     "PluginsTabView should not carry overlay backdrop styling."
 )
 
-print("Plugins shared transition verification passed")
+print("Plugins sheet transition verification passed")
+
+func section(in text: String, from startMarker: String, to endMarker: String) -> String {
+    guard let startRange = text.range(of: startMarker) else { return "" }
+    guard let endRange = text[startRange.upperBound...].range(of: endMarker) else {
+        return String(text[startRange.lowerBound...])
+    }
+    return String(text[startRange.lowerBound..<endRange.lowerBound])
+}

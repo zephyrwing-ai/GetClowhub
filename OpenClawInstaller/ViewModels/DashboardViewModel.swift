@@ -1169,6 +1169,7 @@ class DashboardViewModel: ObservableObject {
     @Published var skillCatalog: [SkillCatalogItem] = []
     @Published var isLoadingSkillCatalog = false
     @Published var installingCatalogSkillName: String?
+    @Published var isInstallingManualSkill = false
     @Published var skillCatalogError: String?
 
     private var hasLoadedSkillCatalog = false
@@ -1298,6 +1299,36 @@ class DashboardViewModel: ObservableObject {
         } else {
             let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines)
             showErrorMessage("Failed to install \(item.name): \(trimmed?.isEmpty == false ? trimmed! : "unknown error")")
+        }
+    }
+
+    @discardableResult
+    func installManualSkill(repository: String) async -> Bool {
+        guard !isInstallingManualSkill else { return false }
+
+        let command: String
+        do {
+            command = try SkillCatalogService.manualInstallCommand(for: repository)
+        } catch {
+            showErrorMessage(error.localizedDescription)
+            return false
+        }
+
+        isInstallingManualSkill = true
+        let output = await openclawService.runCommand(
+            "(\(command) 2>&1 && echo __OPENCLAW_MANUAL_SKILL_INSTALL_OK__) | sed 's/\\x1b\\[[0-9;]*m//g'",
+            timeout: 180
+        )
+        isInstallingManualSkill = false
+
+        if output?.contains("__OPENCLAW_MANUAL_SKILL_INSTALL_OK__") == true {
+            await loadSkills()
+            showSuccessMessage("Installed skill from repository")
+            return true
+        } else {
+            let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines)
+            showErrorMessage("Failed to install skill: \(trimmed?.isEmpty == false ? trimmed! : "unknown error")")
+            return false
         }
     }
 

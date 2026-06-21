@@ -25,6 +25,11 @@ enum SkillCatalogService {
         return "npx --yes --prefer-offline skills add \(source) --skill \(shellQuote(item.name)) -g -y"
     }
 
+    static func manualInstallCommand(for repository: String) throws -> String {
+        let repositoryURL = try normalizedRepositoryURL(repository)
+        return "npx --yes --prefer-offline skills add \(shellQuote(repositoryURL)) -g -y"
+    }
+
     static func parseCatalog(rootURL: URL) throws -> [SkillCatalogItem] {
         var items: [SkillCatalogItem] = []
         let marketplaceEntriesByID = loadMarketplace(rootURL: rootURL).entriesByID
@@ -137,6 +142,24 @@ enum SkillCatalogService {
             guard seen.insert(key).inserted else { return nil }
             return trimmed
         }
+    }
+
+    private static func normalizedRepositoryURL(_ repository: String) throws -> String {
+        let trimmed = repository.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw SkillCatalogServiceError.emptyRepository
+        }
+
+        if trimmed.contains("://") || trimmed.hasPrefix("git@") {
+            return trimmed
+        }
+
+        let parts = trimmed.split(separator: "/", omittingEmptySubsequences: true)
+        if parts.count == 2 {
+            return "https://github.com/\(parts[0])/\(parts[1])"
+        }
+
+        return trimmed
     }
 
     private static func catalogSkillDirectories(rootURL: URL) -> [URL] {
@@ -296,6 +319,17 @@ enum SkillCatalogService {
 
     private static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private enum SkillCatalogServiceError: LocalizedError {
+        case emptyRepository
+
+        var errorDescription: String? {
+            switch self {
+            case .emptyRepository:
+                return "Repository is required."
+            }
+        }
     }
 }
 

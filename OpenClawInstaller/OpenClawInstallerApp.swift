@@ -79,6 +79,7 @@ struct OpenClawInstallerApp: App {
                 .onAppear {
                     appDelegate.openclawService = services.openclawService
                     appDelegate.sparkleUpdater = sparkleUpdater
+                    Task { await sparkleUpdater.checkLatestVersionOnLaunch() }
                     #if REQUIRE_LOGIN
                     appDelegate.authManager = authManager
                     appDelegate.membershipManager = membershipManager

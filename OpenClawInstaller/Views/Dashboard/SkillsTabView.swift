@@ -58,6 +58,7 @@ struct SkillsTabView: View {
     @State private var searchText = ""
     @State private var displayMode: SkillDisplayMode = .recommend
     @State private var skillPointerLocation: CGPoint?
+    @State private var showManualInstallSheet = false
 
     private enum SkillDisplayMode: String, CaseIterable {
         case recommend = "Recommend"
@@ -87,6 +88,10 @@ struct SkillsTabView: View {
         filteredCatalogItems.filter(\.isRecommended)
     }
 
+    private var filteredCustomInstalledSkills: [SkillInfo] {
+        filteredInstalledSkills.filter { catalogItemsByName[$0.name] == nil }
+    }
+
     private var filteredInstalledSkills: [SkillInfo] {
         viewModel.skills.filter { skill in
             let catalogItem = catalogItemsByName[skill.name]
@@ -112,18 +117,25 @@ struct SkillsTabView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                searchAndActions
-                modePicker
-                content
+        ZStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    searchAndActions
+                    modePicker
+                    content
+                }
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.top, 34)
+                .padding(.bottom, 44)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: 760, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.top, 34)
-            .padding(.bottom, 44)
-            .frame(maxWidth: .infinity)
+
+            if showManualInstallSheet {
+                manualInstallOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
         }
         .coordinateSpace(name: SkillDockMagnification.coordinateSpace)
         .onContinuousHover { phase in
@@ -185,6 +197,19 @@ struct SkillsTabView: View {
             .frame(height: 36)
             .background(Color(NSColor.controlBackgroundColor))
             .clipShape(Capsule())
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showManualInstallSheet = true
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .help("Install skill from GitHub repository")
 
             Button {
                 Task { await viewModel.loadSkillMarket(forceSync: true) }
@@ -261,17 +286,108 @@ struct SkillsTabView: View {
                 title: "Could not load skill catalog",
                 detail: error
             )
-        } else if filteredCatalogItems.isEmpty {
+        } else if filteredCatalogItems.isEmpty && filteredCustomInstalledSkills.isEmpty {
             EmptySkillStateView(
                 systemImage: "bolt.slash",
                 title: viewModel.skillCatalog.isEmpty ? "No skills found" : "No matching skills",
                 detail: nil
             )
         } else {
-            catalogSkillSection(
-                title: "All",
-                items: filteredCatalogItems
+            allSkillSection(
+                catalogItems: filteredCatalogItems,
+                customSkills: filteredCustomInstalledSkills
             )
+        }
+    }
+
+    private var manualInstallOverlay: some View {
+        ZStack {
+            Color.black
+                .opacity(0.001)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !viewModel.isInstallingManualSkill else { return }
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showManualInstallSheet = false
+                    }
+                }
+
+            ManualSkillInstallSheet(
+                isInstalling: viewModel.isInstallingManualSkill,
+                onCancel: {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showManualInstallSheet = false
+                    }
+                },
+                onInstall: { repository in
+                    Task {
+                        let didInstall = await viewModel.installManualSkill(repository: repository)
+                        if didInstall {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                showManualInstallSheet = false
+                            }
+                        }
+                    }
+                }
+            )
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.42 : 0.16), radius: 24, x: 0, y: 14)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.08), lineWidth: 1)
+            )
+            .padding(28)
+        }
+    }
+
+    private func allSkillSection(catalogItems: [SkillCatalogItem], customSkills: [SkillInfo]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SkillSectionHeader(title: "All", count: catalogItems.count + customSkills.count)
+
+            VStack(spacing: 0) {
+                ForEach(Array(catalogItems.enumerated()), id: \.element.id) { index, item in
+                    CatalogSkillListRow(
+                        item: item,
+                        installedSkill: installedSkillsByName[item.name],
+                        isInstalling: viewModel.installingCatalogSkillName == item.name,
+                        pointerLocation: skillPointerLocation,
+                        onInstall: {
+                            Task { await viewModel.installCatalogSkill(item) }
+                        },
+                        onOpen: {
+                            onOpenSkillDetail(SkillDetailPresentationItem.fromCatalog(item))
+                        }
+                    )
+
+                    if index < catalogItems.count - 1 || !customSkills.isEmpty {
+                        Divider()
+                            .padding(.leading, 56)
+                    }
+                }
+
+                ForEach(Array(customSkills.enumerated()), id: \.element.name) { index, skill in
+                    InstalledSkillListRow(
+                        skill: skill,
+                        catalogItem: nil,
+                        pointerLocation: skillPointerLocation,
+                        onOpen: {
+                            onOpenSkillDetail(
+                                SkillDetailPresentationItem.fromInstalled(
+                                    skill,
+                                    catalogItem: nil
+                                )
+                            )
+                        }
+                    )
+
+                    if index < customSkills.count - 1 {
+                        Divider()
+                            .padding(.leading, 56)
+                    }
+                }
+            }
         }
     }
 
@@ -351,6 +467,77 @@ struct SkillsTabView: View {
             .joined(separator: " ")
             .lowercased()
         return haystack.contains(query)
+    }
+}
+
+private struct ManualSkillInstallSheet: View {
+    @State private var repository = ""
+
+    let isInstalling: Bool
+    let onCancel: () -> Void
+    let onInstall: (String) -> Void
+
+    private var canInstall: Bool {
+        !repository.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isInstalling
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Install Skill")
+                    .font(.system(size: 21, weight: .semibold))
+
+                Text("Install a GitHub skill repository globally.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Repository")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                TextField("owner/repo", text: $repository)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15))
+                    .padding(.horizontal, 13)
+                    .frame(height: 40)
+                    .background(Color(NSColor.textBackgroundColor).opacity(0.58))
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                    )
+                    .disabled(isInstalling)
+                    .onSubmit {
+                        if canInstall {
+                            onInstall(repository)
+                        }
+                    }
+            }
+
+            HStack(spacing: 10) {
+                Spacer()
+
+                Button(action: onCancel) {
+                    Text("Cancel")
+                        .frame(width: 92, height: 30)
+                }
+                .buttonStyle(SkillPillButtonStyle(tone: .neutral, isDisabled: isInstalling))
+                .disabled(isInstalling)
+
+                Button {
+                    onInstall(repository)
+                } label: {
+                    Text(isInstalling ? "Installing..." : "Install")
+                        .frame(width: 104, height: 30)
+                }
+                .buttonStyle(SkillPillButtonStyle(tone: .install, isDisabled: !canInstall))
+                .disabled(!canInstall)
+            }
+        }
+        .padding(26)
+        .frame(width: 520)
     }
 }
 

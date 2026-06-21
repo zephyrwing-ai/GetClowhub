@@ -36,6 +36,12 @@ struct VerifyPluginCatalogService {
               },
               "tags": ["recommend"],
               "category": "Developer Tools"
+            },
+            {
+              "name": "gamma",
+              "path": "./plugins/gamma",
+              "recommended": true,
+              "category": "Productivity"
             }
           ]
         }
@@ -94,16 +100,44 @@ struct VerifyPluginCatalogService {
         try write("plugins/beta/openclaw.plugin.json", "{ \"id\": \"beta\" }\n")
         try write("plugins/beta/index.ts", "export default function() {}\n")
 
+        try write("plugins/gamma/.codex-plugin/plugin.json", """
+        {
+          "name": "gamma",
+          "version": "1.0.0",
+          "description": "Gamma plugin",
+          "author": { "name": "GetClowHub" },
+          "interface": {
+            "displayName": "Gamma Plugin",
+            "shortDescription": "Gamma short",
+            "longDescription": "Gamma long",
+            "category": "Productivity"
+          }
+        }
+        """)
+        try write("plugins/gamma/package.json", """
+        {
+          "name": "@getclowhub/gamma",
+          "version": "1.0.0",
+          "openclaw": { "extensions": ["./index.ts"] }
+        }
+        """)
+        try write("plugins/gamma/openclaw.plugin.json", "{ \"id\": \"gamma\" }\n")
+        try write("plugins/gamma/index.ts", "export default function() {}\n")
+
         let items = try PluginCatalogService.parseCatalog(rootURL: rootURL)
-        expect(items.count == 2, "expected two plugin catalog items")
+        expect(items.count == 3, "expected three plugin catalog items")
 
         let alpha = items.first { $0.name == "alpha" }
         let beta = items.first { $0.name == "beta" }
+        let gamma = items.first { $0.name == "gamma" }
         expect(alpha != nil, "expected alpha plugin")
         expect(beta != nil, "expected beta plugin")
+        expect(gamma != nil, "expected gamma plugin")
         expect(alpha?.source == .all, "alpha should come from all-tagged catalog entries")
         expect(beta?.source == .recommend, "beta should come from recommend-tagged catalog entries")
         expect(beta?.isRecommended == true, "beta should be recommended")
+        expect(gamma?.source == .recommend, "gamma should come from recommended marketplace entries")
+        expect(gamma?.isRecommended == true, "gamma should be recommended")
         expect(alpha?.displayName == "Alpha Plugin", "alpha display name should use manifest interface")
         expect(alpha?.description == "Alpha short", "alpha description should use short description")
         expect(alpha?.longDescription == "Alpha long", "alpha long description should parse")
@@ -122,10 +156,11 @@ struct VerifyPluginCatalogService {
 
         let syncCommand = PluginCatalogService.syncCommand(cacheURL: rootURL)
         expect(syncCommand.contains("git clone --depth 1"), "sync command should clone the remote catalog when the cache is missing")
-        expect(syncCommand.contains("pull --ff-only"), "sync command should refresh existing cache like the skills catalog")
+        expect(syncCommand.contains("fetch origin main"), "sync command should fetch origin/main for existing plugin caches")
+        expect(syncCommand.contains("reset --hard origin/main"), "sync command should let the remote plugin catalog overwrite the local cache")
+        expect(syncCommand.contains("clean -fd"), "sync command should remove stale local cache files that no longer exist upstream")
         expect(!syncCommand.contains("rsync"), "sync command should not mirror plugin catalog into the app source tree")
-        expect(!syncCommand.contains("reset --hard"), "sync command should not hard reset the plugin cache")
-        expect(!syncCommand.contains("clean -fd"), "sync command should not clean project-local plugin files")
+        expect(syncCommand.contains("GetClawHubPlugins"), "sync command should stay bound to the user's plugin origin repository")
 
         print("Plugin catalog service verification passed")
     }

@@ -1,45 +1,251 @@
 import SwiftUI
 
+enum SettingsPageSection: String, CaseIterable, Identifiable {
+    case profile
+    case preferences
+    case persona
+    case status
+    case gateway
+    case apiKey
+    case provider
+    case budget
+    case skills
+    case models
+    case channels
+    case plugins
+    case cron
+    case logs
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .profile: return "Profile"
+        case .preferences: return "Preferences"
+        case .persona: return "Persona"
+        case .status: return "Status"
+        case .gateway: return "Gateway"
+        case .apiKey: return "API Key"
+        case .provider: return "Provider"
+        case .budget: return "Budget"
+        case .skills: return "Skills"
+        case .models: return "Models"
+        case .channels: return "Channels"
+        case .plugins: return "Plugins"
+        case .cron: return "Cron"
+        case .logs: return "Logs"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .profile: return "person.crop.circle"
+        case .preferences: return "slider.horizontal.3"
+        case .persona: return "person.text.rectangle"
+        case .status: return "chart.bar.fill"
+        case .gateway: return "network"
+        case .apiKey: return "key"
+        case .provider: return "cpu"
+        case .budget: return "dollarsign.gauge.chart.lefthalf.righthalf"
+        case .skills: return "bolt.fill"
+        case .models: return "cube.fill"
+        case .channels: return "bubble.left.and.bubble.right.fill"
+        case .plugins: return "puzzlepiece.fill"
+        case .cron: return "clock.badge"
+        case .logs: return "doc.text.magnifyingglass"
+        }
+    }
+}
+
 struct ConfigTabView: View {
     @ObservedObject var viewModel: DashboardViewModel
+    @Binding var selectedSection: SettingsPageSection
     @EnvironmentObject var languageManager: LanguageManager
     @AppStorage("appAppearance") private var appAppearance: String = "system"
+    let onOpenSkillDetail: (SkillDetailPresentationItem) -> Void
+    let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void
     #if REQUIRE_LOGIN
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var membershipManager: MembershipManager
     #endif
 
-    private let settingsColumns = [
-        GridItem(.adaptive(minimum: 300, maximum: 460), spacing: 16)
-    ]
+    init(
+        viewModel: DashboardViewModel,
+        selectedSection: Binding<SettingsPageSection> = .constant(.profile),
+        onOpenSkillDetail: @escaping (SkillDetailPresentationItem) -> Void = { _ in },
+        onOpenPluginDetail: @escaping (PluginDetailPresentationItem) -> Void = { _ in }
+    ) {
+        self.viewModel = viewModel
+        self._selectedSection = selectedSection
+        self.onOpenSkillDetail = onOpenSkillDetail
+        self.onOpenPluginDetail = onOpenPluginDetail
+    }
 
     var body: some View {
-        SmoothScrollView {
-            VStack(spacing: 24) {
-                LazyVGrid(columns: settingsColumns, alignment: .leading, spacing: 16) {
-                    #if REQUIRE_LOGIN
-                    ProfileSettingsCard()
-                        .environmentObject(authManager)
-                        .environmentObject(membershipManager)
-                    #endif
-                    PreferencesSettingsCard(appAppearance: $appAppearance)
-                        .environmentObject(languageManager)
-                    PersonaSettingsCard(viewModel: viewModel)
-                }
+        HStack(spacing: 0) {
+            SettingsSectionSidebar(selectedSection: $selectedSection)
+                .frame(width: 210)
 
-                GatewaySettingsGroup(viewModel: viewModel)
+            Divider()
 
-                // Save Buttons
-                SaveButtonsSection(viewModel: viewModel)
-
-                // Advanced — gray border
-                OpenConfigFileSection(viewModel: viewModel)
-            }
-            .padding(24)
+            selectedSettingsContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             viewModel.syncEditedFieldsFromSettings()
         }
+    }
+
+    @ViewBuilder
+    private var selectedSettingsContent: some View {
+        switch selectedSection {
+        case .profile:
+            settingsScroll {
+                #if REQUIRE_LOGIN
+                ProfileSettingsCard()
+                    .environmentObject(authManager)
+                    .environmentObject(membershipManager)
+                #else
+                SettingsCard(title: "Profile", systemImage: "person.crop.circle") {
+                    Text("Profile is available in signed builds.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                #endif
+            }
+        case .preferences:
+            settingsScroll {
+                PreferencesSettingsCard(appAppearance: $appAppearance)
+                    .environmentObject(languageManager)
+            }
+        case .persona:
+            settingsScroll {
+                PersonaSettingsCard(viewModel: viewModel)
+            }
+        case .status:
+            StatusTabView(viewModel: viewModel)
+        case .gateway:
+            settingsScroll {
+                GatewayConfigSection(viewModel: viewModel)
+                SaveButtonsSection(viewModel: viewModel)
+                OpenConfigFileSection(viewModel: viewModel)
+            }
+        case .apiKey:
+            settingsScroll {
+                #if REQUIRE_LOGIN
+                GetClawHubServiceSection(viewModel: viewModel)
+                    .environmentObject(authManager)
+                    .environmentObject(membershipManager)
+                #else
+                Text("API key management is available in signed builds.")
+                    .foregroundColor(.secondary)
+                #endif
+                SaveButtonsSection(viewModel: viewModel)
+            }
+        case .provider:
+            settingsScroll {
+                #if REQUIRE_LOGIN
+                HStack(alignment: .top, spacing: 16) {
+                    GetClawHubServiceSection(viewModel: viewModel)
+                        .environmentObject(authManager)
+                        .environmentObject(membershipManager)
+                    ModelConfigSection(viewModel: viewModel)
+                }
+                #else
+                ModelConfigSection(viewModel: viewModel)
+                #endif
+                SaveButtonsSection(viewModel: viewModel)
+            }
+        case .budget:
+            BudgetTabView(viewModel: viewModel)
+        case .skills:
+            SkillsTabView(viewModel: viewModel, onOpenSkillDetail: onOpenSkillDetail)
+        case .models:
+            ModelsTabView(viewModel: viewModel)
+        case .channels:
+            ChannelsTabView(viewModel: viewModel)
+        case .plugins:
+            PluginsTabView(
+                viewModel: viewModel,
+                onOpenPluginDetail: onOpenPluginDetail
+            )
+        case .cron:
+            CronTabView(viewModel: viewModel)
+        case .logs:
+            LogsTabView(viewModel: viewModel)
+        }
+    }
+
+    private func settingsScroll<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
+        SmoothScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(selectedSection.title)
+                    .font(.system(size: 24, weight: .semibold))
+
+                content()
+            }
+            .frame(maxWidth: 880, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+private struct SettingsSectionSidebar: View {
+    @Binding var selectedSection: SettingsPageSection
+
+    private let groups: [(String, [SettingsPageSection])] = [
+        ("Account", [.profile, .preferences, .persona]),
+        ("System", [.status]),
+        ("Configuration", [.gateway, .apiKey, .provider, .budget]),
+        ("Manage", [.skills, .models, .channels, .plugins, .cron, .logs])
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Settings")
+                .font(.system(size: 18, weight: .semibold))
+                .padding(.horizontal, 14)
+                .padding(.top, 18)
+
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(groups, id: \.0) { group in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(group.0)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 14)
+
+                        ForEach(group.1) { section in
+                            Button {
+                                selectedSection = section
+                            } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: section.systemImage)
+                                        .frame(width: 16)
+                                    Text(section.title)
+                                    Spacer()
+                                }
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.primary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(selectedSection == section ? Color.primary.opacity(0.10) : Color.clear)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+
+            Spacer()
+        }
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.42))
     }
 }
 
@@ -836,24 +1042,30 @@ struct UnsavedChangesWarning: View {
     }
 }
 
-#Preview {
-    ConfigTabView(
-        viewModel: DashboardViewModel(
-            openclawService: OpenClawService(
+private struct ConfigTabPreviewWrapper: View {
+    var body: some View {
+        ConfigTabView(
+            viewModel: DashboardViewModel(
+                openclawService: OpenClawService(
+                    commandExecutor: CommandExecutor(
+                        permissionManager: PermissionManager()
+                    )
+                ),
+                settings: AppSettingsManager(),
+                systemEnvironment: SystemEnvironment(
+                    commandExecutor: CommandExecutor(
+                        permissionManager: PermissionManager()
+                    )
+                ),
                 commandExecutor: CommandExecutor(
                     permissionManager: PermissionManager()
                 )
-            ),
-            settings: AppSettingsManager(),
-            systemEnvironment: SystemEnvironment(
-                commandExecutor: CommandExecutor(
-                    permissionManager: PermissionManager()
-                )
-            ),
-            commandExecutor: CommandExecutor(
-                permissionManager: PermissionManager()
             )
         )
-    )
-    .frame(width: 700, height: 600)
+    }
+}
+
+#Preview {
+    ConfigTabPreviewWrapper()
+        .frame(width: 700, height: 600)
 }

@@ -6,6 +6,7 @@ import Sparkle
 final class SparkleUpdater: ObservableObject {
     private let feedDelegate = LocaleAwareFeedDelegate()
     private let updaterController: SPUStandardUpdaterController
+    private var hasCheckedLatestVersionThisLaunch = false
 
     @Published var isCheckingVersion = false
     @Published var updateAvailable = false
@@ -41,8 +42,14 @@ final class SparkleUpdater: ObservableObject {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
 
+    func checkLatestVersionOnLaunch() async {
+        guard !hasCheckedLatestVersionThisLaunch else { return }
+        hasCheckedLatestVersionThisLaunch = true
+        await checkLatestVersion(showSuccessPulse: false)
+    }
+
     /// Fetch appcast.xml and compare versions.
-    func checkLatestVersion() async {
+    func checkLatestVersion(showSuccessPulse: Bool = true) async {
         guard !isCheckingVersion else { return }
         isCheckingVersion = true
         updateAvailable = false
@@ -62,7 +69,7 @@ final class SparkleUpdater: ObservableObject {
                 latestVersion = remoteVersion
                 if compareVersions(remoteVersion, isNewerThan: currentVersion) {
                     updateAvailable = true
-                } else {
+                } else if showSuccessPulse {
                     checkSucceeded = true
                     Task {
                         try? await Task.sleep(nanoseconds: 2_000_000_000)

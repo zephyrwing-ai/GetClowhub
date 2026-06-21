@@ -15229,6 +15229,9 @@
         }
       }
     },
+    "Configure" : {
+
+    },
     "Configured" : {
       "localizations" : {
         "ar" : {
@@ -21484,6 +21487,9 @@
           }
         }
       }
+    },
+    "Edit budget rules" : {
+
     },
     "Edit identity, memory, and persona files from one place." : {
 
@@ -28637,6 +28643,9 @@
         }
       }
     },
+    "Install a GitHub skill repository globally." : {
+
+    },
     "Install curated OpenClaw plugins from the GetClowHub catalog" : {
 
     },
@@ -28928,7 +28937,6 @@
       }
     },
     "Install Skill" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29069,6 +29077,9 @@
           }
         }
       }
+    },
+    "Install skill from GitHub repository" : {
+
     },
     "Installation Complete!" : {
       "localizations" : {
@@ -31270,6 +31281,7 @@
 
     },
     "Latest" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -32922,6 +32934,9 @@
         }
       }
     },
+    "Log in" : {
+
+    },
     "Log In" : {
       "localizations" : {
         "ar" : {
@@ -33077,6 +33092,9 @@
       }
     },
     "Log in to use GetClawHub AI service" : {
+
+    },
+    "Log out" : {
 
     },
     "Log Out" : {
@@ -36981,6 +36999,9 @@
     "No API Key yet" : {
 
     },
+    "No billing data yet" : {
+
+    },
     "No budget rules configured." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -37910,6 +37931,9 @@
         }
       }
     },
+    "No local budget rule" : {
+
+    },
     "No Logs Available" : {
       "localizations" : {
         "ar" : {
@@ -38648,6 +38672,9 @@
           }
         }
       }
+    },
+    "No models loaded" : {
+
     },
     "No outputs yet" : {
 
@@ -40982,6 +41009,9 @@
           }
         }
       }
+    },
+    "Not signed in" : {
+
     },
     "Notify on Over" : {
       "extractionState" : "manual",
@@ -43793,6 +43823,9 @@
           }
         }
       }
+    },
+    "owner/repo" : {
+
     },
     "Package Name" : {
       "localizations" : {
@@ -49184,6 +49217,9 @@
         }
       }
     },
+    "Repository" : {
+
+    },
     "Requirements" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -53500,6 +53536,9 @@
     "Show Outputs" : {
 
     },
+    "Signed in" : {
+
+    },
     "Skills" : {
       "localizations" : {
         "ar" : {
@@ -56119,6 +56158,7 @@
       }
     },
     "Switch to Dark Mode" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -56261,6 +56301,7 @@
       }
     },
     "Switch to Light Mode" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {

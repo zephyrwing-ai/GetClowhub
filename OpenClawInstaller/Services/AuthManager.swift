@@ -49,6 +49,10 @@ class AuthManager: ObservableObject {
         readKeychain(key: "user_id")
     }
 
+    var userEmail: String? {
+        readKeychain(key: "user_email")
+    }
+
     var isLoggedIn: Bool {
         if case .loggedIn = state { return true }
         return false
@@ -170,6 +174,7 @@ class AuthManager: ObservableObject {
         deleteKeychain(key: "refresh_token")
         deleteKeychain(key: "token_expires_at")
         deleteKeychain(key: "user_nickname")
+        deleteKeychain(key: "user_email")
         deleteKeychain(key: "user_id")
         state = .notLoggedIn
         logoutSubject.send()
@@ -248,6 +253,9 @@ class AuthManager: ObservableObject {
                         nickname = name
                         if let uid = user["user_id"] as? String {
                             saveKeychain(key: "user_id", value: uid)
+                        }
+                        if let email = user["email"] as? String, !email.isEmpty {
+                            saveKeychain(key: "user_email", value: email)
                         }
                     }
                     saveKeychain(key: "user_nickname", value: nickname)

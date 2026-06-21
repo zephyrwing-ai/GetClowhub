@@ -318,21 +318,29 @@ require(
     "Skill install controls should not use the system prominent blue button style."
 )
 require(
-    !skillsView.contains("showManualInstallSheet") &&
-        !skillsView.contains("manualInstallOverlay") &&
-        !skillsView.contains("ManualSkillInstallSheet") &&
-        !skillsView.contains("Install skill from GitHub repository"),
-    "Skills UI should not expose manual GitHub repository skill installation."
+    skillsView.contains("@State private var showManualInstallSheet = false") &&
+        skillsView.contains("manualInstallOverlay") &&
+        skillsView.contains("ManualSkillInstallSheet") &&
+        skillsView.contains("Install skill from GitHub repository"),
+    "Skills UI should expose manual GitHub repository skill installation from the plus button."
 )
 require(
-    !viewModel.contains("isInstallingManualSkill") &&
-        !viewModel.contains("installManualSkill"),
-    "DashboardViewModel should not keep manual repository skill installation state or actions."
+    viewModel.contains("@Published var isInstallingManualSkill = false") &&
+        viewModel.contains("func installManualSkill") &&
+        viewModel.contains("SkillCatalogService.manualInstallCommand"),
+    "DashboardViewModel should keep manual repository skill installation state and actions."
 )
 require(
-    !skillCatalogService.contains("manualInstallCommand") &&
-        !skillCatalogService.contains("normalizedRepositoryURL"),
-    "SkillCatalogService should not build manual repository install commands."
+    skillCatalogService.contains("manualInstallCommand") &&
+        skillCatalogService.contains("normalizedRepositoryURL"),
+    "SkillCatalogService should build manual repository install commands."
+)
+require(
+    skillsView.contains("private var filteredCustomInstalledSkills: [SkillInfo]") &&
+        skillsView.contains("catalogItemsByName[$0.name] == nil") &&
+        skillsView.contains("allSkillsContent") &&
+        skillsView.contains("filteredCustomInstalledSkills"),
+    "All skills should include custom installed skills that are missing from the catalog."
 )
 require(
     dashboardView.contains("onInstall: {") &&

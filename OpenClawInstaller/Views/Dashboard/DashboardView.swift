@@ -55,6 +55,7 @@ struct DashboardView: View {
     @State private var workspaceSearchText = ""
     @State private var selectedSkillDetailItem: SkillDetailPresentationItem?
     @State private var selectedPluginDetailItem: PluginDetailPresentationItem?
+    @State private var selectedSettingsSection: SettingsPageSection = .profile
     @State private var skillPendingRemoval: SkillInfo?
     @State private var requestedUserMessageJumpId: UUID?
     @State private var sessionTitleFrame: CGRect = .zero
@@ -62,7 +63,6 @@ struct DashboardView: View {
     @State private var isSessionTitleFlyoutHovering = false
     @State private var isSessionTitleFlyoutPresented = false
     @State private var sessionTitleFlyoutCloseTask: DispatchWorkItem?
-    @Namespace private var pluginDetailNamespace
     @FocusState private var isGlobalSessionSearchFocused: Bool
 
     private let workspaceSidebarMinWidth: CGFloat = 240
@@ -84,15 +84,16 @@ struct DashboardView: View {
                 createAgentVM: createAgentVM,
                 expandedAgentIds: $expandedAgentIds,
                 onOpenGlobalSessionSearch: openGlobalSessionSearch,
-                onRequestCreateAgent: presentCreateAgentOverlay
+                onRequestCreateAgent: presentCreateAgentOverlay,
+                onOpenSettingsSection: openSettingsSection
             )
         } content: {
             DetailContentView(
                 viewModel: viewModel,
                 workspaceSidebarController: workspaceSidebarController,
                 requestedUserMessageJumpId: $requestedUserMessageJumpId,
+                selectedSettingsSection: $selectedSettingsSection,
                 onOpenSkillDetail: presentSkillDetail,
-                pluginDetailNamespace: pluginDetailNamespace,
                 onOpenPluginDetail: presentPluginDetail
             )
         } detail: {
@@ -154,12 +155,12 @@ struct DashboardView: View {
             }
         }
         .overlay {
-            if let selectedSkillDetailItem, activeTab == .skills {
+            if let selectedSkillDetailItem, shouldShowSkillDetailOverlay {
                 skillDetailOverlay(for: selectedSkillDetailItem)
             }
         }
         .overlay {
-            if let selectedPluginDetailItem, activeTab == .plugins {
+            if let selectedPluginDetailItem, shouldShowPluginDetailOverlay {
                 pluginDetailOverlay(for: selectedPluginDetailItem)
             }
         }
@@ -205,6 +206,14 @@ struct DashboardView: View {
                 dismissPluginCatalogDetail()
             }
         }
+        .onChange(of: selectedSettingsSection) { section in
+            if section != .skills {
+                dismissSkillCatalogDetail()
+            }
+            if section != .plugins {
+                dismissPluginCatalogDetail()
+            }
+        }
         .onChange(of: currentSessionMetadata?.id) { _ in
             closeSessionTitleFlyout()
         }
@@ -221,6 +230,14 @@ struct DashboardView: View {
 
     private var isChatTabActive: Bool {
         activeTab == .chat
+    }
+
+    private var shouldShowSkillDetailOverlay: Bool {
+        activeTab == .skills || (activeTab == .config && selectedSettingsSection == .skills)
+    }
+
+    private var shouldShowPluginDetailOverlay: Bool {
+        activeTab == .plugins || (activeTab == .config && selectedSettingsSection == .plugins)
     }
 
     private var currentSessionMetadata: ChatSessionMetadata? {
@@ -571,6 +588,11 @@ struct DashboardView: View {
         }
     }
 
+    private func openSettingsSection(_ section: SettingsPageSection) {
+        selectedSettingsSection = section
+        viewModel.selectedTab = .config
+    }
+
     private func skillDetailOverlay(for item: SkillDetailPresentationItem) -> some View {
         let installedSkill = installedSkillByName[item.name]
 
@@ -678,15 +700,7 @@ struct DashboardView: View {
                     },
                     onClose: dismissPluginCatalogDetail
                 )
-                .background {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.regularMaterial)
-                        .matchedGeometryEffect(
-                            id: "plugin-card-\(item.id)",
-                            in: pluginDetailNamespace,
-                            isSource: false
-                        )
-                }
+                .background(.regularMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .shadow(color: Color.black.opacity(isDark ? 0.45 : 0.18), radius: 28, x: 0, y: 18)
                 .overlay(
@@ -1099,6 +1113,7 @@ struct SidebarView: View {
     @ObservedObject var createAgentVM: SubAgentsViewModel
     let onOpenGlobalSessionSearch: () -> Void
     let onRequestCreateAgent: () -> Void
+    let onOpenSettingsSection: (SettingsPageSection) -> Void
     @EnvironmentObject var sparkleUpdater: SparkleUpdater
     @EnvironmentObject var languageManager: LanguageManager
     #if REQUIRE_LOGIN
@@ -1131,6 +1146,7 @@ struct SidebarView: View {
     @State private var hoveredSidebarAction: SidebarChromeAction?
     @State private var areAgentsCollapsed = false
     @State private var isAgentSectionHeaderHovering = false
+    @State private var isSettingsShortcutMenuPresented = false
 
     init(
         selectedTab: Binding<DashboardViewModel.DashboardTab>,
@@ -1138,7 +1154,8 @@ struct SidebarView: View {
         createAgentVM: SubAgentsViewModel,
         expandedAgentIds: Binding<Set<String>>,
         onOpenGlobalSessionSearch: @escaping () -> Void,
-        onRequestCreateAgent: @escaping () -> Void
+        onRequestCreateAgent: @escaping () -> Void,
+        onOpenSettingsSection: @escaping (SettingsPageSection) -> Void
     ) {
         self._selectedTab = selectedTab
         self._expandedAgentIds = expandedAgentIds
@@ -1146,6 +1163,7 @@ struct SidebarView: View {
         self.createAgentVM = createAgentVM
         self.onOpenGlobalSessionSearch = onOpenGlobalSessionSearch
         self.onRequestCreateAgent = onRequestCreateAgent
+        self.onOpenSettingsSection = onOpenSettingsSection
     }
 
     private var isDark: Bool {
@@ -1218,9 +1236,33 @@ struct SidebarView: View {
     /// Top of the sidebar — text-only app label. NavigationSplitView's own
     /// toggle in the window toolbar handles sidebar collapse.
     private var sidebarTopHeader: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text("GetClawHub")
                 .font(.system(size: 14, weight: .semibold))
+
+            if sparkleUpdater.updateAvailable {
+                Button {
+                    cancelSessionDeleteConfirmation()
+                    sparkleUpdater.checkForUpdates()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 10))
+                        Text("v\(sparkleUpdater.latestVersion)")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color.green.opacity(isDark ? 0.16 : 0.10))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Update to v\(sparkleUpdater.latestVersion)")
+            }
+
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -1282,20 +1324,13 @@ struct SidebarView: View {
                 .help(String(localized: "Search chats", bundle: languageManager.localizedBundle))
 
                 navRow(.skills, title: String(localized: "Skills", bundle: languageManager.localizedBundle), systemImage: "bolt.fill")
-                navRow(.plugins, title: String(localized: "Plugins", bundle: languageManager.localizedBundle), systemImage: "puzzlepiece.fill", assetImage: "PluginIcon")
+                navRow(.plugins, title: String(localized: "Plugins", bundle: languageManager.localizedBundle), systemImage: "puzzlepiece.fill")
                 navRow(.tasksLogs, title: String(localized: "Automation", bundle: languageManager.localizedBundle), systemImage: "checklist", assetImage: "AutomationIcon")
                 navRow(.market, title: String(localized: "AgentsMarket", bundle: languageManager.localizedBundle), systemImage: "storefront")
 
                 agentSectionContent
 
                 Spacer(minLength: 12)
-
-                navRow(.status, title: String(localized: "Status", bundle: languageManager.localizedBundle), systemImage: "chart.bar.fill")
-                navRow(.budget, title: String(localized: "Budget", bundle: languageManager.localizedBundle), systemImage: "dollarsign.gauge.chart.lefthalf.righthalf")
-                #if REQUIRE_LOGIN
-                navRow(.billing, title: String(localized: "Billing", bundle: languageManager.localizedBundle), systemImage: "creditcard.fill")
-                #endif
-                navRow(.config, title: String(localized: "Settings", bundle: languageManager.localizedBundle), systemImage: "gearshape")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -1523,73 +1558,373 @@ struct SidebarView: View {
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: areAgentsCollapsed)
     }
 
-    // MARK: - Sidebar Bottom Bar (version + theme toggle)
+    // MARK: - Sidebar Bottom Bar
 
     private var sidebarBottomBar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Top line — brand + version side by side
-            HStack(spacing: 8) {
-                Text("GetClawHub")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("v\(sparkleUpdater.currentVersion)")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+        Button {
+            cancelSessionDeleteConfirmation()
+            isSettingsShortcutMenuPresented.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "gearshape")
+                    .frame(width: 18, height: 18)
+                Text("Settings")
+                    .lineLimit(1)
                 Spacer()
             }
+            .font(DashboardTypography.sidebarRow)
+            .foregroundColor(.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(sidebarItemHighlightColor(
+                        isActive: selectedTab == .config,
+                        isHovering: isSettingsShortcutMenuPresented
+                    ))
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .popover(isPresented: $isSettingsShortcutMenuPresented, arrowEdge: .trailing) {
+            SettingsShortcutMenu(
+                viewModel: viewModel,
+                onOpenSettingsSection: { section in
+                    isSettingsShortcutMenuPresented = false
+                    onOpenSettingsSection(section)
+                }
+            )
+            .frame(width: 320)
+        }
+    }
 
-            // Bottom line — update + theme. Help, account, language, and
-            // logout now live in Settings.
-            HStack(spacing: 14) {
-                // Update — pill goes green when an update is available
-                if sparkleUpdater.updateAvailable {
-                    Button {
-                        cancelSessionDeleteConfirmation()
-                        sparkleUpdater.checkForUpdates()
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 10))
-                            Text("v\(sparkleUpdater.latestVersion)")
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(.green)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Update to v\(sparkleUpdater.latestVersion)")
-                } else {
-                    Button {
-                        cancelSessionDeleteConfirmation()
-                        Task { await sparkleUpdater.checkLatestVersion() }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 10))
-                            Text(sparkleUpdater.checkSucceeded ? "Latest" : "Update")
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(sparkleUpdater.checkSucceeded ? .green : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Check for Updates")
+    private struct SettingsShortcutMenu: View {
+        @ObservedObject var viewModel: DashboardViewModel
+        let onOpenSettingsSection: (SettingsPageSection) -> Void
+        @State private var isBillingExpanded = false
+        @State private var isBudgetExpanded = false
+        #if REQUIRE_LOGIN
+        @EnvironmentObject var authManager: AuthManager
+        @EnvironmentObject var membershipManager: MembershipManager
+        #endif
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 12) {
+                accountHeader
+
+                SettingsShortcutActionRow(title: "Profile", systemImage: "person.crop.circle") {
+                    onOpenSettingsSection(.profile)
                 }
 
-                Spacer()
+                Divider()
 
-                // Theme toggle on the trailing edge (Q2=c)
-                Button {
-                    cancelSessionDeleteConfirmation()
-                    appAppearance = isDark ? "light" : "dark"
+                DefaultModelShortcutPicker(viewModel: viewModel) {
+                    onOpenSettingsSection(.provider)
+                }
+
+                #if REQUIRE_LOGIN
+                BillingShortcutSummary(
+                    isExpanded: $isBillingExpanded,
+                    membershipManager: membershipManager
+                )
+                #endif
+
+                BudgetShortcutSummary(
+                    isExpanded: $isBudgetExpanded,
+                    viewModel: viewModel,
+                    onOpenBudget: { onOpenSettingsSection(.budget) }
+                )
+
+                Divider()
+
+                SettingsShortcutActionRow(title: "All settings", systemImage: "gearshape") {
+                    onOpenSettingsSection(.profile)
+                }
+
+                #if REQUIRE_LOGIN
+                Button(role: authManager.isLoggedIn ? .destructive : nil) {
+                    if authManager.isLoggedIn {
+                        authManager.logout()
+                    } else {
+                        authManager.login()
+                    }
                 } label: {
-                    Image(systemName: isDark ? "sun.max.fill" : "moon.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 10) {
+                        Image(systemName: authManager.isLoggedIn ? "rectangle.portrait.and.arrow.right" : "person.crop.circle.badge.plus")
+                            .frame(width: 16)
+                        Text(authManager.isLoggedIn ? "Log out" : "Log in")
+                        Spacer()
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
-                .help(isDark ? "Switch to Light Mode" : "Switch to Dark Mode")
+                #endif
+            }
+            .padding(14)
+            .task {
+                if viewModel.models.isEmpty {
+                    await viewModel.loadModels()
+                }
+                if viewModel.budgetSnapshots.isEmpty {
+                    await viewModel.loadBudgets()
+                }
+                #if REQUIRE_LOGIN
+                if membershipManager.keysBilling.isEmpty {
+                    await viewModel.loadKeysBilling()
+                }
+                #endif
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+
+        @ViewBuilder
+        private var accountHeader: some View {
+            #if REQUIRE_LOGIN
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(accountDisplayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                    Text(authManager.isLoggedIn ? "Signed in" : "Not signed in")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if let membership = membershipManager.membership {
+                    Text(membership.level.displayName)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(membershipBadgeColor(membership.level))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(membershipBadgeColor(membership.level).opacity(0.14))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+            }
+            #else
+            HStack(spacing: 10) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+                Text("Local user")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+            }
+            #endif
+        }
+
+        #if REQUIRE_LOGIN
+        private var accountDisplayName: String {
+            if let email = authManager.userEmail, !email.isEmpty {
+                return email
+            }
+            if case .loggedIn(let nickname) = authManager.state, !nickname.isEmpty {
+                return nickname
+            }
+            if let userId = authManager.userId, !userId.isEmpty {
+                return userId
+            }
+            return "User"
+        }
+
+        private func membershipBadgeColor(_ level: MembershipLevel) -> SwiftUI.Color {
+            switch level {
+            case .free: return .gray
+            case .pro: return .blue
+            case .max: return .purple
+            }
+        }
+        #endif
+    }
+
+    private struct SettingsShortcutActionRow: View {
+        let title: String
+        let systemImage: String
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: systemImage)
+                        .frame(width: 16)
+                    Text(title)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.system(size: 13, weight: .medium))
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private struct DefaultModelShortcutPicker: View {
+        @ObservedObject var viewModel: DashboardViewModel
+        let onOpenProvider: () -> Void
+
+        private var selectedModelID: String {
+            if let current = viewModel.models.first(where: \.isDefault)?.modelId {
+                return current
+            }
+            return viewModel.modelOverview.defaultModel
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Label("Model", systemImage: "cube")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Button("Configure") {
+                        onOpenProvider()
+                    }
+                    .font(.system(size: 11))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+
+                if viewModel.models.isEmpty {
+                    Text("No models loaded")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("", selection: Binding<String>(
+                        get: { selectedModelID },
+                        set: { modelID in
+                            guard let model = viewModel.models.first(where: { $0.modelId == modelID }) else { return }
+                            Task { await viewModel.setDefaultModel(model) }
+                        }
+                    )) {
+                        ForEach(viewModel.models, id: \.modelId) { model in
+                            Text(model.modelId).tag(model.modelId)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+            }
+            .padding(10)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    #if REQUIRE_LOGIN
+    private struct BillingShortcutSummary: View {
+        @Binding var isExpanded: Bool
+        @ObservedObject var membershipManager: MembershipManager
+
+        private var totalSpend: Double {
+            membershipManager.keysBilling.reduce(0) { $0 + $1.spend }
+        }
+
+        private var totalBudget: Double? {
+            let budgets = membershipManager.keysBilling.compactMap(\.maxBudget)
+            guard !budgets.isEmpty else { return nil }
+            return budgets.reduce(0, +)
+        }
+
+        private var percent: Double {
+            guard let totalBudget, totalBudget > 0 else { return 0 }
+            return min(totalSpend / totalBudget, 1)
+        }
+
+        var body: some View {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text(String(format: "$%.2f", totalSpend))
+                            .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        if let totalBudget {
+                            Text("/ $\(String(format: "%.2f", totalBudget))")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+
+                    if totalBudget != nil {
+                        ProgressView(value: percent)
+                    }
+
+                    if membershipManager.keysBilling.isEmpty {
+                        Text("No billing data yet")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Label("Billing", systemImage: "creditcard")
+                    .font(.system(size: 13, weight: .medium))
+            }
+        }
+    }
+    #endif
+
+    private struct BudgetShortcutSummary: View {
+        @Binding var isExpanded: Bool
+        @ObservedObject var viewModel: DashboardViewModel
+        let onOpenBudget: () -> Void
+
+        private var globalSnapshot: BudgetSnapshot? {
+            viewModel.budgetSnapshots.first(where: { $0.scope == .global })
+        }
+
+        var body: some View {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: 7) {
+                    if let snapshot = globalSnapshot {
+                        HStack {
+                            Text(formatTokenCount(snapshot.tokensUsed))
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            if snapshot.tokenLimit > 0 {
+                                Text("/ \(formatTokenCount(snapshot.tokenLimit))")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        if snapshot.tokenLimit > 0 {
+                            ProgressView(value: min(snapshot.tokenPercent, 1))
+                        }
+                    } else {
+                        Text("No local budget rule")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button("Edit budget rules") {
+                        onOpenBudget()
+                    }
+                    .font(.system(size: 11))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(.top, 6)
+            } label: {
+                Label("Budget", systemImage: "dollarsign.gauge.chart.lefthalf.righthalf")
+                    .font(.system(size: 13, weight: .medium))
+            }
+        }
+
+        private func formatTokenCount(_ value: Int) -> String {
+            if value >= 1_000_000 {
+                return String(format: "%.1fM", Double(value) / 1_000_000)
+            }
+            if value >= 1_000 {
+                return String(format: "%.1fK", Double(value) / 1_000)
+            }
+            return "\(value)"
+        }
     }
 
     // MARK: - Agents List
@@ -2067,8 +2402,8 @@ private struct DetailContentView: View {
     @ObservedObject var viewModel: DashboardViewModel
     let workspaceSidebarController: WorkspaceSidebarController
     @Binding var requestedUserMessageJumpId: UUID?
+    @Binding var selectedSettingsSection: SettingsPageSection
     let onOpenSkillDetail: (SkillDetailPresentationItem) -> Void
-    let pluginDetailNamespace: Namespace.ID
     let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void
     @State private var collabPanelWidth: CGFloat = 320
     @State private var dragStartWidth: CGFloat = 320
@@ -2186,7 +2521,12 @@ private struct DetailContentView: View {
                     case .tasksLogs:
                         TasksLogsTabView(viewModel: viewModel)
                     case .config:
-                        ConfigTabView(viewModel: viewModel)
+                        ConfigTabView(
+                            viewModel: viewModel,
+                            selectedSection: $selectedSettingsSection,
+                            onOpenSkillDetail: onOpenSkillDetail,
+                            onOpenPluginDetail: onOpenPluginDetail
+                        )
                     case .skills:
                         SkillsTabView(
                             viewModel: viewModel,
@@ -2201,7 +2541,6 @@ private struct DetailContentView: View {
                     case .plugins:
                         PluginsTabView(
                             viewModel: viewModel,
-                            pluginDetailNamespace: pluginDetailNamespace,
                             onOpenPluginDetail: onOpenPluginDetail
                         )
                     case .cron:
