@@ -3,6 +3,8 @@ build/
 DerivedData/
 *.xcuserdata
 *.xcworkspace/xcuserdata/
+**/xcuserdata/
+*.xcuserstate
 
 # DMG
 *.dmg
