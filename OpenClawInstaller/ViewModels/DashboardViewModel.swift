@@ -799,6 +799,7 @@ class DashboardViewModel: ObservableObject {
 
     @Published var sidebarMode: SidebarMode = .config
     @Published var selectedMarketplaceAgent: MarketplaceAgent?
+    @Published var isRecruitingMarketplaceAgent = false
 
     // MARK: - Tab Management
 
@@ -5751,6 +5752,8 @@ struct ChatActivityEvent: Identifiable, Codable, Equatable {
         case editedFiles
         case createdFiles
         case selectedModel
+        case agentUsed
+        case agentRecruited
         case toolFailed
 
         init(gatewayKind: GatewayActivityEvent.Kind) {
@@ -5769,6 +5772,10 @@ struct ChatActivityEvent: Identifiable, Codable, Equatable {
                 self = .createdFiles
             case .selectedModel:
                 self = .selectedModel
+            case .agentUsed:
+                self = .agentUsed
+            case .agentRecruited:
+                self = .agentRecruited
             case .toolFailed:
                 self = .toolFailed
             }
@@ -5790,6 +5797,10 @@ struct ChatActivityEvent: Identifiable, Codable, Equatable {
                 return "Created \(count) \(count == 1 ? "file" : "files")"
             case .selectedModel:
                 return "Selected model"
+            case .agentUsed:
+                return "Used \(count) \(count == 1 ? "agent" : "agents")"
+            case .agentRecruited:
+                return "Recruited \(count) \(count == 1 ? "agent" : "agents")"
             case .toolFailed:
                 return count == 1 ? "Tool failed" : "\(count) tools failed"
             }
@@ -5804,6 +5815,8 @@ struct ChatActivityEvent: Identifiable, Codable, Equatable {
             case .editedFiles: return "pencil"
             case .createdFiles: return "doc.badge.plus"
             case .selectedModel: return "cpu"
+            case .agentUsed: return "person.2"
+            case .agentRecruited: return "person.crop.circle.badge.plus"
             case .toolFailed: return "exclamationmark.triangle"
             }
         }

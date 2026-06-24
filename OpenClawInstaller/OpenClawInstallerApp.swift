@@ -102,6 +102,7 @@ struct MainContentView: View {
     #endif
 
     @State private var viewMode: ViewMode = .checking
+    @State private var startupRouteToken = 0
 
     enum ViewMode {
         case checking
@@ -110,135 +111,94 @@ struct MainContentView: View {
         case dashboard
     }
 
+    private var isStartupRouteAllowed: Bool {
+        #if REQUIRE_LOGIN
+        authManager.isLoggedIn
+        #else
+        true
+        #endif
+    }
+
     var body: some View {
-        ZStack {
-            Group {
-                switch viewMode {
-                case .checking:
-                    StartupCheckingView()
-
-                case .initial:
-                    InitialView(
-                        systemEnvironment: services.systemEnvironment,
-                        onStartInstallation: {
-                            viewMode = .installation
-                        },
-                        onOpenDashboard: {
-                            viewMode = .dashboard
-                        }
-                    )
-
-                case .installation:
-                    InstallationWizardView(
-                        viewModel: services.installationViewModel,
-                        onFinish: {
-                            viewMode = .dashboard
-                        }
-                    )
-                    .onAppear {
-                        services.installationState.goToStep(.welcome)
-                    }
-
-                case .dashboard:
-                    DashboardView(
-                        viewModel: services.dashboardViewModel
-                    )
-                    .onAppear {
-                        // Reload config from disk in case installation wizard just wrote new values
-                        services.dashboardViewModel.loadConfiguration()
-                    }
-                }
-            }
-
-            // Login overlay — covers all pages when not logged in
+        Group {
             #if REQUIRE_LOGIN
-            if !authManager.isLoggedIn {
-                Color.black.opacity(0.5)
-                    .ignoresSafeArea()
-
-                VStack(spacing: 16) {
-                    switch authManager.state {
-                    case .checking:
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Checking login status...")
-                            .font(.headline)
-                            .foregroundColor(.white)
-
-                    case .notLoggedIn:
-                        Image(systemName: "person.crop.circle.badge.exclamationmark")
-                            .font(.system(size: 48))
-                            .foregroundColor(.white)
-                        Text("Please log in to continue")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        Button("Log In") {
-                            authManager.login()
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                    case .polling:
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Waiting for login...")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        Button("Reopen Login Page") {
-                            authManager.login()
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.white)
-
-                    case .timeout:
-                        Image(systemName: "clock.badge.exclamationmark")
-                            .font(.system(size: 48))
-                            .foregroundColor(.white)
-                        Text("Login Timed Out")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        Button("Retry") {
-                            authManager.retry()
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                    case .error(let message):
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 48))
-                            .foregroundColor(.yellow)
-                        Text(message)
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
-                        Button("Retry") {
-                            authManager.retry()
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                    case .loggedIn:
-                        EmptyView()
+            if authManager.isLoggedIn {
+                routedContent
+            } else {
+                AuthGateView(
+                    state: authManager.state,
+                    onLogin: {
+                        authManager.login()
+                    },
+                    onRetry: {
+                        authManager.retry()
+                    },
+                    onReopenLogin: {
+                        authManager.login()
                     }
-                }
-                .padding(40)
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.black.opacity(0.6))
                 )
             }
+            #else
+            routedContent
             #endif
         }
-        .task {
+        .task(id: startupRouteToken) {
             await determineInitialView()
         }
         #if REQUIRE_LOGIN
         .onChange(of: authManager.isLoggedIn) { loggedIn in
-            if !loggedIn {
-                viewMode = .initial
+            viewMode = .checking
+            if loggedIn {
+                startupRouteToken += 1
             }
         }
         #endif
     }
 
+    @ViewBuilder
+    private var routedContent: some View {
+        switch viewMode {
+        case .checking:
+            StartupCheckingView()
+
+        case .initial:
+            InitialView(
+                systemEnvironment: services.systemEnvironment,
+                onStartInstallation: {
+                    viewMode = .installation
+                },
+                onOpenDashboard: {
+                    viewMode = .dashboard
+                }
+            )
+
+        case .installation:
+            InstallationWizardView(
+                viewModel: services.installationViewModel,
+                onFinish: {
+                    viewMode = .dashboard
+                }
+            )
+            .onAppear {
+                services.installationState.goToStep(.welcome)
+            }
+
+        case .dashboard:
+            DashboardView(
+                viewModel: services.dashboardViewModel
+            )
+            .onAppear {
+                // Reload config from disk in case installation wizard just wrote new values
+                services.dashboardViewModel.loadConfiguration()
+            }
+        }
+    }
+
     private func determineInitialView() async {
+        guard isStartupRouteAllowed else { return }
+        #if REQUIRE_LOGIN
+        guard authManager.isLoggedIn else { return }
+        #endif
         await services.systemEnvironment.performFullCheck()
         if services.systemEnvironment.openclawInfo != nil {
             viewMode = .dashboard
@@ -247,6 +207,107 @@ struct MainContentView: View {
         }
     }
 }
+
+#if REQUIRE_LOGIN
+private struct AuthGateView: View {
+    let state: AuthState
+    let onLogin: () -> Void
+    let onRetry: () -> Void
+    let onReopenLogin: () -> Void
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer(minLength: 40)
+
+            VStack(spacing: 14) {
+                Image("Logo1")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 92, height: 92)
+
+                Text("GetClawHub")
+                    .font(.system(size: 26, weight: .semibold))
+
+                statusContent
+            }
+            .frame(width: 380)
+            .padding(.horizontal, 36)
+            .padding(.vertical, 34)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var statusContent: some View {
+        switch state {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+            Text("Checking login status")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+
+        case .notLoggedIn:
+            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .font(.system(size: 34, weight: .regular))
+                .foregroundStyle(.secondary)
+            Text("Sign in to continue")
+                .font(.system(size: 15, weight: .semibold))
+            Button("Log In", action: onLogin)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+        case .polling:
+            ProgressView()
+                .controlSize(.small)
+            Text("Waiting for browser login")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+            Button("Reopen Login Page", action: onReopenLogin)
+                .buttonStyle(.bordered)
+
+        case .timeout:
+            Image(systemName: "clock.badge.exclamationmark")
+                .font(.system(size: 34, weight: .regular))
+                .foregroundStyle(.orange)
+            Text("Login timed out")
+                .font(.system(size: 15, weight: .semibold))
+            Button("Retry", action: onRetry)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+        case .error(let message):
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 34, weight: .regular))
+                .foregroundStyle(.yellow)
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Retry", action: onRetry)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+        case .loggedIn:
+            ProgressView()
+                .controlSize(.small)
+            Text("Preparing workspace")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+#endif
 
 private struct StartupCheckingView: View {
     var body: some View {

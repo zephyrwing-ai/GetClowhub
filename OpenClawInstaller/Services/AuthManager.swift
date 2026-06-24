@@ -29,6 +29,7 @@ enum AuthConfig {
     static let keysBillingPath = "/api/user/keys-billing"
     static let pollingInterval: TimeInterval = 5
     static let pollingTimeout: TimeInterval = 600
+    static let launchCheckTimeout: TimeInterval = 8
     static let maxLoginAttempts = 5
 }
 
@@ -80,7 +81,9 @@ class AuthManager: ObservableObject {
             if now >= expiresAt {
                 // Token expired, try refresh
                 Task {
-                    let refreshed = await refreshTokenIfNeeded()
+                    let refreshed = await withTimeout(seconds: AuthConfig.launchCheckTimeout) {
+                        await self.refreshTokenIfNeeded()
+                    } ?? false
                     if refreshed {
                         let nickname = readKeychain(key: "user_nickname") ?? "User"
                         state = .loggedIn(nickname: nickname)
@@ -285,6 +288,7 @@ class AuthManager: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = AuthConfig.launchCheckTimeout
 
         let body: [String: String] = [
             "client_id": AuthConfig.clientId,
@@ -315,6 +319,26 @@ class AuthManager: ObservableObject {
             return true
         } catch {
             return false
+        }
+    }
+
+    private func withTimeout<T: Sendable>(
+        seconds: TimeInterval,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask {
+                await operation()
+            }
+            group.addTask {
+                let nanoseconds = UInt64(seconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                return nil
+            }
+
+            let result = await group.next() ?? nil
+            group.cancelAll()
+            return result
         }
     }
 

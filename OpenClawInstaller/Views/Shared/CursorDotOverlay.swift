@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import Combine
 
 struct CursorDotConfiguration {
     var dotSize: CGFloat = 5
@@ -18,49 +17,20 @@ struct CursorDotOverlay: View {
     let disabledFrames: [CGRect]
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var state = CursorDotState()
 
     private var effectiveEnabled: Bool {
         isEnabled && !reduceMotion
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            CursorDotTrackingView(
-                isEnabled: effectiveEnabled,
-                state: state,
-                disabledFrames: disabledFrames
-            )
-
-            TimelineView(.animation) { context in
-                cursorVisuals
-                    .onChange(of: context.date) { _, _ in
-                        state.advanceRing(smoothing: configuration.smoothing)
-                    }
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
+        CursorDotTrackingView(
+            isEnabled: effectiveEnabled,
+            configuration: configuration,
+            disabledFrames: disabledFrames
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    @ViewBuilder
-    private var cursorVisuals: some View {
-        if effectiveEnabled, state.isVisible, let pointer = state.pointerLocation {
-            let ring = state.ringLocation ?? pointer
-
-            Circle()
-                .stroke(configuration.ringColor, lineWidth: 1)
-                .blendMode(.difference)
-                .frame(width: configuration.ringSize, height: configuration.ringSize)
-                .position(ring)
-
-            Circle()
-                .fill(configuration.dotColor)
-                .blendMode(.difference)
-                .frame(width: configuration.dotSize, height: configuration.dotSize)
-                .position(pointer)
-        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -114,74 +84,67 @@ private struct CursorDotDisabledPreferenceKey: PreferenceKey {
     }
 }
 
-private final class CursorDotState: ObservableObject {
-    @Published var pointerLocation: CGPoint?
-    @Published var ringLocation: CGPoint?
-    @Published var isVisible = false
-
-    func updatePointer(_ point: CGPoint, visible: Bool) {
-        pointerLocation = point
-        if ringLocation == nil {
-            ringLocation = point
-        }
-        isVisible = visible
-    }
-
-    func hide() {
-        isVisible = false
-    }
-
-    func advanceRing(smoothing: CGFloat) {
-        guard let pointerLocation else { return }
-        guard let currentRing = ringLocation else {
-            ringLocation = pointerLocation
-            return
-        }
-
-        ringLocation = CGPoint(
-            x: currentRing.x + (pointerLocation.x - currentRing.x) * smoothing,
-            y: currentRing.y + (pointerLocation.y - currentRing.y) * smoothing
-        )
-    }
-}
-
 private struct CursorDotTrackingView: NSViewRepresentable {
     let isEnabled: Bool
-    @ObservedObject var state: CursorDotState
+    let configuration: CursorDotConfiguration
     let disabledFrames: [CGRect]
 
     func makeNSView(context: Context) -> CursorDotTrackingNSView {
         let view = CursorDotTrackingNSView()
-        view.state = state
+        view.configuration = configuration
         view.isEffectEnabled = isEnabled
         view.disabledFrames = disabledFrames
         return view
     }
 
     func updateNSView(_ nsView: CursorDotTrackingNSView, context: Context) {
-        nsView.state = state
+        nsView.configuration = configuration
         nsView.disabledFrames = disabledFrames
         nsView.isEffectEnabled = isEnabled
     }
 }
 
 private final class CursorDotTrackingNSView: NSView {
-    weak var state: CursorDotState?
+    private enum Metrics {
+        static let frameInterval: TimeInterval = 1.0 / 60.0
+        static let ringSnapDistance: CGFloat = 0.5
+    }
+
+    var configuration = CursorDotConfiguration() {
+        didSet {
+            applyConfiguration()
+        }
+    }
     var disabledFrames: [CGRect] = []
     var isEffectEnabled = true {
         didSet {
             if !isEffectEnabled {
-                state?.hide()
+                hideCursorLayers()
                 setSystemCursorHidden(false)
             }
         }
     }
 
+    private let dotLayer = CAShapeLayer()
+    private let ringLayer = CAShapeLayer()
     private var trackingArea: NSTrackingArea?
     private var isSystemCursorHidden = false
     private var windowObservers: [NSObjectProtocol] = []
+    private var animationTimer: Timer?
+    private var targetPointerLocation: CGPoint?
+    private var ringLocation: CGPoint?
 
     override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupLayers()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupLayers()
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -214,7 +177,7 @@ private final class CursorDotTrackingNSView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        state?.hide()
+        hideCursorLayers()
         setSystemCursorHidden(false)
     }
 
@@ -222,7 +185,7 @@ private final class CursorDotTrackingNSView: NSView {
         if newWindow == nil {
             removeWindowObservers()
             setSystemCursorHidden(false)
-            state?.hide()
+            hideCursorLayers()
         }
         super.viewWillMove(toWindow: newWindow)
     }
@@ -234,7 +197,45 @@ private final class CursorDotTrackingNSView: NSView {
 
     deinit {
         removeWindowObservers()
+        stopRingAnimation()
         setSystemCursorHidden(false)
+    }
+
+    private func setupLayers() {
+        wantsLayer = true
+        layer?.masksToBounds = false
+        dotLayer.isHidden = true
+        ringLayer.isHidden = true
+        dotLayer.actions = disabledLayerActions
+        ringLayer.actions = disabledLayerActions
+        layer?.addSublayer(ringLayer)
+        layer?.addSublayer(dotLayer)
+        applyConfiguration()
+    }
+
+    private var disabledLayerActions: [String: NSNull] {
+        [
+            "bounds": NSNull(),
+            "position": NSNull(),
+            "path": NSNull(),
+            "hidden": NSNull(),
+            "opacity": NSNull(),
+            "backgroundColor": NSNull(),
+            "fillColor": NSNull(),
+            "strokeColor": NSNull()
+        ]
+    }
+
+    private func applyConfiguration() {
+        dotLayer.bounds = CGRect(origin: .zero, size: CGSize(width: configuration.dotSize, height: configuration.dotSize))
+        dotLayer.path = CGPath(ellipseIn: dotLayer.bounds, transform: nil)
+        dotLayer.fillColor = NSColor(configuration.dotColor).cgColor
+
+        ringLayer.bounds = CGRect(origin: .zero, size: CGSize(width: configuration.ringSize, height: configuration.ringSize))
+        ringLayer.path = CGPath(ellipseIn: ringLayer.bounds, transform: nil)
+        ringLayer.fillColor = NSColor.clear.cgColor
+        ringLayer.strokeColor = NSColor(configuration.ringColor).cgColor
+        ringLayer.lineWidth = 1
     }
 
     private func updatePointer(with event: NSEvent) {
@@ -242,19 +243,84 @@ private final class CursorDotTrackingNSView: NSView {
         let inside = bounds.contains(point)
 
         guard isEffectEnabled, inside else {
-            state?.hide()
+            hideCursorLayers()
             setSystemCursorHidden(false)
             return
         }
 
         if isDisabledRegion(at: point) {
-            state?.hide()
+            hideCursorLayers()
             setSystemCursorHidden(false)
             return
         }
 
-        state?.updatePointer(point, visible: true)
+        showCursorLayers(at: point)
         setSystemCursorHidden(true)
+    }
+
+    private func showCursorLayers(at point: CGPoint) {
+        targetPointerLocation = point
+        if ringLocation == nil {
+            ringLocation = point
+            ringLayer.position = point
+        }
+
+        dotLayer.position = point
+        dotLayer.isHidden = false
+        ringLayer.isHidden = false
+        startRingAnimationIfNeeded()
+    }
+
+    private func hideCursorLayers() {
+        targetPointerLocation = nil
+        ringLocation = nil
+        dotLayer.isHidden = true
+        ringLayer.isHidden = true
+        stopRingAnimation()
+    }
+
+    private func startRingAnimationIfNeeded() {
+        guard animationTimer == nil,
+              let targetPointerLocation,
+              let ringLocation,
+              distance(from: ringLocation, to: targetPointerLocation) > Metrics.ringSnapDistance else {
+            return
+        }
+
+        animationTimer = Timer.scheduledTimer(withTimeInterval: Metrics.frameInterval, repeats: true) { [weak self] _ in
+            self?.advanceRing()
+        }
+    }
+
+    private func stopRingAnimation() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+    }
+
+    private func advanceRing() {
+        guard let targetPointerLocation,
+              let currentRing = ringLocation else {
+            stopRingAnimation()
+            return
+        }
+
+        let nextRing = CGPoint(
+            x: currentRing.x + (targetPointerLocation.x - currentRing.x) * configuration.smoothing,
+            y: currentRing.y + (targetPointerLocation.y - currentRing.y) * configuration.smoothing
+        )
+
+        if distance(from: nextRing, to: targetPointerLocation) <= Metrics.ringSnapDistance {
+            ringLocation = targetPointerLocation
+            ringLayer.position = targetPointerLocation
+            stopRingAnimation()
+        } else {
+            ringLocation = nextRing
+            ringLayer.position = nextRing
+        }
+    }
+
+    private func distance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
+        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
     }
 
     private func isDisabledRegion(at point: CGPoint) -> Bool {
@@ -283,7 +349,7 @@ private final class CursorDotTrackingNSView: NSView {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                self?.state?.hide()
+                self?.hideCursorLayers()
                 self?.setSystemCursorHidden(false)
             }
         )
@@ -293,7 +359,7 @@ private final class CursorDotTrackingNSView: NSView {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                self?.state?.hide()
+                self?.hideCursorLayers()
                 self?.setSystemCursorHidden(false)
             }
         )

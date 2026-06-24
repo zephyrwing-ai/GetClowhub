@@ -29,10 +29,10 @@ require(
     "Marketplace overview should center a constrained content column inside the full page."
 )
 require(
-    detail.contains(".frame(maxWidth: MarketplacePageLayout.contentMaxWidth, alignment: .leading)") &&
-        detail.contains(".padding(.horizontal, MarketplacePageLayout.horizontalPadding)") &&
-        detail.contains(".frame(maxWidth: .infinity, alignment: .top)"),
-    "Marketplace detail should center a constrained content column inside the scroll view."
+    detail.contains(".frame(width: 640)") &&
+        detail.contains(".clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))") &&
+        detail.contains(".shadow("),
+    "Marketplace detail should render as a centered modal card, not a full-width page."
 )
 require(
     !overview.contains(".padding(.horizontal, 24)") &&

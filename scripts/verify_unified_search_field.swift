@@ -87,7 +87,8 @@ require(
     "Marketplace overview should use UnifiedSearchField with its localized placeholder."
 )
 require(
-    dashboard.contains("UnifiedSearchField(placeholder: \"Search agents...\", text: $marketplaceSearchText)") &&
+    dashboard.contains("UnifiedSearchField(") &&
+        dashboard.contains(#"String(localized: "Search agents...", bundle: languageManager.localizedBundle)"#) &&
         !dashboard.contains(#"TextField("Search agents...", text: $marketplaceSearchText)"#),
     "Dashboard marketplace list should use UnifiedSearchField instead of hand-written search chrome."
 )

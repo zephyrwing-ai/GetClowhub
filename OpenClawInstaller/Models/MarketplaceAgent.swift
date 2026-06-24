@@ -21,15 +21,38 @@ struct MarketplaceAgent: Codable, Identifiable, Hashable {
     static func == (lhs: MarketplaceAgent, rhs: MarketplaceAgent) -> Bool {
         lhs.id == rhs.id
     }
+
+    func localizedDisplay(localeID: String) -> MarketplaceAgentDisplay {
+        MarketplaceCatalog.shared.localizedDisplay(for: self, localeID: localeID)
+    }
+}
+
+struct MarketplaceAgentDisplay: Hashable {
+    let name: String
+    let division: String
+    let description: String
+    let vibe: String
+    let specialty: String?
+    let whenToUse: String?
 }
 
 // MARK: - MarketplaceCatalog
+
+private struct MarketplaceAgentLocalization: Codable {
+    let name: String?
+    let division: String?
+    let description: String?
+    let vibe: String?
+    let specialty: String?
+    let whenToUse: String?
+}
 
 class MarketplaceCatalog {
     static let shared = MarketplaceCatalog()
 
     let agents: [MarketplaceAgent]
     let divisions: [String]
+    private let localizations: [String: [String: MarketplaceAgentLocalization]]
 
     private init() {
         guard let url = Bundle.main.url(forResource: "marketplace_agents", withExtension: "json"),
@@ -38,14 +61,80 @@ class MarketplaceCatalog {
             NSLog("[MarketplaceCatalog] Failed to load marketplace_agents.json")
             self.agents = []
             self.divisions = []
+            self.localizations = [:]
             return
         }
         self.agents = decoded
         self.divisions = Array(Set(decoded.map { $0.division })).sorted()
+        self.localizations = Self.loadLocalizations()
         NSLog("[MarketplaceCatalog] Loaded %d agents in %d divisions", decoded.count, self.divisions.count)
     }
 
-    func search(query: String, division: String? = nil) -> [MarketplaceAgent] {
+    private static func loadLocalizations() -> [String: [String: MarketplaceAgentLocalization]] {
+        guard let url = Bundle.main.url(forResource: "marketplace_agents.i18n", withExtension: "json") else {
+            NSLog("[MarketplaceCatalog] marketplace_agents.i18n.json not bundled; using English marketplace display text")
+            return [:]
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode([String: [String: MarketplaceAgentLocalization]].self, from: data)
+        } catch {
+            NSLog("[MarketplaceCatalog] Failed to load marketplace_agents.i18n.json: %@", error.localizedDescription)
+            return [:]
+        }
+    }
+
+    func localizedDisplay(for agent: MarketplaceAgent, localeID: String) -> MarketplaceAgentDisplay {
+        let localization = localization(for: agent.id, localeID: localeID)
+        return MarketplaceAgentDisplay(
+            name: localization?.name ?? agent.name,
+            division: localization?.division ?? agent.division,
+            description: localization?.description ?? agent.description,
+            vibe: localization?.vibe ?? agent.vibe,
+            specialty: localization?.specialty ?? agent.specialty,
+            whenToUse: localization?.whenToUse ?? agent.whenToUse
+        )
+    }
+
+    func localizedDivisionName(_ division: String, localeID: String) -> String {
+        guard let agent = agents.first(where: { $0.division == division }) else { return division }
+        return localizedDisplay(for: agent, localeID: localeID).division
+    }
+
+    private func localization(for agentID: String, localeID: String) -> MarketplaceAgentLocalization? {
+        guard let agentLocalizations = localizations[agentID] else { return nil }
+        for candidate in localeCandidates(for: localeID) {
+            if let localization = agentLocalizations[candidate] {
+                return localization
+            }
+        }
+        return nil
+    }
+
+    private func localeCandidates(for localeID: String) -> [String] {
+        let normalized = localeID.replacingOccurrences(of: "_", with: "-")
+        let parts = normalized.split(separator: "-").map(String.init)
+        guard let language = parts.first, !language.isEmpty else { return ["en"] }
+
+        var candidates: [String] = [normalized]
+        if parts.count >= 2 {
+            candidates.append("\(parts[0])-\(parts[1])")
+        }
+        if language == "zh" {
+            let tags = Set(parts.dropFirst().map { $0.lowercased() })
+            candidates.append(tags.contains("hant") || tags.contains("tw") || tags.contains("hk") || tags.contains("mo") ? "zh-Hant" : "zh-Hans")
+        }
+        if language == "pt" {
+            candidates.append("pt-BR")
+        }
+        candidates.append(language)
+        candidates.append("en")
+
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0).inserted }
+    }
+
+    func search(query: String, division: String? = nil, localeID: String = "en") -> [MarketplaceAgent] {
         var results = agents
 
         if let division = division, !division.isEmpty {
@@ -53,14 +142,23 @@ class MarketplaceCatalog {
         }
 
         if !query.isEmpty {
-            let q = query.lowercased()
-            results = results.filter {
-                $0.name.lowercased().contains(q) ||
-                $0.description.lowercased().contains(q) ||
-                $0.vibe.lowercased().contains(q) ||
-                $0.division.lowercased().contains(q) ||
-                ($0.specialty?.lowercased().contains(q) ?? false) ||
-                ($0.whenToUse?.lowercased().contains(q) ?? false)
+            results = results.filter { agent in
+                let display = localizedDisplay(for: agent, localeID: localeID)
+                let searchableFields = [
+                    display.name,
+                    display.description,
+                    display.vibe,
+                    display.division,
+                    display.specialty ?? "",
+                    display.whenToUse ?? "",
+                    agent.name,
+                    agent.description,
+                    agent.vibe,
+                    agent.division,
+                    agent.specialty ?? "",
+                    agent.whenToUse ?? ""
+                ]
+                return searchableFields.contains { $0.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
             }
         }
 

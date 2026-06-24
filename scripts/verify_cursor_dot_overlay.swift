@@ -108,10 +108,19 @@ require(
     "Cursor tracking should not run automatic AppKit hit-test or accessibility scans on every mouse move."
 )
 require(
-    overlay.contains(".allowsHitTesting(false)") &&
-        overlay.contains("TimelineView(.animation)") &&
-        overlay.contains("accessibilityHidden(true)"),
-    "Cursor visuals should not intercept clicks, should animate smoothly, and should stay hidden from accessibility."
+    !overlay.contains("TimelineView(.animation)") &&
+        !overlay.contains("@Published var ringLocation") &&
+        overlay.contains("CAShapeLayer") &&
+        overlay.contains("animationTimer") &&
+        overlay.contains("startRingAnimationIfNeeded()") &&
+        overlay.contains("stopRingAnimation()"),
+    "Cursor dot visuals should be layer-driven and should not ask SwiftUI to recompute every animation frame."
+)
+require(
+    overlay.contains("private func distance(from") &&
+        overlay.contains("ringSnapDistance") &&
+        overlay.contains("targetPointerLocation"),
+    "Cursor ring animation should stop once the trailing ring catches the pointer."
 )
 require(
     !dashboardRoot.contains(".cursorDotOverlay(isEnabled: true)"),

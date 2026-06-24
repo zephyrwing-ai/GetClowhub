@@ -985,7 +985,8 @@ class CollabViewModel: ObservableObject {
 
                     let success = await Self.recruitMarketplaceAgent(
                         agentId: agentId,
-                        openclawService: vm.openclawService
+                        openclawService: vm.openclawService,
+                        taskContext: [currentSession.taskDescription, currentSession.taskContext].joined(separator: "\n\n")
                     )
                     if success {
                         NSLog("[Collab] Successfully recruited: %@", agentId)
@@ -1324,7 +1325,7 @@ class CollabViewModel: ObservableObject {
     // MARK: - Recruit Marketplace Agent
 
     /// Install a marketplace agent by its sanitized ID. Returns true on success.
-    static func recruitMarketplaceAgent(agentId: String, openclawService: OpenClawService) async -> Bool {
+    static func recruitMarketplaceAgent(agentId: String, openclawService: OpenClawService, taskContext: String? = nil) async -> Bool {
         let catalog = MarketplaceCatalog.shared
 
         // Find matching marketplace agent
@@ -1403,61 +1404,10 @@ class CollabViewModel: ObservableObject {
         try? memoryContent.write(toFile: (workspace as NSString).appendingPathComponent("MEMORY.md"),
                                   atomically: true, encoding: .utf8)
 
-        // Step 5: For awesome-design-system agent, copy DesignSystems folder
+        // Step 5: For awesome-design-system agent, prepare selected design-system references.
         if agentId == "awesome-design-system" {
-            let designSystemsDestPath = (workspace as NSString).appendingPathComponent("DesignSystems")
-            var designSystemsSourcePath = ""
-
-            // Strategy 1: Try Bundle.main.resourcePath (standard path)
-            if let resourcePath = Bundle.main.resourcePath {
-                let bundleDesignPath = (resourcePath as NSString).appendingPathComponent("DesignSystems")
-                NSLog("[Collab] Checking Bundle resource path: %@", bundleDesignPath)
-                if fm.fileExists(atPath: bundleDesignPath) {
-                    designSystemsSourcePath = bundleDesignPath
-                    NSLog("[Collab] Found DesignSystems in Bundle resource path")
-                }
-            }
-
-            // Strategy 2: Try app bundle Contents/Resources (macOS app structure)
-            if designSystemsSourcePath.isEmpty {
-                let bundlePath = Bundle.main.bundlePath
-                let contentsResourcesPath = (bundlePath as NSString).appendingPathComponent("Contents/Resources/DesignSystems")
-                NSLog("[Collab] Checking Bundle Contents/Resources path: %@", contentsResourcesPath)
-                if fm.fileExists(atPath: contentsResourcesPath) {
-                    designSystemsSourcePath = contentsResourcesPath
-                    NSLog("[Collab] Found DesignSystems in Bundle Contents/Resources path")
-                }
-            }
-
-            // Strategy 3: Try direct path from bundle executable directory
-            // executablePath = /path/to/GetClawHub.app/Contents/MacOS/GetClawHub
-            // We need to go up to Contents, then to Resources
-            if designSystemsSourcePath.isEmpty {
-                if let exePath = Bundle.main.executablePath {
-                    let macosDir = (exePath as NSString).deletingLastPathComponent  // Contents/MacOS
-                    let contentsDir = (macosDir as NSString).deletingLastPathComponent  // Contents
-                    let resourcesDir = (contentsDir as NSString).appendingPathComponent("Resources")
-                    let designPath = (resourcesDir as NSString).appendingPathComponent("DesignSystems")
-                    NSLog("[Collab] Checking executable directory path: %@", designPath)
-                    if fm.fileExists(atPath: designPath) {
-                        designSystemsSourcePath = designPath
-                        NSLog("[Collab] Found DesignSystems in executable directory path")
-                    }
-                }
-            }
-
-            // Perform copy if source found
-            if !designSystemsSourcePath.isEmpty {
-                do {
-                    try? fm.removeItem(atPath: designSystemsDestPath)  // Remove if exists
-                    try fm.copyItem(atPath: designSystemsSourcePath, toPath: designSystemsDestPath)
-                    NSLog("[Collab] Successfully copied DesignSystems to workspace for awesome-design-system agent")
-                } catch {
-                    NSLog("[Collab] Error: Failed to copy DesignSystems from %@ to %@: %@",
-                          designSystemsSourcePath, designSystemsDestPath, error.localizedDescription)
-                }
-            } else {
-                NSLog("[Collab] Error: DesignSystems folder not found in any expected Bundle resource paths")
+            _ = await MainActor.run {
+                DesignSystemManager.shared.prepareWorkspace(at: workspace, taskContext: taskContext)
             }
         }
 

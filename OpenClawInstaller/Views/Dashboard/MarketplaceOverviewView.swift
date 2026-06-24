@@ -8,6 +8,8 @@ enum MarketplacePageLayout {
 }
 
 struct MarketplaceOverviewView: View {
+    let selectedAgent: MarketplaceAgent?
+    let installRefreshID: Int
     let onSelect: (MarketplaceAgent) -> Void
 
     @EnvironmentObject var languageManager: LanguageManager
@@ -31,14 +33,15 @@ struct MarketplaceOverviewView: View {
 
     private var groupedAgents: [(division: String, agents: [MarketplaceAgent])] {
         let catalog = MarketplaceCatalog.shared
+        let localeID = languageManager.currentLocale.identifier
         if searchText.isEmpty {
             return catalog.divisions.compactMap { div in
-                let agents = catalog.search(query: "", division: div)
+                let agents = catalog.search(query: "", division: div, localeID: localeID)
                 guard !agents.isEmpty else { return nil }
                 return (division: div, agents: agents)
             }
         } else {
-            let filtered = catalog.search(query: searchText)
+            let filtered = catalog.search(query: searchText, localeID: localeID)
             guard !filtered.isEmpty else { return [] }
             // Group search results by division
             let grouped = Dictionary(grouping: filtered) { $0.division }
@@ -100,7 +103,7 @@ struct MarketplaceOverviewView: View {
             HStack(spacing: 6) {
                 Text(Self.divisionEmoji[group.division] ?? "📁")
                     .font(.system(size: 16))
-                Text(group.division)
+                Text(MarketplaceCatalog.shared.localizedDivisionName(group.division, localeID: languageManager.currentLocale.identifier))
                     .font(.system(size: 15, weight: .semibold))
                 Text("(\(group.agents.count))")
                     .font(.system(size: 13))
@@ -111,7 +114,12 @@ struct MarketplaceOverviewView: View {
             // Agent cards grid
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(group.agents) { agent in
-                    AgentCard(agent: agent, onSelect: onSelect)
+                    AgentCard(
+                        agent: agent,
+                        isSelected: selectedAgent?.id == agent.id,
+                        installRefreshID: installRefreshID,
+                        onSelect: onSelect
+                    )
                 }
             }
         }
@@ -122,10 +130,17 @@ struct MarketplaceOverviewView: View {
 
 private struct AgentCard: View {
     let agent: MarketplaceAgent
+    let isSelected: Bool
+    let installRefreshID: Int
     let onSelect: (MarketplaceAgent) -> Void
 
     @State private var isHovering = false
     @State private var isInstalled = false
+    @EnvironmentObject var languageManager: LanguageManager
+
+    private var display: MarketplaceAgentDisplay {
+        agent.localizedDisplay(localeID: languageManager.currentLocale.identifier)
+    }
 
     var body: some View {
         Button {
@@ -137,12 +152,12 @@ private struct AgentCard: View {
                     AgentAvatarImage(size: 28)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(agent.name)
+                        Text(display.name)
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        Text(agent.division)
+                        Text(display.division)
                             .font(.system(size: 10))
                             .foregroundColor(.accentColor)
                             .lineLimit(1)
@@ -158,7 +173,7 @@ private struct AgentCard: View {
                 }
 
                 // Description
-                Text(agent.description)
+                Text(display.description)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
@@ -169,13 +184,13 @@ private struct AgentCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(isHovering
+                    .fill(isSelected || isHovering
                           ? Color(nsColor: .controlBackgroundColor)
                           : Color(nsColor: .controlBackgroundColor).opacity(0.5))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(isHovering ? Color.accentColor.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
+                    .stroke(selectionStrokeColor, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -187,6 +202,19 @@ private struct AgentCard: View {
         .onAppear {
             checkInstalled()
         }
+        .onChange(of: installRefreshID) { _ in
+            checkInstalled()
+        }
+    }
+
+    private var selectionStrokeColor: Color {
+        if isSelected {
+            return Color.accentColor.opacity(0.72)
+        }
+        if isHovering {
+            return Color.accentColor.opacity(0.5)
+        }
+        return Color.gray.opacity(0.2)
     }
 
     private func checkInstalled() {

@@ -5,7 +5,8 @@ struct MarketplaceDetailView: View {
     let agent: MarketplaceAgent
     let openclawService: OpenClawService
     let onInstalled: (String) -> Void  // callback with agentId
-    var onBack: (() -> Void)? = nil    // callback to return to marketplace
+    let onClose: () -> Void
+    var onDismissDisabledChange: ((Bool) -> Void)? = nil
 
     @EnvironmentObject var languageManager: LanguageManager
     @State private var isInstalling = false
@@ -13,53 +14,55 @@ struct MarketplaceDetailView: View {
     @State private var showContent = true
     @State private var installError: String?
 
+    private var display: MarketplaceAgentDisplay {
+        agent.localizedDisplay(localeID: languageManager.currentLocale.identifier)
+    }
+
     var body: some View {
-        SmoothScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Back to marketplace
-                if let onBack = onBack {
-                    Button(action: onBack) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("AgentsMarket")
-                                .font(.system(size: 13))
-                        }
-                        .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            headerSection
+                .padding(.bottom, 16)
 
-                // Header
-                headerSection
+            Text(display.description)
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(.secondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .padding(.bottom, 18)
 
-                Divider()
+            if !display.vibe.isEmpty {
+                Text(String(localized: "Vibe", bundle: languageManager.localizedBundle))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
 
-                // Description
-                descriptionSection
-
-                // Vibe
-                if !agent.vibe.isEmpty {
-                    vibeSection
-                }
-
-                Divider()
-
-                // Persona content preview
-                contentSection
-
-                Spacer(minLength: 40)
+                Text(display.vibe)
+                    .font(.system(size: 14))
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.bottom, 18)
             }
-            .frame(maxWidth: MarketplacePageLayout.contentMaxWidth, alignment: .leading)
-            .padding(.horizontal, MarketplacePageLayout.horizontalPadding)
-            .padding(.top, MarketplacePageLayout.topPadding)
-            .padding(.bottom, MarketplacePageLayout.bottomPadding)
-            .frame(maxWidth: .infinity, alignment: .top)
+
+            contentSection
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(28)
+        .frame(width: 640)
         .background(Color(NSColor.windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: Color.black.opacity(0.22), radius: 24, x: 0, y: 14)
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+        )
         .onAppear {
             checkInstalled()
+            onDismissDisabledChange?(isInstalling)
+        }
+        .onDisappear {
+            onDismissDisabledChange?(false)
         }
     }
 
@@ -70,12 +73,12 @@ struct MarketplaceDetailView: View {
             AgentAvatarImage(size: 56)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(agent.name)
+                Text(display.name)
                     .font(.title)
                     .fontWeight(.bold)
 
                 HStack(spacing: 8) {
-                    Text(agent.division)
+                    Text(display.division)
                         .font(.caption)
                         .fontWeight(.medium)
                         .padding(.horizontal, 8)
@@ -92,33 +95,36 @@ struct MarketplaceDetailView: View {
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 16)
 
-            installButton
+            HStack(spacing: 8) {
+                installButton
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(isInstalling)
+                .help("Close")
+            }
         }
     }
 
     // MARK: - Install Button
 
     private var installButton: some View {
-        Button {
-            installAgent()
-        } label: {
-            if isInstalling {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 100)
-            } else if isInstalled {
-                Label(String(localized: "Recruited", bundle: languageManager.localizedBundle), systemImage: "checkmark.circle.fill")
-                    .frame(width: 100)
-            } else {
-                Label(String(localized: "Recruit", bundle: languageManager.localizedBundle), systemImage: "arrow.down.circle")
-                    .frame(width: 100)
-            }
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(isInstalled ? .green : .accentColor)
-        .disabled(isInstalling || isInstalled)
+        CatalogActionButton(
+            title: String(localized: "Recruit", bundle: languageManager.localizedBundle),
+            loadingTitle: String(localized: "Recruiting...", bundle: languageManager.localizedBundle),
+            completedTitle: String(localized: "Recruited", bundle: languageManager.localizedBundle),
+            systemImage: "arrow.down.circle",
+            state: recruitButtonState,
+            width: 100,
+            action: installAgent
+        )
         .alert(String(localized: "Recruit Failed", bundle: languageManager.localizedBundle), isPresented: Binding<Bool>(
             get: { installError != nil },
             set: { if !$0 { installError = nil } }
@@ -129,29 +135,14 @@ struct MarketplaceDetailView: View {
         }
     }
 
-    // MARK: - Description
-
-    private var descriptionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(String(localized: "Description", bundle: languageManager.localizedBundle))
-                .font(.headline)
-            Text(agent.description)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var recruitButtonState: CatalogActionButton.State {
+        if isInstalling {
+            return .loading
         }
-    }
-
-    // MARK: - Vibe
-
-    private var vibeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(String(localized: "Vibe", bundle: languageManager.localizedBundle))
-                .font(.headline)
-            Text(agent.vibe)
-                .italic()
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        if isInstalled {
+            return .completed
         }
+        return .normal
     }
 
     // MARK: - Content Preview
@@ -174,16 +165,20 @@ struct MarketplaceDetailView: View {
             .buttonStyle(.plain)
 
             if showContent {
-                Markdown(agent.content)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                    )
+                ScrollView {
+                    Markdown(agent.content)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 34)
+                        .padding(.vertical, 28)
+                }
+                .frame(height: 344)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.38))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                )
             }
         }
     }
@@ -206,6 +201,7 @@ struct MarketplaceDetailView: View {
 
     private func installAgent() {
         isInstalling = true
+        onDismissDisabledChange?(true)
         let agentId = sanitizedAgentId
         let displayName = agent.name
 
@@ -270,58 +266,10 @@ struct MarketplaceDetailView: View {
             try? memoryContent.write(toFile: (workspace as NSString).appendingPathComponent("MEMORY.md"),
                                       atomically: true, encoding: .utf8)
 
-            // Step 5: For awesome-design-system agent, copy DesignSystems folder
+            // Step 5: For awesome-design-system agent, prepare a lightweight design-system index.
             if agentId == "awesome-design-system" {
-                let designSystemsDestPath = (workspace as NSString).appendingPathComponent("DesignSystems")
-                var designSystemsSourcePath = ""
-
-                // Strategy 1: Try Bundle.main.resourcePath (standard path)
-                if let resourcePath = Bundle.main.resourcePath {
-                    let bundleDesignPath = (resourcePath as NSString).appendingPathComponent("DesignSystems")
-                    NSLog("[Marketplace] Checking Bundle resource path: %@", bundleDesignPath)
-                    if fm.fileExists(atPath: bundleDesignPath) {
-                        designSystemsSourcePath = bundleDesignPath
-                        NSLog("[Marketplace] Found DesignSystems in Bundle resource path")
-                    }
-                }
-
-                // Strategy 2: Try app bundle Contents/Resources (macOS app structure)
-                if designSystemsSourcePath.isEmpty {
-                    let bundlePath = Bundle.main.bundlePath
-                    let contentsResourcesPath = (bundlePath as NSString).appendingPathComponent("Contents/Resources/DesignSystems")
-                    NSLog("[Marketplace] Checking Bundle Contents/Resources path: %@", contentsResourcesPath)
-                    if fm.fileExists(atPath: contentsResourcesPath) {
-                        designSystemsSourcePath = contentsResourcesPath
-                        NSLog("[Marketplace] Found DesignSystems in Bundle Contents/Resources path")
-                    }
-                }
-
-                // Strategy 3: Try direct path from bundle executable directory
-                if designSystemsSourcePath.isEmpty {
-                    if let exePath = Bundle.main.executablePath {
-                        let execDir = (exePath as NSString).deletingLastPathComponent
-                        let resourcesDir = (execDir as NSString).appendingPathComponent("Resources")
-                        let designPath = (resourcesDir as NSString).appendingPathComponent("DesignSystems")
-                        NSLog("[Marketplace] Checking executable directory path: %@", designPath)
-                        if fm.fileExists(atPath: designPath) {
-                            designSystemsSourcePath = designPath
-                            NSLog("[Marketplace] Found DesignSystems in executable directory path")
-                        }
-                    }
-                }
-
-                // Perform copy if source found
-                if !designSystemsSourcePath.isEmpty {
-                    do {
-                        try? fm.removeItem(atPath: designSystemsDestPath)  // Remove if exists
-                        try fm.copyItem(atPath: designSystemsSourcePath, toPath: designSystemsDestPath)
-                        NSLog("[Marketplace] Successfully copied DesignSystems to workspace for awesome-design-system agent")
-                    } catch {
-                        NSLog("[Marketplace] Error: Failed to copy DesignSystems from %@ to %@: %@",
-                              designSystemsSourcePath, designSystemsDestPath, error.localizedDescription)
-                    }
-                } else {
-                    NSLog("[Marketplace] Error: DesignSystems folder not found in any expected Bundle resource paths")
+                _ = await MainActor.run {
+                    DesignSystemManager.shared.prepareWorkspace(at: workspace)
                 }
             }
 
@@ -329,6 +277,7 @@ struct MarketplaceDetailView: View {
 
             await MainActor.run {
                 isInstalling = false
+                onDismissDisabledChange?(false)
                 isInstalled = true
                 onInstalled(agentId)
             }

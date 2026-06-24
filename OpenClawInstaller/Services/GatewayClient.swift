@@ -22,6 +22,8 @@ struct GatewayActivityEvent: Equatable {
         case editedFiles
         case createdFiles
         case selectedModel
+        case agentUsed
+        case agentRecruited
         case toolFailed
     }
 
@@ -950,6 +952,9 @@ class GatewayClient: ObservableObject {
         if let modelEvent = parseModelActivity(data: data, payload: payload) {
             return modelEvent
         }
+        if let agentEvent = parseAgentActivity(data: data, payload: payload) {
+            return agentEvent
+        }
 
         guard stream == "tool" else {
             if stream == "error" {
@@ -983,6 +988,10 @@ class GatewayClient: ObservableObject {
             return GatewayActivityEvent(kind: .editedFiles, detail: detail, dedupeKey: key)
         case "grep", "rg", "search", "glob", "find", "list", "ls", "list_dir":
             return GatewayActivityEvent(kind: .searchedCode, detail: detail, dedupeKey: key)
+        case "agent", "agents", "subagent", "subagents", "delegate", "dispatch_agent":
+            return GatewayActivityEvent(kind: .agentUsed, detail: detail ?? toolName, dedupeKey: key)
+        case "recruit", "recruit_agent", "agent_recruit", "marketplace_agent":
+            return GatewayActivityEvent(kind: .agentRecruited, detail: detail ?? toolName, dedupeKey: key)
         case .some:
             return GatewayActivityEvent(kind: .loadedTools, detail: toolName, dedupeKey: key)
         case .none:
@@ -1003,6 +1012,30 @@ class GatewayClient: ObservableObject {
         return GatewayActivityEvent(kind: .selectedModel, detail: detail, dedupeKey: key)
     }
 
+    private func parseAgentActivity(data: [String: Any], payload: [String: Any]) -> GatewayActivityEvent? {
+        let phase = (
+            firstString(in: data, keys: ["phase", "action", "event", "status", "state"])
+            ?? firstString(in: payload, keys: ["phase", "action", "event", "status", "state"])
+            ?? ""
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+
+        let agentId = firstString(in: data, keys: ["agentId", "agent", "subagent", "subAgentId", "name"])
+            ?? firstString(in: payload, keys: ["agentId", "agent", "subagent", "subAgentId", "name"])
+        let detail = agentId.flatMap { clippedDetail($0) }
+        let key = stableActivityKey(prefix: "agent", payload: payload, data: data, fallback: "\(phase):\(detail ?? "")")
+
+        if phase.contains("recruit") || phase.contains("install") {
+            return GatewayActivityEvent(kind: .agentRecruited, detail: detail, dedupeKey: key)
+        }
+        guard detail != nil else { return nil }
+        if phase.contains("agent") || phase.contains("delegate") || phase.contains("dispatch") || phase.contains("subagent") {
+            return GatewayActivityEvent(kind: .agentUsed, detail: detail, dedupeKey: key)
+        }
+        return nil
+    }
+
     private func sanitizedActivityDetail(for toolName: String?, data: [String: Any]) -> String? {
         let argumentKeys: [String]
         switch toolName {
@@ -1012,8 +1045,10 @@ class GatewayClient: ObservableObject {
             argumentKeys = ["command", "cmd"]
         case "grep", "rg", "search", "glob", "find", "list", "ls", "list_dir":
             argumentKeys = ["query", "pattern", "path", "cwd", "command"]
+        case "agent", "agents", "subagent", "subagents", "delegate", "dispatch_agent", "recruit", "recruit_agent", "agent_recruit", "marketplace_agent":
+            argumentKeys = ["agentId", "agent", "subagent", "subAgentId", "name", "role"]
         default:
-            argumentKeys = ["path", "command", "query", "name"]
+            argumentKeys = ["path", "command", "query", "name", "agentId", "agent"]
         }
 
         if let direct = firstString(in: data, keys: argumentKeys) {

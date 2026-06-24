@@ -1,0 +1,90 @@
+{
+  "academic-anthropologist": {
+    "zh-Hans": {
+      "name": "人类学家",
+      "division": "学术",
+      "description": "文化系统、仪式、亲属关系、信仰体系和民族志方法专家。帮助构建有内部逻辑、真实可信的社会，而不是凭空拼凑的设定。",
+      "vibe": "没有一种文化是随机的；每种实践都在回应一个你暂时还没有看见的问题。",
+      "specialty": "文化系统、亲属关系、仪式、信仰体系",
+      "whenToUse": "设计具有内部逻辑、文化上自洽的社会设定"
+    },
+    "zh-Hant": {
+      "name": "人類學家",
+      "division": "學術",
+      "description": "文化系統、儀式、親屬關係、信仰體系和民族誌方法專家。幫助建構有內部邏輯、真實可信的社會，而不是憑空拼湊的設定。",
+      "vibe": "沒有一種文化是隨機的；每種實踐都在回應一個你暫時還沒有看見的問題。",
+      "specialty": "文化系統、親屬關係、儀式、信仰體系",
+      "whenToUse": "設計具有內部邏輯、文化上自洽的社會設定"
+    }
+  },
+  "awesome-design-system": {
+    "zh-Hans": {
+      "name": "优秀设计系统",
+      "division": "设计",
+      "description": "设计系统专家，可按需使用 awesome-design-md 中的专业品牌设计系统资料。适合研究 Figma、Stripe、Airbnb、Cal.com 等品牌的设计风格和设计原则。",
+      "vibe": "你的个人设计资料库：在需要时调取相关品牌设计系统，而不是一次塞入全部资料。",
+      "specialty": "设计系统、品牌设计模式、设计探索",
+      "whenToUse": "学习设计系统、探索品牌设计灵感、理解设计原则"
+    },
+    "zh-Hant": {
+      "name": "優秀設計系統",
+      "division": "設計",
+      "description": "設計系統專家，可按需使用 awesome-design-md 中的專業品牌設計系統資料。適合研究 Figma、Stripe、Airbnb、Cal.com 等品牌的設計風格和設計原則。",
+      "vibe": "你的個人設計資料庫：在需要時調取相關品牌設計系統，而不是一次塞入全部資料。",
+      "specialty": "設計系統、品牌設計模式、設計探索",
+      "whenToUse": "學習設計系統、探索品牌設計靈感、理解設計原則"
+    },
+    "ja": {
+      "name": "優れたデザインシステム",
+      "division": "デザイン",
+      "description": "awesome-design-md のプロ向けブランドデザインシステムを必要に応じて参照できるデザインシステム専門エージェント。",
+      "vibe": "必要なブランド資料だけを取り出す、あなた専用のデザインライブラリ。",
+      "specialty": "デザインシステム、ブランドデザインパターン、デザイン探索",
+      "whenToUse": "デザインシステムの学習、ブランド表現の調査、デザイン原則の理解"
+    },
+    "es": {
+      "name": "Sistema de Diseño Excelente",
+      "division": "Diseño",
+      "description": "Especialista en sistemas de diseño que puede consultar documentación profesional de marcas desde awesome-design-md cuando sea relevante.",
+      "vibe": "Tu biblioteca personal de diseño, con solo los sistemas de marca que el trabajo necesita.",
+      "specialty": "Sistemas de diseño, patrones de marca, exploración visual",
+      "whenToUse": "Aprender sistemas de diseño, explorar inspiración de marca y entender principios visuales"
+    }
+  },
+  "design-ui-designer": {
+    "zh-Hans": {
+      "name": "UI 设计师",
+      "division": "设计",
+      "description": "专注视觉设计系统、组件库和像素级界面设计的 UI 专家。创建美观、一致、可访问，并能体现品牌身份的用户界面。",
+      "vibe": "创造美观、一致、可访问，并且手感刚刚好的界面。",
+      "specialty": "视觉设计、组件库、设计系统",
+      "whenToUse": "界面创建、品牌一致性、组件设计"
+    },
+    "zh-Hant": {
+      "name": "UI 設計師",
+      "division": "設計",
+      "description": "專注視覺設計系統、元件庫和像素級介面設計的 UI 專家。建立美觀、一致、可訪問，並能體現品牌身份的使用者介面。",
+      "vibe": "創造美觀、一致、可訪問，並且手感剛剛好的介面。",
+      "specialty": "視覺設計、元件庫、設計系統",
+      "whenToUse": "介面建立、品牌一致性、元件設計"
+    }
+  },
+  "engineering-backend-architect": {
+    "zh-Hans": {
+      "name": "后端架构师",
+      "division": "工程",
+      "description": "资深后端架构师，专注可扩展系统设计、数据库架构、API 开发和云基础设施。构建稳健、安全、高性能的服务端应用和微服务。",
+      "vibe": "设计支撑一切的系统：数据库、API、云、扩展性。",
+      "specialty": "API 设计、数据库架构、可扩展性",
+      "whenToUse": "服务端系统、微服务、云基础设施"
+    },
+    "zh-Hant": {
+      "name": "後端架構師",
+      "division": "工程",
+      "description": "資深後端架構師，專注可擴展系統設計、資料庫架構、API 開發和雲端基礎設施。建構穩健、安全、高效能的服務端應用和微服務。",
+      "vibe": "設計支撐一切的系統：資料庫、API、雲端、擴展性。",
+      "specialty": "API 設計、資料庫架構、可擴展性",
+      "whenToUse": "服務端系統、微服務、雲端基礎設施"
+    }
+  }
+}

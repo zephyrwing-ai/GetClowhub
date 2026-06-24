@@ -45,6 +45,8 @@
 		SCSV0000000000000001 /* SmoothScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SCSV0000000000000002 /* SmoothScrollView.swift */; };
 		USCH0000000000000001 /* UnifiedSearchField.swift in Sources */ = {isa = PBXBuildFile; fileRef = USCH0000000000000002 /* UnifiedSearchField.swift */; };
 		CDOT0000000000000001 /* CursorDotOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDOT0000000000000002 /* CursorDotOverlay.swift */; };
+		DMOD0000000000000001 /* DashboardModalOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = DMOD0000000000000002 /* DashboardModalOverlay.swift */; };
+		CACT0000000000000001 /* CatalogActionButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACT0000000000000002 /* CatalogActionButton.swift */; };
 		356410642F5802970045A6F7 /* OpenClawService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3564102C2F5802970045A6F7 /* OpenClawService.swift */; };
 		FC838E8912A04DD484067D79 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECE40F8EAC7C41D4B7C85C46 /* AuthManager.swift */; };
 		A1B2C3D4E5F647A8B9C0D1E2 /* UninstallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A647389021A3B4 /* UninstallManager.swift */; };
@@ -90,8 +92,10 @@
 		MB01AC01D3E4F5A6B7C80001 /* MembershipManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB01AC02D3E4F5A6B7C80002 /* MembershipManager.swift */; };
 		MP01AD02E4F5A6B7C8D90002 /* MarketplaceAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = MP01AD01E4F5A6B7C8D90001 /* MarketplaceAgent.swift */; };
 		MP01AD04E4F5A6B7C8D90004 /* MarketplaceDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MP01AD03E4F5A6B7C8D90003 /* MarketplaceDetailView.swift */; };
+		MPVW0000000000000001 /* MarketplaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = MPVW0000000000000002 /* MarketplaceView.swift */; };
 		35641B022F7A02970045A6F7 /* MarketplaceOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35641B012F7A02970045A6F7 /* MarketplaceOverviewView.swift */; };
 		MP01AD06E4F5A6B7C8D90006 /* marketplace_agents.json in Resources */ = {isa = PBXBuildFile; fileRef = MP01AD05E4F5A6B7C8D90005 /* marketplace_agents.json */; };
+		MP01AD08E4F5A6B7C8D90008 /* marketplace_agents.i18n.json in Resources */ = {isa = PBXBuildFile; fileRef = MP01AD07E4F5A6B7C8D90007 /* marketplace_agents.i18n.json */; };
 		DBUILD001000000000000000 /* DesignSystems in Resources */ = {isa = PBXBuildFile; fileRef = DESIGN000100000000000000 /* DesignSystems */; };
 		MBUILD001000000000000000 /* DesignSystemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DESIGNMGR000000000000000 /* DesignSystemManager.swift */; };
 	/* End PBXBuildFile section */
@@ -146,6 +150,8 @@
 		SCSV0000000000000002 /* SmoothScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmoothScrollView.swift; sourceTree = "<group>"; };
 		USCH0000000000000002 /* UnifiedSearchField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedSearchField.swift; sourceTree = "<group>"; };
 		CDOT0000000000000002 /* CursorDotOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorDotOverlay.swift; sourceTree = "<group>"; };
+		DMOD0000000000000002 /* DashboardModalOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardModalOverlay.swift; sourceTree = "<group>"; };
+		CACT0000000000000002 /* CatalogActionButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogActionButton.swift; sourceTree = "<group>"; };
 		356410432F5802970045A6F7 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		356410452F5802970045A6F7 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		356410462F5802970045A6F7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -179,8 +185,10 @@
 		MP01AD01E4F5A6B7C8D90001 /* MarketplaceAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceAgent.swift; sourceTree = "<group>"; };
 		SKSRC0000000000000002 /* SkillSourcePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillSourcePresentation.swift; sourceTree = "<group>"; };
 		MP01AD03E4F5A6B7C8D90003 /* MarketplaceDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceDetailView.swift; sourceTree = "<group>"; };
+		MPVW0000000000000002 /* MarketplaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceView.swift; sourceTree = "<group>"; };
 		35641B012F7A02970045A6F7 /* MarketplaceOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceOverviewView.swift; sourceTree = "<group>"; };
 		MP01AD05E4F5A6B7C8D90005 /* marketplace_agents.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = marketplace_agents.json; sourceTree = "<group>"; };
+		MP01AD07E4F5A6B7C8D90007 /* marketplace_agents.i18n.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = marketplace_agents.i18n.json; sourceTree = "<group>"; };
 		DESIGN000100000000000000 /* DesignSystems */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DesignSystems; sourceTree = SOURCE_ROOT; };
 		DESIGNMGR000000000000000 /* DesignSystemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystemManager.swift; sourceTree = "<group>"; };
 	/* End PBXFileReference section */
@@ -266,6 +274,7 @@
 				DI01AB02C2D3E4F5A6B70002 /* DeviceIdentity.swift */,
 				DI01AB04C2D3E4F5A6B70004 /* DeviceAuthTokenStore.swift */,
 				CS01AA04D1E2F3A4B5C60004 /* ChatSessionStore.swift */,
+				DESIGNMGR000000000000000 /* DesignSystemManager.swift */,
 				356410782F5802970045A6F7 /* LanguageManager.swift */,
 				3564102A2F5802970045A6F7 /* NodeInstaller.swift */,
 				3564102B2F5802970045A6F7 /* OpenClawInstaller.swift */,
@@ -308,6 +317,7 @@
 				F4A5B6C7D8E94C3A4B5C6D7E /* HelpAssistantWindow.swift */,
 				356410352F5802970045A6F7 /* LogsTabView.swift */,
 				MP01AD03E4F5A6B7C8D90003 /* MarketplaceDetailView.swift */,
+				MPVW0000000000000002 /* MarketplaceView.swift */,
 				35641B012F7A02970045A6F7 /* MarketplaceOverviewView.swift */,
 				3564106A2F5802970045A6F7 /* ModelsTabView.swift */,
 				356410662F5802970045A6F7 /* PluginsTabView.swift */,
@@ -356,6 +366,8 @@
 				SCSV0000000000000002 /* SmoothScrollView.swift */,
 				USCH0000000000000002 /* UnifiedSearchField.swift */,
 				CDOT0000000000000002 /* CursorDotOverlay.swift */,
+				DMOD0000000000000002 /* DashboardModalOverlay.swift */,
+				CACT0000000000000002 /* CatalogActionButton.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -396,6 +408,7 @@
 			children = (
 				C011AB08A1B2C3D4E5F60008 /* commander-persona.md */,
 				MP01AD05E4F5A6B7C8D90005 /* marketplace_agents.json */,
+				MP01AD07E4F5A6B7C8D90007 /* marketplace_agents.i18n.json */,
 				3564106F2F5802970045A6F7 /* providers_preset.json */,
 				B5C6D7E8F9A04E4A6B7C8D9E /* 用户指南.md */,
 			);
@@ -475,6 +488,7 @@
 				3564107B2F5802970045A6F7 /* Localizable.xcstrings in Resources */,
 				356410712F5802970045A6F7 /* providers_preset.json in Resources */,
 				MP01AD06E4F5A6B7C8D90006 /* marketplace_agents.json in Resources */,
+				MP01AD08E4F5A6B7C8D90008 /* marketplace_agents.i18n.json in Resources */,
 				A5B6C7D8E9F04D4A5B6C7D8E /* 用户指南.md in Resources */,
 				C011AB07A1B2C3D4E5F60007 /* commander-persona.md in Resources */,
 				DBUILD001000000000000000 /* DesignSystems in Resources */,
@@ -522,6 +536,8 @@
 				SCSV0000000000000001 /* SmoothScrollView.swift in Sources */,
 				USCH0000000000000001 /* UnifiedSearchField.swift in Sources */,
 				CDOT0000000000000001 /* CursorDotOverlay.swift in Sources */,
+				DMOD0000000000000001 /* DashboardModalOverlay.swift in Sources */,
+				CACT0000000000000001 /* CatalogActionButton.swift in Sources */,
 				356410642F5802970045A6F7 /* OpenClawService.swift in Sources */,
 				356410652F5802970045A6F7 /* StatusTabView.swift in Sources */,
 				356410672F5802970045A6F7 /* PluginsTabView.swift in Sources */,
@@ -562,8 +578,10 @@
 				CS01AA05D1E2F3A4B5C60005 /* ChatSessionSearch.swift in Sources */,
 				CS01AA03D1E2F3A4B5C60003 /* ChatSessionStore.swift in Sources */,
 				MB01AC01D3E4F5A6B7C80001 /* MembershipManager.swift in Sources */,
+				MBUILD001000000000000000 /* DesignSystemManager.swift in Sources */,
 				MP01AD02E4F5A6B7C8D90002 /* MarketplaceAgent.swift in Sources */,
 				MP01AD04E4F5A6B7C8D90004 /* MarketplaceDetailView.swift in Sources */,
+				MPVW0000000000000001 /* MarketplaceView.swift in Sources */,
 				35641B022F7A02970045A6F7 /* MarketplaceOverviewView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

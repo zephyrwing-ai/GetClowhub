@@ -33,6 +33,10 @@ private enum DashboardSidebarMetrics {
     static let sessionRowVerticalPadding: CGFloat = 4
 }
 
+private struct SessionRenamePresentation: Identifiable {
+    let id: UUID
+}
+
 struct DashboardView: View {
     @ObservedObject var viewModel: DashboardViewModel
     @StateObject private var createAgentVM: SubAgentsViewModel
@@ -63,6 +67,9 @@ struct DashboardView: View {
     @State private var selectedPluginDetailItem: PluginDetailPresentationItem?
     @State private var selectedSettingsSection: SettingsPageSection = .profile
     @State private var skillPendingRemoval: SkillInfo?
+    @State private var marketplaceInstallRefreshID = 0
+    @State private var sessionRenamePresentation: SessionRenamePresentation?
+    @State private var sessionRenameDraft: String = ""
     @State private var requestedUserMessageJumpId: UUID?
     @State private var sessionTitleFrame: CGRect = .zero
     @State private var isSessionTitleHovering = false
@@ -72,11 +79,13 @@ struct DashboardView: View {
     @State private var terminalOpen = false
     @State private var terminalHeight: CGFloat = 120
     @FocusState private var isGlobalSessionSearchFocused: Bool
+    @FocusState private var isSessionRenameFocused: Bool
 
     private let workspaceSidebarMinWidth: CGFloat = 240
     private let workspaceSidebarMaxWidth: CGFloat = 420
     private let sessionTitleFlyoutWidth: CGFloat = 360
     private let pluginDetailAnimation = Animation.spring(response: 0.34, dampingFraction: 0.86, blendDuration: 0.04)
+    private let marketplaceDetailAnimation = Animation.spring(response: 0.26, dampingFraction: 0.86)
     private static let workspaceLayoutMetrics = OutputsSidebarLayoutMetrics()
 
     init(viewModel: DashboardViewModel) {
@@ -93,6 +102,7 @@ struct DashboardView: View {
                 expandedAgentIds: $expandedAgentIds,
                 onOpenGlobalSessionSearch: openGlobalSessionSearch,
                 onRequestCreateAgent: presentCreateAgentOverlay,
+                onRequestRenameSession: beginSessionRename,
                 onOpenSettingsSection: openSettingsSection
             )
         } detail: {
@@ -114,7 +124,9 @@ struct DashboardView: View {
                     terminalOpen: $terminalOpen,
                     terminalHeight: $terminalHeight,
                     onOpenSkillDetail: presentSkillDetail,
-                    onOpenPluginDetail: presentPluginDetail
+                    onOpenPluginDetail: presentPluginDetail,
+                    marketplaceInstallRefreshID: marketplaceInstallRefreshID,
+                    onOpenMarketplaceDetail: presentMarketplaceDetail
                 )
             } sidebar: {
                 workspaceSidebarPane(width: max(workspaceColumnIdealWidth, Self.workspaceLayoutMetrics.browserWidth))
@@ -180,6 +192,11 @@ struct DashboardView: View {
             }
         }
         .overlay {
+            if sessionRenamePresentation != nil {
+                sessionRenameOverlay
+            }
+        }
+        .overlay {
             if let selectedSkillDetailItem, shouldShowSkillDetailOverlay {
                 skillDetailOverlay(for: selectedSkillDetailItem)
             }
@@ -189,14 +206,21 @@ struct DashboardView: View {
                 pluginDetailOverlay(for: selectedPluginDetailItem)
             }
         }
+        .overlay {
+            if let agent = viewModel.selectedMarketplaceAgent, shouldShowMarketplaceDetailOverlay {
+                marketplaceDetailOverlay(for: agent)
+            }
+        }
         .overlay(alignment: .topLeading) {
             sessionTitleUserMessagesFlyout
         }
         .animation(.easeInOut, value: viewModel.showSuccess)
         .animation(.easeInOut(duration: 0.16), value: isGlobalSessionSearchPresented)
         .animation(.easeInOut(duration: 0.16), value: isCreateAgentOverlayPresented)
+        .animation(.easeInOut(duration: 0.16), value: sessionRenamePresentation?.id)
         .animation(.spring(response: 0.24, dampingFraction: 0.9), value: selectedSkillDetailItem?.id)
         .animation(pluginDetailAnimation, value: selectedPluginDetailItem?.id)
+        .animation(marketplaceDetailAnimation, value: viewModel.selectedMarketplaceAgent?.id)
         .onAppear {
             viewModel.openclawService.startMonitoring()
             Task {
@@ -628,6 +652,128 @@ struct DashboardView: View {
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .center)))
     }
 
+    private func beginSessionRename(_ meta: ChatSessionMetadata) {
+        closeSessionTitleFlyout()
+        viewModel.switchSessionGlobally(to: meta.id)
+        viewModel.selectedTab = .chat
+        sessionRenameDraft = meta.title
+        sessionRenamePresentation = SessionRenamePresentation(id: meta.id)
+        DispatchQueue.main.async {
+            isSessionRenameFocused = true
+        }
+    }
+
+    private func saveSessionRename() {
+        guard let presentation = sessionRenamePresentation else { return }
+        viewModel.renameSession(presentation.id, to: sessionRenameDraft)
+        dismissSessionRename()
+    }
+
+    private func dismissSessionRename() {
+        sessionRenamePresentation = nil
+        sessionRenameDraft = ""
+        isSessionRenameFocused = false
+    }
+
+    private var sessionRenameOverlay: some View {
+        GeometryReader { proxy in
+            let panelWidth = min(420, max(320, proxy.size.width - 64))
+            let canSave = !sessionRenameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let snowSurface = Color(red: 0.965, green: 0.973, blue: 0.955)
+            let snowFieldSurface = Color(red: 0.925, green: 0.936, blue: 0.912)
+            let snowText = Color(red: 0.10, green: 0.12, blue: 0.10)
+            let snowSecondaryText = Color(red: 0.42, green: 0.44, blue: 0.40)
+
+            DashboardModalOverlay(
+                isDismissDisabled: false,
+                scrimOpacity: isDark ? 0.28 : 0.16,
+                verticalOffset: -44,
+                onDismiss: dismissSessionRename
+            ) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(String(localized: "Rename chat", bundle: languageManager.localizedBundle))
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(snowText)
+
+                        Spacer()
+
+                        Button {
+                            dismissSessionRename()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(snowSecondaryText)
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Close", bundle: languageManager.localizedBundle))
+                    }
+
+                    Text(String(localized: "Keep it short and recognizable", bundle: languageManager.localizedBundle))
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(snowSecondaryText)
+
+                    TextField(String(localized: "Chat name", bundle: languageManager.localizedBundle), text: $sessionRenameDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(snowText)
+                        .focused($isSessionRenameFocused)
+                        .onSubmit {
+                            if canSave {
+                                saveSessionRename()
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 38)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(snowFieldSurface)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.black.opacity(0.10), lineWidth: 1)
+                        )
+
+                    HStack(spacing: 10) {
+                        Spacer()
+
+                        Button(String(localized: "Cancel", bundle: languageManager.localizedBundle), role: .cancel) {
+                            dismissSessionRename()
+                        }
+                        .keyboardShortcut(.cancelAction)
+
+                        Button(String(localized: "Save", bundle: languageManager.localizedBundle)) {
+                            saveSessionRename()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!canSave)
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(20)
+                .frame(width: panelWidth, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(
+                            isDark
+                                ? snowSurface.opacity(0.94)
+                                : snowSurface
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.black.opacity(isDark ? 0.16 : 0.08), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(isDark ? 0.36 : 0.18), radius: 34, x: 0, y: 22)
+                .onTapGesture {}
+                .onExitCommand {
+                    dismissSessionRename()
+                }
+            }
+        }
+    }
+
     private func presentSkillDetail(_ item: SkillDetailPresentationItem) {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
             selectedSkillDetailItem = item
@@ -643,6 +789,24 @@ struct DashboardView: View {
     private func openSettingsSection(_ section: SettingsPageSection) {
         selectedSettingsSection = section
         viewModel.selectedTab = .config
+    }
+
+    private var shouldShowMarketplaceDetailOverlay: Bool {
+        viewModel.selectedTab == .market
+    }
+
+    private func presentMarketplaceDetail(_ agent: MarketplaceAgent) {
+        guard !viewModel.isRecruitingMarketplaceAgent else { return }
+        withAnimation(marketplaceDetailAnimation) {
+            viewModel.selectedMarketplaceAgent = agent
+        }
+    }
+
+    private func dismissMarketplaceDetail() {
+        guard !viewModel.isRecruitingMarketplaceAgent else { return }
+        withAnimation(marketplaceDetailAnimation) {
+            viewModel.selectedMarketplaceAgent = nil
+        }
     }
 
     private func skillDetailOverlay(for item: SkillDetailPresentationItem) -> some View {
@@ -691,6 +855,27 @@ struct DashboardView: View {
             insertion: .opacity.combined(with: .scale(scale: 0.965, anchor: .center)),
             removal: .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
         ))
+    }
+
+    private func marketplaceDetailOverlay(for agent: MarketplaceAgent) -> some View {
+        DashboardModalOverlay(
+            isDismissDisabled: viewModel.isRecruitingMarketplaceAgent,
+            onDismiss: dismissMarketplaceDetail
+        ) {
+            MarketplaceDetailView(
+                agent: agent,
+                openclawService: viewModel.openclawService,
+                onInstalled: { _ in
+                    viewModel.loadAvailableAgents()
+                    marketplaceInstallRefreshID += 1
+                },
+                onClose: dismissMarketplaceDetail,
+                onDismissDisabledChange: { disabled in
+                    viewModel.isRecruitingMarketplaceAgent = disabled
+                }
+            )
+            .id(agent.id)
+        }
     }
 
     private func presentPluginDetail(_ item: PluginDetailPresentationItem) {
@@ -1179,6 +1364,7 @@ struct SidebarView: View {
     @ObservedObject var createAgentVM: SubAgentsViewModel
     let onOpenGlobalSessionSearch: () -> Void
     let onRequestCreateAgent: () -> Void
+    let onRequestRenameSession: (ChatSessionMetadata) -> Void
     let onOpenSettingsSection: (SettingsPageSection) -> Void
     @EnvironmentObject var sparkleUpdater: SparkleUpdater
     @EnvironmentObject var languageManager: LanguageManager
@@ -1198,8 +1384,6 @@ struct SidebarView: View {
     @State private var deleteAgentConfirmId: String?
 
     // Chat session management state
-    @State private var sessionRenameId: UUID?
-    @State private var sessionRenameDraft: String = ""
     @State private var confirmingDeleteSessionId: UUID?
 
     // Marketplace state
@@ -1221,6 +1405,7 @@ struct SidebarView: View {
         expandedAgentIds: Binding<Set<String>>,
         onOpenGlobalSessionSearch: @escaping () -> Void,
         onRequestCreateAgent: @escaping () -> Void,
+        onRequestRenameSession: @escaping (ChatSessionMetadata) -> Void,
         onOpenSettingsSection: @escaping (SettingsPageSection) -> Void
     ) {
         self._selectedTab = selectedTab
@@ -1229,6 +1414,7 @@ struct SidebarView: View {
         self.createAgentVM = createAgentVM
         self.onOpenGlobalSessionSearch = onOpenGlobalSessionSearch
         self.onRequestCreateAgent = onRequestCreateAgent
+        self.onRequestRenameSession = onRequestRenameSession
         self.onOpenSettingsSection = onOpenSettingsSection
     }
 
@@ -1244,24 +1430,6 @@ struct SidebarView: View {
             sidebarBottomBar
         }
         .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 320)
-        // Chat session rename — bound to sessionRenameId; clearing it dismisses
-        .alert("Rename Session",
-               isPresented: Binding(
-                   get: { sessionRenameId != nil },
-                   set: { if !$0 { sessionRenameId = nil } }
-               ),
-               actions: {
-                   TextField("Session name", text: $sessionRenameDraft)
-                   Button("Save") {
-                       if let id = sessionRenameId {
-                           viewModel.renameSession(id, to: sessionRenameDraft)
-                       }
-                       sessionRenameId = nil
-                   }
-                   Button("Cancel", role: .cancel) {
-                       sessionRenameId = nil
-                   }
-               })
         .alert("Remove Agent", isPresented: Binding<Bool>(
             get: { deleteAgentConfirmId != nil },
             set: { if !$0 { deleteAgentConfirmId = nil } }
@@ -1490,6 +1658,10 @@ struct SidebarView: View {
                         .fill(sessionRowHighlightColor(isActive: isVisibleAgent && activeId == meta.id, isHovering: isSessionHovering))
                 )
                 .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    cancelSessionDeleteConfirmation()
+                    onRequestRenameSession(meta)
+                }
                 .onTapGesture {
                     cancelSessionDeleteConfirmation()
                     viewModel.switchSession(to: meta.id)
@@ -1506,8 +1678,8 @@ struct SidebarView: View {
                 }
                 .contextMenu {
                     Button {
-                        sessionRenameId = meta.id
-                        sessionRenameDraft = meta.title
+                        cancelSessionDeleteConfirmation()
+                        onRequestRenameSession(meta)
                     } label: {
                         Label("Rename", systemImage: "pencil")
                     }
@@ -1610,7 +1782,7 @@ struct SidebarView: View {
                                 VStack(alignment: .leading, spacing: 0) {
                                     sessionsSectionContent(for: agent)
                                 }
-                                    .transition(.move(edge: .top).combined(with: .opacity))
+                                    .transition(.asymmetric(insertion: .opacity, removal: .identity))
                                     .clipped()
                             }
                         }
@@ -2217,14 +2389,14 @@ struct SidebarView: View {
     ]
 
     private var filteredMarketplaceAgents: [MarketplaceAgent] {
-        MarketplaceCatalog.shared.search(query: marketplaceSearchText)
+        MarketplaceCatalog.shared.search(query: marketplaceSearchText, localeID: languageManager.currentLocale.identifier)
     }
 
     /// Agents grouped by division, used when not searching
     private var agentsByDivision: [(division: String, agents: [MarketplaceAgent])] {
         let catalog = MarketplaceCatalog.shared
         return catalog.divisions.compactMap { div in
-            let agents = catalog.search(query: "", division: div)
+            let agents = catalog.search(query: "", division: div, localeID: languageManager.currentLocale.identifier)
             guard !agents.isEmpty else { return nil }
             return (division: div, agents: agents)
         }
@@ -2232,29 +2404,29 @@ struct SidebarView: View {
 
     private var marketplaceList: some View {
         VStack(spacing: 0) {
-            UnifiedSearchField(placeholder: "Search agents...", text: $marketplaceSearchText)
+            UnifiedSearchField(
+                placeholder: String(localized: "Search agents...", bundle: languageManager.localizedBundle),
+                text: $marketplaceSearchText
+            )
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
 
             // Agent list - tree view or flat search results.
             //
-            // Selecting an agent has to do TWO things:
-            //   1. Set `selectedMarketplaceAgent` — the .market tab's
-            //      branch keys off this to swap from MarketplaceOverview
-            //      to MarketplaceDetailView for the chosen agent.
-            //   2. Set `selectedTab = .market` — without this, the user
-            //      might be on the .chat tab (or any other), and the
-            //      main content area keeps showing chat while only the
-            //      sidebar reflects the marketplace selection. The
-            //      previous binding only did (1), so clicking an agent
-            //      in the sidebar visibly highlighted it but the right
-            //      side stayed on the previous tab.
+            // Selecting an agent updates the same selected agent used by
+            // the market grid highlight and the root-level modal overlay.
+            // It also switches the main content to the market tab so the
+            // sidebar selection, page title, grid, and detail modal stay
+            // synchronized around one current agent.
             List(selection: Binding<MarketplaceAgent?>(
                 get: { viewModel.selectedMarketplaceAgent },
                 set: { newAgent in
-                    viewModel.selectedMarketplaceAgent = newAgent
-                    if newAgent != nil {
-                        viewModel.selectedTab = .market
+                    guard !viewModel.isRecruitingMarketplaceAgent else { return }
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                        viewModel.selectedMarketplaceAgent = newAgent
+                        if newAgent != nil {
+                            viewModel.selectedTab = .market
+                        }
                     }
                 }
             )) {
@@ -2262,6 +2434,7 @@ struct SidebarView: View {
                     // Tree view grouped by division
                     ForEach(agentsByDivision, id: \.division) { group in
                         let emoji = Self.divisionEmoji[group.division] ?? "📁"
+                        let divisionName = MarketplaceCatalog.shared.localizedDivisionName(group.division, localeID: languageManager.currentLocale.identifier)
                         DisclosureGroup(
                             isExpanded: Binding<Bool>(
                                 get: { expandedDivisions.contains(group.division) },
@@ -2275,11 +2448,11 @@ struct SidebarView: View {
                             )
                         ) {
                             ForEach(group.agents) { agent in
-                                MarketplaceAgentRow(agent: agent)
+                            MarketplaceAgentRow(agent: agent)
                                     .tag(agent)
                             }
                         } label: {
-                            Text(verbatim: "\(emoji) \(group.division) (\(group.agents.count))")
+                            Text(verbatim: "\(emoji) \(divisionName) (\(group.agents.count))")
                                 .font(.system(size: 13, weight: .medium))
                         }
                     }
@@ -2350,25 +2523,30 @@ private struct AgentListRow: View {
 
 private struct MarketplaceAgentRow: View {
     let agent: MarketplaceAgent
+    @EnvironmentObject var languageManager: LanguageManager
+
+    private var display: MarketplaceAgentDisplay {
+        agent.localizedDisplay(localeID: languageManager.currentLocale.identifier)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
             AgentAvatarImage(size: 26)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(agent.name)
+                Text(display.name)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
 
-                if !agent.description.isEmpty {
-                    Text(agent.description)
+                if !display.description.isEmpty {
+                    Text(display.description)
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                         .truncationMode(.tail)
                 }
 
-                Text(agent.division)
+                Text(display.division)
                     .font(.system(size: 10))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -2463,6 +2641,8 @@ private struct DetailContentView: View {
     @Binding var terminalHeight: CGFloat
     let onOpenSkillDetail: (SkillDetailPresentationItem) -> Void
     let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void
+    let marketplaceInstallRefreshID: Int
+    let onOpenMarketplaceDetail: (MarketplaceAgent) -> Void
     @State private var collabPanelWidth: CGFloat = 320
     @State private var dragStartWidth: CGFloat = 320
 
@@ -2554,30 +2734,11 @@ private struct DetailContentView: View {
                     case .subAgents:
                         SubAgentsTabView(openclawService: viewModel.openclawService)
                     case .market:
-                        // Marketplace lives in the main content area now (was a
-                        // sidebar mode). Detail view replaces overview when an
-                        // agent is selected; back arrow clears selection.
-                        if let agent = viewModel.selectedMarketplaceAgent {
-                            MarketplaceDetailView(
-                                agent: agent,
-                                openclawService: viewModel.openclawService,
-                                onInstalled: { agentId in
-                                    viewModel.loadAvailableAgents()
-                                    viewModel.selectedTab = .chat
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                        viewModel.selectedAgentId = agentId
-                                    }
-                                },
-                                onBack: {
-                                    viewModel.selectedMarketplaceAgent = nil
-                                }
-                            )
-                            .id(agent.id)
-                        } else {
-                            MarketplaceOverviewView(onSelect: { agent in
-                                viewModel.selectedMarketplaceAgent = agent
-                            })
-                        }
+                        MarketplaceView(
+                            selectedAgent: viewModel.selectedMarketplaceAgent,
+                            installRefreshID: marketplaceInstallRefreshID,
+                            onSelectAgent: onOpenMarketplaceDetail
+                        )
                     case .tasksLogs:
                         TasksLogsTabView(viewModel: viewModel)
                     case .config:
@@ -2859,7 +3020,7 @@ private struct ChatScrollCompensationApplier: NSViewRepresentable {
 
         let clipView = scrollView.contentView
         var bounds = clipView.bounds
-        let targetOffset = desiredOffset ?? (bounds.origin.y + delta)
+        let targetOffset = desiredOffset ?? (bounds.origin.y + visualCompensationOffset(delta, documentView: documentView))
         let maxOffset = max(0, documentView.bounds.height - clipView.bounds.height)
         let nextOffset = min(max(targetOffset, 0), maxOffset)
 
@@ -2882,6 +3043,10 @@ private struct ChatScrollCompensationApplier: NSViewRepresentable {
                 desiredOffset: targetOffset
             )
         }
+    }
+
+    private static func visualCompensationOffset(_ delta: CGFloat, documentView: NSView) -> CGFloat {
+        documentView.isFlipped ? delta : -delta
     }
 
     final class Coordinator {
@@ -5329,7 +5494,7 @@ private struct WorkStatusHeader: View {
 
 private enum WorkStatusDurationText {
     static func status(elapsedSeconds: Int, isFinished: Bool) -> String {
-        let key = isFinished ? "Done in %@" : "Working for %@"
+        let key = isFinished ? "Worked for %@" : "Working for %@"
         return String(
             format: String(localized: String.LocalizationValue(key), bundle: LanguageManager.shared.localizedBundle),
             localizedDuration(elapsedSeconds)
