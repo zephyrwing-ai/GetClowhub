@@ -122,98 +122,98 @@ private struct SessionTitlePopoverHost<Label: View>: NSViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    func makeCoordinator() -> SessionTitlePopoverCoordinator {
+        SessionTitlePopoverCoordinator()
+    }
+}
+
+private final class SessionTitlePopoverCoordinator: NSObject, NSPopoverDelegate {
+    private var popover: NSPopover?
+    private var hostingController: NSHostingController<SessionTitleUserMessagesPopoverContent>?
+    private var messages: [ChatMessage] = []
+    private var onPopoverHoverChange: (Bool) -> Void = { _ in }
+    private var onTapMessage: (ChatMessage) -> Void = { _ in }
+    private var isPresented: Binding<Bool>?
+    private var pendingPresentWork: DispatchWorkItem?
+
+    func update(
+        messages: [ChatMessage],
+        onPopoverHoverChange: @escaping (Bool) -> Void,
+        onTapMessage: @escaping (ChatMessage) -> Void
+    ) {
+        self.messages = messages
+        self.onPopoverHoverChange = onPopoverHoverChange
+        self.onTapMessage = onTapMessage
+        hostingController?.rootView = SessionTitleUserMessagesPopoverContent(
+            messages: messages,
+            onPopoverHoverChange: onPopoverHoverChange,
+            onTapMessage: onTapMessage
+        )
     }
 
-    final class Coordinator: NSObject, NSPopoverDelegate {
-        private var popover: NSPopover?
-        private var hostingController: NSHostingController<SessionTitleUserMessagesPopoverContent>?
-        private var messages: [ChatMessage] = []
-        private var onPopoverHoverChange: (Bool) -> Void = { _ in }
-        private var onTapMessage: (ChatMessage) -> Void = { _ in }
-        private var isPresented: Binding<Bool>?
-        private var pendingPresentWork: DispatchWorkItem?
+    func schedulePresent(relativeTo sourceView: NSView, isPresented: Binding<Bool>) {
+        self.isPresented = isPresented
+        pendingPresentWork?.cancel()
 
-        func update(
-            messages: [ChatMessage],
-            onPopoverHoverChange: @escaping (Bool) -> Void,
-            onTapMessage: @escaping (ChatMessage) -> Void
-        ) {
-            self.messages = messages
-            self.onPopoverHoverChange = onPopoverHoverChange
-            self.onTapMessage = onTapMessage
-            hostingController?.rootView = SessionTitleUserMessagesPopoverContent(
+        let work = DispatchWorkItem { [weak self, weak sourceView] in
+            guard let self, let sourceView else {
+                isPresented.wrappedValue = false
+                return
+            }
+            guard isPresented.wrappedValue, !self.messages.isEmpty else { return }
+            guard sourceView.window != nil, !sourceView.bounds.isEmpty else {
+                isPresented.wrappedValue = false
+                return
+            }
+
+            let popover = self.ensurePopover()
+            guard !popover.isShown else { return }
+            popover.show(
+                relativeTo: sourceView.bounds,
+                of: sourceView,
+                preferredEdge: .maxY
+            )
+        }
+        pendingPresentWork = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    func close() {
+        pendingPresentWork?.cancel()
+        pendingPresentWork = nil
+        popover?.performClose(nil)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        guard isPresented?.wrappedValue == true else { return }
+        DispatchQueue.main.async {
+            self.isPresented?.wrappedValue = false
+        }
+    }
+
+    private func ensurePopover() -> NSPopover {
+        if let popover {
+            return popover
+        }
+
+        let controller = NSHostingController(
+            rootView: SessionTitleUserMessagesPopoverContent(
                 messages: messages,
                 onPopoverHoverChange: onPopoverHoverChange,
                 onTapMessage: onTapMessage
             )
-        }
+        )
+        controller.view.setFrameSize(NSSize(width: 360, height: 1))
+        hostingController = controller
 
-        func schedulePresent(relativeTo sourceView: NSView, isPresented: Binding<Bool>) {
-            self.isPresented = isPresented
-            pendingPresentWork?.cancel()
-
-            let work = DispatchWorkItem { [weak self, weak sourceView] in
-                guard let self, let sourceView else {
-                    isPresented.wrappedValue = false
-                    return
-                }
-                guard isPresented.wrappedValue, !self.messages.isEmpty else { return }
-                guard sourceView.window != nil, !sourceView.bounds.isEmpty else {
-                    isPresented.wrappedValue = false
-                    return
-                }
-
-                let popover = self.ensurePopover()
-                guard !popover.isShown else { return }
-                popover.show(
-                    relativeTo: sourceView.bounds,
-                    of: sourceView,
-                    preferredEdge: .maxY
-                )
-            }
-            pendingPresentWork = work
-            DispatchQueue.main.async(execute: work)
-        }
-
-        func close() {
-            pendingPresentWork?.cancel()
-            pendingPresentWork = nil
-            popover?.performClose(nil)
-        }
-
-        func popoverDidClose(_ notification: Notification) {
-            guard isPresented?.wrappedValue == true else { return }
-            DispatchQueue.main.async {
-                self.isPresented?.wrappedValue = false
-            }
-        }
-
-        private func ensurePopover() -> NSPopover {
-            if let popover {
-                return popover
-            }
-
-            let controller = NSHostingController(
-                rootView: SessionTitleUserMessagesPopoverContent(
-                    messages: messages,
-                    onPopoverHoverChange: onPopoverHoverChange,
-                    onTapMessage: onTapMessage
-                )
-            )
-            controller.view.setFrameSize(NSSize(width: 360, height: 1))
-            hostingController = controller
-
-            let popover = NSPopover()
-            popover.behavior = .transient
-            popover.animates = false
-            popover.contentSize = NSSize(width: 360, height: 320)
-            popover.contentViewController = controller
-            popover.delegate = self
-            self.popover = popover
-            return popover
-        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = false
+        popover.contentSize = NSSize(width: 360, height: 320)
+        popover.contentViewController = controller
+        popover.delegate = self
+        self.popover = popover
+        return popover
     }
 }
 

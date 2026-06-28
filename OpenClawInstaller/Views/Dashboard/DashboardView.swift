@@ -1045,8 +1045,8 @@ private struct DashboardTitlebarAccessoryInstaller<Accessory: View>: NSViewRepre
         self.accessory = accessory()
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    func makeCoordinator() -> DashboardTitlebarAccessoryCoordinator {
+        DashboardTitlebarAccessoryCoordinator()
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -1057,7 +1057,7 @@ private struct DashboardTitlebarAccessoryInstaller<Accessory: View>: NSViewRepre
                 isVisible: isVisible,
                 width: width,
                 height: height,
-                rootView: accessory
+                rootView: AnyView(accessory)
             )
         }
         return view
@@ -1070,103 +1070,103 @@ private struct DashboardTitlebarAccessoryInstaller<Accessory: View>: NSViewRepre
                 isVisible: isVisible,
                 width: width,
                 height: height,
-                rootView: accessory
+                rootView: AnyView(accessory)
             )
         }
     }
 
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+    static func dismantleNSView(_ nsView: NSView, coordinator: DashboardTitlebarAccessoryCoordinator) {
         coordinator.remove()
     }
+}
 
-    final class Coordinator {
-        private weak var window: NSWindow?
-        private var hostingController: NSHostingController<Accessory>?
-        private var accessoryController: NSTitlebarAccessoryViewController?
-        private var widthConstraint: NSLayoutConstraint?
-        private var heightConstraint: NSLayoutConstraint?
+private final class DashboardTitlebarAccessoryCoordinator {
+    private weak var window: NSWindow?
+    private var hostingController: NSHostingController<AnyView>?
+    private var accessoryController: NSTitlebarAccessoryViewController?
+    private var widthConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
 
-        func update(
-            window targetWindow: NSWindow?,
-            isVisible: Bool,
-            width: CGFloat,
-            height: CGFloat,
-            rootView: Accessory
-        ) {
-            guard isVisible, let targetWindow else {
-                remove()
-                return
-            }
-
-            if window !== targetWindow {
-                remove()
-                window = targetWindow
-            }
-
-            removeStaleAccessories(from: targetWindow)
-
-            let hostingController = hostingController ?? NSHostingController(rootView: rootView)
-            hostingController.rootView = rootView
-            hostingController.view.identifier = rightOutputsTitlebarAccessoryID
-            hostingController.view.translatesAutoresizingMaskIntoConstraints = false
-            self.hostingController = hostingController
-
-            let accessoryController = accessoryController ?? NSTitlebarAccessoryViewController()
-            if self.accessoryController == nil {
-                accessoryController.layoutAttribute = .right
-                accessoryController.view = hostingController.view
-                targetWindow.addTitlebarAccessoryViewController(accessoryController)
-                self.accessoryController = accessoryController
-                widthConstraint = hostingController.view.widthAnchor.constraint(equalToConstant: max(width, 44))
-                heightConstraint = hostingController.view.heightAnchor.constraint(equalToConstant: height)
-                NSLayoutConstraint.activate([widthConstraint, heightConstraint].compactMap { $0 })
-            }
-
-            let targetWidth = max(width, 44)
-            if let widthConstraint, abs(widthConstraint.constant - targetWidth) > 0.5 {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = RightInspectorSplitMetrics.animationDuration
-                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    context.allowsImplicitAnimation = true
-                    self.widthConstraint?.animator().constant = targetWidth
-                    hostingController.view.superview?.layoutSubtreeIfNeeded()
-                }
-            } else {
-                widthConstraint?.constant = targetWidth
-            }
-            heightConstraint?.constant = height
+    func update(
+        window targetWindow: NSWindow?,
+        isVisible: Bool,
+        width: CGFloat,
+        height: CGFloat,
+        rootView: AnyView
+    ) {
+        guard isVisible, let targetWindow else {
+            remove()
+            return
         }
 
-        func remove() {
-            guard let accessoryController else {
-                hostingController = nil
-                widthConstraint = nil
-                heightConstraint = nil
-                window = nil
-                return
-            }
+        if window !== targetWindow {
+            remove()
+            window = targetWindow
+        }
 
-            if let window,
-               let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0 === accessoryController }) {
-                window.removeTitlebarAccessoryViewController(at: index)
-            }
+        removeStaleAccessories(from: targetWindow)
 
-            self.accessoryController = nil
+        let hostingController = hostingController ?? NSHostingController(rootView: rootView)
+        hostingController.rootView = rootView
+        hostingController.view.identifier = rightOutputsTitlebarAccessoryID
+        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+        self.hostingController = hostingController
+
+        let accessoryController = accessoryController ?? NSTitlebarAccessoryViewController()
+        if self.accessoryController == nil {
+            accessoryController.layoutAttribute = .right
+            accessoryController.view = hostingController.view
+            targetWindow.addTitlebarAccessoryViewController(accessoryController)
+            self.accessoryController = accessoryController
+            widthConstraint = hostingController.view.widthAnchor.constraint(equalToConstant: max(width, 44))
+            heightConstraint = hostingController.view.heightAnchor.constraint(equalToConstant: height)
+            NSLayoutConstraint.activate([widthConstraint, heightConstraint].compactMap { $0 })
+        }
+
+        let targetWidth = max(width, 44)
+        if let widthConstraint, abs(widthConstraint.constant - targetWidth) > 0.5 {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = RightInspectorSplitMetrics.animationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.allowsImplicitAnimation = true
+                self.widthConstraint?.animator().constant = targetWidth
+                hostingController.view.superview?.layoutSubtreeIfNeeded()
+            }
+        } else {
+            widthConstraint?.constant = targetWidth
+        }
+        heightConstraint?.constant = height
+    }
+
+    func remove() {
+        guard let accessoryController else {
             hostingController = nil
             widthConstraint = nil
             heightConstraint = nil
             window = nil
+            return
         }
 
-        private func removeStaleAccessories(from window: NSWindow) {
-            let indexedControllers = window.titlebarAccessoryViewControllers.enumerated()
-            for (index, controller) in indexedControllers.reversed() {
-                guard controller !== accessoryController,
-                      controller.view.identifier == rightOutputsTitlebarAccessoryID else {
-                    continue
-                }
-                window.removeTitlebarAccessoryViewController(at: index)
+        if let window,
+           let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0 === accessoryController }) {
+            window.removeTitlebarAccessoryViewController(at: index)
+        }
+
+        self.accessoryController = nil
+        hostingController = nil
+        widthConstraint = nil
+        heightConstraint = nil
+        window = nil
+    }
+
+    private func removeStaleAccessories(from window: NSWindow) {
+        let indexedControllers = window.titlebarAccessoryViewControllers.enumerated()
+        for (index, controller) in indexedControllers.reversed() {
+            guard controller !== accessoryController,
+                  controller.view.identifier == rightOutputsTitlebarAccessoryID else {
+                continue
             }
+            window.removeTitlebarAccessoryViewController(at: index)
         }
     }
 }
