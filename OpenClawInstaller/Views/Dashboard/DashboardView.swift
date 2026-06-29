@@ -25,7 +25,7 @@ enum DashboardTypography {
     }
 }
 
-private enum DashboardSidebarMetrics {
+enum DashboardSidebarMetrics {
     static let agentAvatarSize: CGFloat = 22
     static let agentTitleSpacing: CGFloat = 10
     static let disclosureChevronWidth: CGFloat = 12
@@ -38,6 +38,28 @@ private enum DashboardSidebarMetrics {
 
 private struct SessionRenamePresentation: Identifiable {
     let id: UUID
+}
+
+private struct RightInspectorContentUpdateID: Hashable {
+    let selectedTab: DashboardViewModel.DashboardTab
+    let selectedAgentId: String
+    let terminalOpen: Bool
+    let terminalHeight: CGFloat
+    let selectedSettingsSection: String
+    let marketplaceInstallRefreshID: Int
+    let requestedUserMessageJumpId: UUID?
+}
+
+private struct WorkspaceSidebarRoot: Equatable, Hashable {
+    let displayName: String
+    let path: String
+    let isProjectBound: Bool
+}
+
+private enum WorkspaceDetailMode: Equatable {
+    case none
+    case filePreview(String)
+    case projectTree
 }
 
 struct DashboardView: View {
@@ -60,16 +82,9 @@ struct DashboardView: View {
     @State private var workspaceSidebarExpandRequestID = 0
     @State private var workspaceSidebarCollapseRequestID = 0
     @State private var pendingWorkspaceSidebarCloseReset = false
-    @State private var workspaceEditingFilePath: String?
-    @State private var workspaceEditingFileDirty = false
-    @State private var workspaceEditorFullscreen = false
     @State private var workspaceBrowserWidth: CGFloat = 280
-    @State private var workspaceSearchActive = false
-    @State private var workspaceSearchText = ""
-    @State private var selectedSkillDetailItem: SkillDetailPresentationItem?
-    @State private var selectedPluginDetailItem: PluginDetailPresentationItem?
+    @State private var workspaceDetailWidth: CGFloat = 0
     @State private var selectedSettingsSection: SettingsPageSection = .profile
-    @State private var skillPendingRemoval: SkillInfo?
     @State private var marketplaceInstallRefreshID = 0
     @State private var sessionRenamePresentation: SessionRenamePresentation?
     @State private var sessionRenameDraft: String = ""
@@ -81,7 +96,6 @@ struct DashboardView: View {
 
     private let workspaceSidebarMinWidth: CGFloat = 240
     private let workspaceSidebarMaxWidth: CGFloat = 420
-    private let pluginDetailAnimation = Animation.spring(response: 0.34, dampingFraction: 0.86, blendDuration: 0.04)
     private let marketplaceDetailAnimation = Animation.spring(response: 0.26, dampingFraction: 0.86)
     private static let workspaceLayoutMetrics = OutputsSidebarLayoutMetrics()
 
@@ -108,6 +122,7 @@ struct DashboardView: View {
                 sidebarWidth: max(workspaceColumnIdealWidth, Self.workspaceLayoutMetrics.browserWidth),
                 minSidebarWidth: workspaceSidebarMinWidth,
                 maxSidebarWidth: workspaceColumnMaxWidth,
+                contentUpdateID: rightInspectorContentUpdateID,
                 expandRequestID: workspaceSidebarExpandRequestID,
                 collapseRequestID: workspaceSidebarCollapseRequestID,
                 onSidebarExpandFinished: completeWorkspaceSidebarOpen,
@@ -120,8 +135,6 @@ struct DashboardView: View {
                     selectedSettingsSection: $selectedSettingsSection,
                     terminalOpen: $terminalOpen,
                     terminalHeight: $terminalHeight,
-                    onOpenSkillDetail: presentSkillDetail,
-                    onOpenPluginDetail: presentPluginDetail,
                     marketplaceInstallRefreshID: marketplaceInstallRefreshID,
                     onOpenMarketplaceDetail: presentMarketplaceDetail
                 )
@@ -190,16 +203,6 @@ struct DashboardView: View {
             }
         }
         .overlay {
-            if let selectedSkillDetailItem, shouldShowSkillDetailOverlay {
-                skillDetailOverlay(for: selectedSkillDetailItem)
-            }
-        }
-        .overlay {
-            if let selectedPluginDetailItem, shouldShowPluginDetailOverlay {
-                pluginDetailOverlay(for: selectedPluginDetailItem)
-            }
-        }
-        .overlay {
             if let agent = viewModel.selectedMarketplaceAgent, shouldShowMarketplaceDetailOverlay {
                 marketplaceDetailOverlay(for: agent)
             }
@@ -208,8 +211,6 @@ struct DashboardView: View {
         .animation(.easeInOut(duration: 0.16), value: isGlobalSessionSearchPresented)
         .animation(.easeInOut(duration: 0.16), value: isCreateAgentOverlayPresented)
         .animation(.easeInOut(duration: 0.16), value: sessionRenamePresentation?.id)
-        .animation(.spring(response: 0.24, dampingFraction: 0.9), value: selectedSkillDetailItem?.id)
-        .animation(pluginDetailAnimation, value: selectedPluginDetailItem?.id)
         .animation(marketplaceDetailAnimation, value: viewModel.selectedMarketplaceAgent?.id)
         .onAppear {
             viewModel.openclawService.startMonitoring()
@@ -223,24 +224,6 @@ struct DashboardView: View {
         .sheet(isPresented: $viewModel.showDiagnostics) {
             DiagnosticsSheet(report: viewModel.diagnosticReport, isPresented: $viewModel.showDiagnostics)
         }
-        .alert(item: $skillPendingRemoval) { skill in
-            Alert(
-                title: Text("Remove Skill"),
-                message: Text("Remove \"\(skill.name)\" from installed skills?"),
-                primaryButton: .destructive(Text("Remove")) {
-                    Task { await viewModel.removeSkill(skill) }
-                },
-                secondaryButton: .cancel()
-            )
-        }
-        .onChange(of: viewModel.selectedTab) { newTab in
-            if newTab != .skills {
-                dismissSkillCatalogDetail()
-            }
-            if newTab != .plugins {
-                dismissPluginCatalogDetail()
-            }
-        }
     }
 
     private var activeTab: DashboardViewModel.DashboardTab {
@@ -249,14 +232,6 @@ struct DashboardView: View {
 
     private var isChatTabActive: Bool {
         activeTab == .chat
-    }
-
-    private var shouldShowSkillDetailOverlay: Bool {
-        activeTab == .skills
-    }
-
-    private var shouldShowPluginDetailOverlay: Bool {
-        activeTab == .plugins
     }
 
     private var currentSessionMetadata: ChatSessionMetadata? {
@@ -279,21 +254,25 @@ struct DashboardView: View {
             .filter { $0.role == .user }
     }
 
+    private var hasWorkspaceDetailPanel: Bool {
+        workspaceDetailWidth > 0
+    }
+
     private func jumpToUserMessage(_ message: ChatMessage) {
         requestedUserMessageJumpId = message.id
     }
 
     private var isWorkspaceSidebarExpanded: Bool {
-        isChatTabActive && (workspaceSidebarExpanded || workspaceEditingFilePath != nil)
+        isChatTabActive && (workspaceSidebarExpanded || hasWorkspaceDetailPanel)
     }
 
     private var shouldRetainWorkspaceSidebarContent: Bool {
-        isChatTabActive && (workspaceSidebarExpanded || workspaceEditingFilePath != nil || isWorkspaceSidebarOpening || isWorkspaceSidebarClosing)
+        isChatTabActive && (workspaceSidebarExpanded || hasWorkspaceDetailPanel || isWorkspaceSidebarOpening || isWorkspaceSidebarClosing)
     }
 
     private var workspaceColumnIdealWidth: CGFloat {
         guard shouldRetainWorkspaceSidebarContent else { return 0 }
-        return workspaceBrowserWidth + (workspaceEditingFilePath != nil ? Self.workspaceLayoutMetrics.editorWidth : 0)
+        return workspaceBrowserWidth + workspaceDetailWidth
     }
 
     private var workspaceColumnMaxWidth: CGFloat {
@@ -305,7 +284,52 @@ struct DashboardView: View {
         return 78
     }
 
+    private var rightInspectorContentUpdateID: AnyHashable {
+        AnyHashable(RightInspectorContentUpdateID(
+            selectedTab: viewModel.selectedTab,
+            selectedAgentId: viewModel.selectedAgentId,
+            terminalOpen: terminalOpen,
+            terminalHeight: terminalHeight,
+            selectedSettingsSection: selectedSettingsSection.rawValue,
+            marketplaceInstallRefreshID: marketplaceInstallRefreshID,
+            requestedUserMessageJumpId: requestedUserMessageJumpId
+        ))
+    }
+
+    private var activeWorkspaceRoot: WorkspaceSidebarRoot {
+        if let projectId = currentSessionMetadata?.projectId,
+           let project = viewModel.projectsById[projectId] {
+            return WorkspaceSidebarRoot(
+                displayName: project.displayName,
+                path: project.rootPath,
+                isProjectBound: true
+            )
+        }
+
+        if let projectRoot = currentSessionMetadata?.projectRoot,
+           !projectRoot.isEmpty {
+            let displayName = currentSessionMetadata?.projectDisplayName?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return WorkspaceSidebarRoot(
+                displayName: displayName?.isEmpty == false ? displayName! : URL(fileURLWithPath: projectRoot).lastPathComponent,
+                path: projectRoot,
+                isProjectBound: true
+            )
+        }
+
+        let workspacePath = DashboardViewModel.resolveAgentWorkspace(viewModel.selectedAgentId)
+        return WorkspaceSidebarRoot(
+            displayName: "Agent Workspace",
+            path: workspacePath,
+            isProjectBound: false
+        )
+    }
+
     private var selectedWorkspacePath: String {
+        activeWorkspaceRoot.path
+    }
+
+    private var currentAgentWorkspacePath: String {
         DashboardViewModel.resolveAgentWorkspace(viewModel.selectedAgentId)
     }
 
@@ -321,57 +345,23 @@ struct DashboardView: View {
                     }
                 }
             ),
-            hasEditor: workspaceEditingFilePath != nil,
+            hasEditor: hasWorkspaceDetailPanel,
             toggle: { toggleWorkspaceSidebar() }
         )
     }
 
     private func workspaceSidebarPane(width: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            WorkspaceOutputsPaneHeader(
-                isSearching: workspaceSearchActive,
-                toggleSearch: toggleWorkspaceSearch,
-                openFolder: openSelectedWorkspaceFolder
-            )
-
-            Divider()
-
-            workspaceExpandedSidebar(width: width)
-        }
+        WorkspaceInspectorPane(
+            root: activeWorkspaceRoot,
+            browserWidth: min(workspaceBrowserWidth, width),
+            editorWidth: Self.workspaceLayoutMetrics.editorWidth,
+            onDetailWidthChanged: { detailWidth in
+                workspaceDetailWidth = detailWidth
+            },
+            openFolder: openSelectedWorkspaceFolder
+        )
         .frame(width: width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    private func workspaceExpandedSidebar(width: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            WorkspaceFilePanel(
-                agentId: viewModel.selectedAgentId,
-                editingFilePath: $workspaceEditingFilePath,
-                isSearching: $workspaceSearchActive,
-                searchText: $workspaceSearchText,
-                editingFileDirty: workspaceEditingFileDirty,
-                width: min(workspaceBrowserWidth, width)
-            )
-
-            if let path = workspaceEditingFilePath {
-                FileEditorPanel(
-                    filePath: path,
-                    onClose: {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            workspaceEditingFilePath = nil
-                            workspaceEditingFileDirty = false
-                        }
-                    },
-                    onDirtyChanged: { dirty in
-                        workspaceEditingFileDirty = dirty
-                    },
-                    isFullscreen: $workspaceEditorFullscreen
-                )
-                .id(path)
-                .transition(.opacity)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     }
 
     private func toggleWorkspaceSidebar() {
@@ -434,24 +424,16 @@ struct DashboardView: View {
     }
 
     private func clearWorkspaceSidebarTransientState() {
-        workspaceEditingFileDirty = false
-        workspaceSearchActive = false
-        workspaceSearchText = ""
-        workspaceEditingFilePath = nil
-    }
-
-    private func toggleWorkspaceSearch() {
-        guard isWorkspaceSidebarExpanded else { return }
-        withAnimation(.easeInOut(duration: 0.15)) {
-            workspaceSearchActive.toggle()
-            if !workspaceSearchActive {
-                workspaceSearchText = ""
-            }
-        }
+        workspaceDetailWidth = 0
     }
 
     private func openSelectedWorkspaceFolder() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: selectedWorkspacePath))
+        let workspaceURL = URL(fileURLWithPath: currentAgentWorkspacePath)
+        try? FileManager.default.createDirectory(
+            at: workspaceURL,
+            withIntermediateDirectories: true
+        )
+        NSWorkspace.shared.open(workspaceURL)
     }
 
     private var isDark: Bool {
@@ -658,18 +640,6 @@ struct DashboardView: View {
         }
     }
 
-    private func presentSkillDetail(_ item: SkillDetailPresentationItem) {
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
-            selectedSkillDetailItem = item
-        }
-    }
-
-    private func dismissSkillCatalogDetail() {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
-            selectedSkillDetailItem = nil
-        }
-    }
-
     private func openSettingsSection(_ section: SettingsPageSection) {
         selectedSettingsSection = section
         viewModel.selectedTab = .config
@@ -693,54 +663,6 @@ struct DashboardView: View {
         }
     }
 
-    private func skillDetailOverlay(for item: SkillDetailPresentationItem) -> some View {
-        let installedSkill = installedSkillByName[item.name]
-
-        return GeometryReader { _ in
-            ZStack {
-                Color.black
-                    .opacity(0.001)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        dismissSkillCatalogDetail()
-                    }
-
-                SkillCatalogDetailSheet(
-                    item: item,
-                    installedSkill: installedSkill,
-                    isInstalling: viewModel.installingCatalogSkillName == item.name,
-                    isRemoving: viewModel.removingSkillName == item.name,
-                    canRemove: installedSkill.map(DashboardViewModel.canRemoveSkill) ?? false,
-                    onInstall: {
-                        if let catalogItem = item.catalogItem {
-                            Task { await viewModel.installCatalogSkill(catalogItem) }
-                        }
-                    },
-                    onRemove: {
-                        if let skill = installedSkill {
-                            skillPendingRemoval = skill
-                        }
-                    },
-                    onClose: dismissSkillCatalogDetail
-                )
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: Color.black.opacity(isDark ? 0.45 : 0.18), radius: 28, x: 0, y: 18)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.primary.opacity(isDark ? 0.16 : 0.08), lineWidth: 1)
-                )
-                .padding(28)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        }
-        .transition(.asymmetric(
-            insertion: .opacity.combined(with: .scale(scale: 0.965, anchor: .center)),
-            removal: .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
-        ))
-    }
-
     private func marketplaceDetailOverlay(for agent: MarketplaceAgent) -> some View {
         DashboardModalOverlay(
             isDismissDisabled: viewModel.isRecruitingMarketplaceAgent,
@@ -760,127 +682,6 @@ struct DashboardView: View {
             )
             .id(agent.id)
         }
-    }
-
-    private func presentPluginDetail(_ item: PluginDetailPresentationItem) {
-        withAnimation(pluginDetailAnimation) {
-            selectedPluginDetailItem = item
-        }
-    }
-
-    private func dismissPluginCatalogDetail() {
-        withAnimation(pluginDetailAnimation) {
-            selectedPluginDetailItem = nil
-        }
-    }
-
-    private func pluginDetailOverlay(for item: PluginDetailPresentationItem) -> some View {
-        let installedPlugin = resolvedPluginDetailInstalledPlugin(for: item)
-
-        return GeometryReader { _ in
-            ZStack {
-                Color.black
-                    .opacity(0.001)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if viewModel.installingCatalogPluginName == nil && !viewModel.isPerformingAction {
-                            dismissPluginCatalogDetail()
-                        }
-                    }
-
-                PluginCatalogDetailSheet(
-                    item: item,
-                    installedPlugin: installedPlugin,
-                    isInstalling: item.catalogItem.map { viewModel.installingCatalogPluginName == $0.name } ?? false,
-                    isPerformingAction: viewModel.isPerformingAction,
-                    onInstall: {
-                        if let catalogItem = item.catalogItem {
-                            Task { await viewModel.installCatalogPlugin(catalogItem) }
-                        }
-                    },
-                    onEnable: {
-                        if let installedPlugin {
-                            Task { await viewModel.enablePlugin(installedPlugin) }
-                        }
-                    },
-                    onDisable: {
-                        if let installedPlugin {
-                            Task { await viewModel.disablePlugin(installedPlugin) }
-                        }
-                    },
-                    onUpdate: {
-                        if let installedPlugin {
-                            Task { await viewModel.updatePlugin(installedPlugin) }
-                        }
-                    },
-                    onUninstall: {
-                        if let installedPlugin {
-                            Task { await viewModel.uninstallPlugin(installedPlugin) }
-                        }
-                    },
-                    onClose: dismissPluginCatalogDetail
-                )
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: Color.black.opacity(isDark ? 0.45 : 0.18), radius: 28, x: 0, y: 18)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.primary.opacity(isDark ? 0.16 : 0.08), lineWidth: 1)
-                )
-                .padding(28)
-                .onTapGesture {}
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        }
-        .transition(.asymmetric(
-            insertion: .opacity.combined(with: .scale(scale: 0.965, anchor: .center)),
-            removal: .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
-        ))
-    }
-
-    private var installedSkillByName: [String: SkillInfo] {
-        SkillNameIndex.firstByName(viewModel.skills) { $0.name }
-    }
-
-    private func resolvedPluginDetailInstalledPlugin(for item: PluginDetailPresentationItem) -> PluginInfo? {
-        if let catalogItem = item.catalogItem {
-            return installedPlugin(for: catalogItem)
-        }
-        if let installedPlugin = item.installedPlugin {
-            return installedPluginsByID[pluginLookupKey(installedPlugin.pluginId)]
-                ?? installedPluginsByChannel[pluginLookupKey(installedPlugin.channel)]
-                ?? installedPlugin
-        }
-        return nil
-    }
-
-    private func installedPlugin(for item: PluginCatalogItem) -> PluginInfo? {
-        installedPluginsByID[pluginLookupKey(item.openClawPluginID)]
-            ?? installedPluginsByID[pluginLookupKey(item.name)]
-            ?? installedPluginsByChannel[pluginLookupKey(item.name)]
-    }
-
-    private var installedPluginsByID: [String: PluginInfo] {
-        firstInstalledPlugins { $0.pluginId }
-    }
-
-    private var installedPluginsByChannel: [String: PluginInfo] {
-        firstInstalledPlugins { $0.channel }
-    }
-
-    private func firstInstalledPlugins(key: (PluginInfo) -> String) -> [String: PluginInfo] {
-        var result: [String: PluginInfo] = [:]
-        for plugin in viewModel.plugins where result[pluginLookupKey(key(plugin))] == nil {
-            result[pluginLookupKey(key(plugin))] = plugin
-        }
-        return result
-    }
-
-    private func pluginLookupKey(_ value: String) -> String {
-        let lower = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let slashIndex = lower.lastIndex(of: "/") else { return lower }
-        return String(lower[lower.index(after: slashIndex)...])
     }
 
     private var globalSessionSearchOverlay: some View {
@@ -1172,9 +973,9 @@ private final class DashboardTitlebarAccessoryCoordinator {
 }
 
 private struct WorkspaceOutputsPaneHeader: View {
-    let isSearching: Bool
-    let toggleSearch: () -> Void
+    let isProjectFilesVisible: Bool
     let openFolder: () -> Void
+    let toggleProjectFiles: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -1184,27 +985,319 @@ private struct WorkspaceOutputsPaneHeader: View {
 
             Spacer(minLength: 8)
 
-            Button(action: toggleSearch) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundColor(isSearching ? .accentColor : .secondary)
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.plain)
-            .help("Search Files")
-
-            Button(action: openFolder) {
-                Image(systemName: "arrow.up.forward.square")
-                    .font(.system(size: 12))
+            WorkspaceHeaderIconButton(action: openFolder, help: "Open in Finder") {
+                OpenWorkspaceInFinderIcon()
                     .foregroundColor(.secondary)
-                    .frame(width: 22, height: 22)
             }
-            .buttonStyle(.plain)
-            .help("Open in Finder")
+
+            WorkspaceHeaderIconButton(
+                action: toggleProjectFiles,
+                help: isProjectFilesVisible ? "Hide Project Files" : "Show Project Files"
+            ) {
+                SecondaryProjectSidebarIcon()
+                    .foregroundColor(isProjectFilesVisible ? .accentColor : .secondary)
+            }
         }
         .padding(.leading, 12)
         .padding(.trailing, 10)
         .frame(height: 44)
+    }
+}
+
+private struct WorkspaceHeaderIconButton<Icon: View>: View {
+    let action: () -> Void
+    let help: String
+    @ViewBuilder let icon: () -> Icon
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Color.clear
+                icon()
+            }
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+private struct OpenWorkspaceInFinderIcon: View {
+    var body: some View {
+        let stroke = StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+        ZStack {
+            OpenWorkspaceInFinderOutlineShape()
+                .stroke(style: stroke)
+                .opacity(0.78)
+            OpenWorkspaceInFinderFoldShape()
+                .stroke(style: stroke)
+                .opacity(0.78)
+        }
+        .frame(width: 22, height: 22)
+    }
+}
+
+private struct OpenWorkspaceInFinderOutlineShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scaleX = rect.width / 22
+        let scaleY = rect.height / 22
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scaleX, y: rect.minY + y * scaleY)
+        }
+
+        var path = Path()
+        path.move(to: point(7.5, 4.5))
+        path.addLine(to: point(13.5, 4.5))
+        path.addLine(to: point(17.5, 8.5))
+        path.addLine(to: point(17.5, 17.5))
+        path.addQuadCurve(to: point(16, 19), control: point(17.5, 19))
+        path.addLine(to: point(6, 19))
+        path.addQuadCurve(to: point(4.5, 17.5), control: point(4.5, 19))
+        path.addLine(to: point(4.5, 6))
+        path.addQuadCurve(to: point(6, 4.5), control: point(4.5, 4.5))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct OpenWorkspaceInFinderFoldShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scaleX = rect.width / 22
+        let scaleY = rect.height / 22
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scaleX, y: rect.minY + y * scaleY)
+        }
+
+        var path = Path()
+        path.move(to: point(13.5, 4.75))
+        path.addLine(to: point(13.5, 8.5))
+        path.addLine(to: point(17.25, 8.5))
+        return path
+    }
+}
+
+private struct SecondaryProjectSidebarIcon: View {
+    var body: some View {
+        let stroke = StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round)
+        ZStack {
+            SecondaryProjectSidebarBackShape()
+                .stroke(style: stroke)
+                .opacity(0.62)
+
+            SecondaryProjectSidebarFrontShape()
+                .stroke(style: stroke)
+                .opacity(0.92)
+        }
+        .frame(width: 22, height: 22)
+    }
+}
+
+private struct SecondaryProjectSidebarBackShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scaleX = rect.width / 22
+        let scaleY = rect.height / 22
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scaleX, y: rect.minY + y * scaleY)
+        }
+
+        var path = Path()
+        path.move(to: point(8.5, 4.45))
+        path.addQuadCurve(to: point(10.45, 3.35), control: point(9.1, 3.65))
+        path.addLine(to: point(15.75, 3.35))
+        path.addQuadCurve(to: point(18.65, 6.25), control: point(18.65, 3.35))
+        path.addLine(to: point(18.65, 15.1))
+        path.addQuadCurve(to: point(15.75, 18), control: point(18.65, 18))
+        path.addLine(to: point(14.25, 18))
+        return path
+    }
+}
+
+private struct SecondaryProjectSidebarFrontShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scaleX = rect.width / 22
+        let scaleY = rect.height / 22
+        let roundedRect = CGRect(
+            x: rect.minX + 3.65 * scaleX,
+            y: rect.minY + 6.85 * scaleY,
+            width: 9.85 * scaleX,
+            height: 12.95 * scaleY
+        )
+        return Path(roundedRect: roundedRect, cornerRadius: 2.7 * min(scaleX, scaleY))
+    }
+}
+
+private struct WorkspaceInspectorPane: View {
+    let root: WorkspaceSidebarRoot
+    let browserWidth: CGFloat
+    let editorWidth: CGFloat
+    let onDetailWidthChanged: (CGFloat) -> Void
+    let openFolder: () -> Void
+
+    @State private var editingFilePath: String?
+    @State private var detailMode: WorkspaceDetailMode = .none
+    @State private var targetDetailMode: WorkspaceDetailMode = .none
+    @State private var previewReturnMode: WorkspaceDetailMode = .none
+    @State private var editingFileDirty = false
+    @State private var editorFullscreen = false
+    @State private var searchText = ""
+    @State private var visualDetailWidth: CGFloat = 0
+    @State private var retainedDetailMode: WorkspaceDetailMode = .none
+    @State private var detailAnimationGeneration = 0
+
+    private var isProjectFilesVisible: Bool {
+        detailMode == .projectTree || retainedDetailMode == .projectTree
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            WorkspaceOutputsPaneHeader(
+                isProjectFilesVisible: isProjectFilesVisible,
+                openFolder: openFolder,
+                toggleProjectFiles: toggleWorkspaceProjectFiles
+            )
+
+            Divider()
+
+            NestedWorkspaceSplitView(secondaryWidth: visualDetailWidth) {
+                WorkspaceFilePanel(
+                    root: root,
+                    editingFilePath: $editingFilePath,
+                    onOpenFile: openWorkspaceFile,
+                    onCloseFile: closeWorkspaceDetail,
+                    editingFileDirty: editingFileDirty,
+                    width: browserWidth
+                )
+            } secondary: {
+                detailPanel
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        }
+        .onAppear {
+            syncDetailWidth(visualDetailWidth, animated: false)
+        }
+        .onChange(of: root) { _ in
+            clearWorkspaceDetail(animated: false)
+        }
+    }
+
+    @ViewBuilder
+    private var detailPanel: some View {
+        switch retainedDetailMode {
+        case .filePreview(let path):
+            FileEditorPanel(
+                filePath: path,
+                onClose: closeWorkspacePreview,
+                onDirtyChanged: { dirty in
+                    editingFileDirty = dirty
+                },
+                isFullscreen: $editorFullscreen
+            )
+            .id(path)
+        case .projectTree:
+            ProjectFilesPanel(
+                root: root,
+                selectedFilePath: editingFilePath,
+                searchText: $searchText,
+                width: editorWidth,
+                onOpenFile: openWorkspaceFile
+            )
+        case .none:
+            EmptyView()
+        }
+    }
+
+    private func openWorkspaceFile(_ path: String) {
+        editingFilePath = path
+        previewReturnMode = isProjectFilesVisible ? .projectTree : .none
+        editingFileDirty = false
+        requestWorkspaceDetail(.filePreview(path))
+    }
+
+    private func closeWorkspaceDetail() {
+        clearWorkspaceDetail(animated: true)
+    }
+
+    private func toggleWorkspaceProjectFiles() {
+        if isProjectFilesVisible {
+            clearWorkspaceDetail(animated: true)
+        } else {
+            editingFilePath = nil
+            previewReturnMode = .none
+            editingFileDirty = false
+            requestWorkspaceDetail(.projectTree)
+        }
+    }
+
+    private func clearWorkspaceDetail(animated: Bool) {
+        targetDetailMode = .none
+        editingFilePath = nil
+        previewReturnMode = .none
+        editingFileDirty = false
+        searchText = ""
+
+        if animated {
+            requestWorkspaceDetail(.none)
+        } else {
+            detailMode = .none
+            retainedDetailMode = .none
+            visualDetailWidth = 0
+            syncDetailWidth(0, animated: false)
+        }
+    }
+
+    private func closeWorkspacePreview() {
+        let returnMode = previewReturnMode
+        editingFilePath = nil
+        previewReturnMode = .none
+        editingFileDirty = false
+
+        if returnMode == .projectTree {
+            requestWorkspaceDetail(returnMode)
+        } else {
+            clearWorkspaceDetail(animated: true)
+        }
+    }
+
+    private func requestWorkspaceDetail(_ nextMode: WorkspaceDetailMode, completion: (() -> Void)? = nil) {
+        targetDetailMode = nextMode
+        if nextMode != .none {
+            retainedDetailMode = nextMode
+        }
+
+        let targetWidth: CGFloat = nextMode == .none ? 0 : editorWidth
+        animateDetailWidth(to: targetWidth) {
+            detailMode = nextMode
+            completion?()
+            if nextMode == .none {
+                retainedDetailMode = .none
+            } else {
+                retainedDetailMode = nextMode
+            }
+        }
+    }
+
+    private func animateDetailWidth(to targetWidth: CGFloat, completion: (() -> Void)? = nil) {
+        let sanitizedWidth = max(0, targetWidth)
+        detailAnimationGeneration += 1
+        let animationID = detailAnimationGeneration
+
+        withAnimation(.easeInOut(duration: RightInspectorSplitMetrics.animationDuration)) {
+            visualDetailWidth = sanitizedWidth
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + RightInspectorSplitMetrics.animationDuration) {
+            guard detailAnimationGeneration == animationID else { return }
+            onDetailWidthChanged(sanitizedWidth)
+            completion?()
+        }
+    }
+
+    private func syncDetailWidth(_ detailWidth: CGFloat, animated: Bool) {
+        onDetailWidthChanged(detailWidth)
     }
 }
 
@@ -1279,7 +1372,6 @@ struct SidebarView: View {
     @State private var hoveredSidebarAction: SidebarChromeAction?
     @State private var areAgentsCollapsed = false
     @State private var isAgentSectionHeaderHovering = false
-    @State private var isSettingsShortcutMenuPresented = false
 
     init(
         selectedTab: Binding<DashboardViewModel.DashboardTab>,
@@ -1303,13 +1395,6 @@ struct SidebarView: View {
 
     private var isDark: Bool {
         AppAppearanceMode.storedValue(appAppearance).resolvesDark(using: colorScheme)
-    }
-
-    private var sidebarCursorDotConfiguration: CursorDotConfiguration {
-        CursorDotConfiguration(
-            dotColor: isDark ? .white : .black,
-            ringColor: isDark ? .white.opacity(0.74) : .black.opacity(0.62)
-        )
     }
 
     var body: some View {
@@ -1351,10 +1436,6 @@ struct SidebarView: View {
                 Text("Are you sure you want to remove \"\(agent.name)\"? This will delete the agent and its workspace.")
             }
         }
-        .cursorDotOverlay(
-            isEnabled: true,
-            configuration: sidebarCursorDotConfiguration
-        )
     }
 
     // MARK: - Sidebar Top Header
@@ -1451,7 +1532,7 @@ struct SidebarView: View {
 
                 navRow(.skills, title: String(localized: "Skills", bundle: languageManager.localizedBundle), systemImage: "bolt.fill")
                 navRow(.plugins, title: String(localized: "Plugins", bundle: languageManager.localizedBundle), systemImage: "puzzlepiece.fill")
-                navRow(.tasksLogs, title: String(localized: "Automation", bundle: languageManager.localizedBundle), systemImage: "checklist", assetImage: "AutomationIcon")
+                navRow(.tasksLogs, title: String(localized: "Automation", bundle: languageManager.localizedBundle), systemImage: "clock.badge")
                 navRow(.market, title: String(localized: "AgentsMarket", bundle: languageManager.localizedBundle), systemImage: "storefront")
 
                 agentSectionContent
@@ -1627,12 +1708,8 @@ struct SidebarView: View {
     }
 
     private func projectFolderRow(group: ProjectSessionGroup, agent: AgentOption) -> some View {
-        SidebarCollapsibleRow(
-            title: group.project.displayName,
-            titleFont: .system(size: 13.5, weight: .regular),
-            isExpanded: !group.binding.isCollapsed,
-            rowHeight: 24,
-            verticalPadding: 5,
+        AgentProjectFolderRow(
+            group: group,
             backgroundColor: { isHovering in
                 sidebarItemHighlightColor(isActive: false, isHovering: isHovering)
             },
@@ -1640,45 +1717,21 @@ struct SidebarView: View {
                 cancelSessionDeleteConfirmation()
                 viewModel.toggleProjectCollapse(agentId: agent.id, projectId: group.project.id)
             },
-            icon: {
-                WorkspaceFolderIcon(isExpanded: !group.binding.isCollapsed, size: 18)
+            onNewSession: {
+                cancelSessionDeleteConfirmation()
+                viewModel.createNewSession(forAgent: agent.id, projectId: group.project.id)
+                selectedTab = .chat
             },
-            actions: {
-                Button {
-                    cancelSessionDeleteConfirmation()
-                    viewModel.createNewSession(forAgent: agent.id, projectId: group.project.id)
-                    selectedTab = .chat
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.plain)
-                .help("New chat in project")
+            onRevealInFinder: {
+                viewModel.revealProjectInFinder(group.project.id)
             },
-            children: {
+            onRemoveFromAgent: {
+                viewModel.removeProject(group.project.id, fromAgent: agent.id)
+            },
+            sessions: {
                 sessionRows(group.sessions, for: agent)
             }
         )
-        .contextMenu {
-            Button {
-                viewModel.createNewSession(forAgent: agent.id, projectId: group.project.id)
-                selectedTab = .chat
-            } label: {
-                Label("New chat in project", systemImage: "plus")
-            }
-            Button {
-                viewModel.revealProjectInFinder(group.project.id)
-            } label: {
-                Label("Reveal in Finder", systemImage: "folder")
-            }
-            Divider()
-            Button(role: .destructive) {
-                viewModel.removeProject(group.project.id, fromAgent: agent.id)
-            } label: {
-                Label("Remove from Agent", systemImage: "minus.circle")
-            }
-        }
     }
 
     // MARK: - Agent Section Content
@@ -1761,370 +1814,19 @@ struct SidebarView: View {
     // MARK: - Sidebar Bottom Bar
 
     private var sidebarBottomBar: some View {
-        Button {
-            cancelSessionDeleteConfirmation()
-            isSettingsShortcutMenuPresented.toggle()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "gearshape")
-                    .frame(width: 18, height: 18)
-                Text("Settings")
-                    .lineLimit(1)
-                Spacer()
-            }
-            .font(DashboardTypography.sidebarRow)
-            .foregroundColor(.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(sidebarItemHighlightColor(
-                        isActive: selectedTab == .config,
-                        isHovering: isSettingsShortcutMenuPresented
-                    ))
-            )
-        }
-        .buttonStyle(.plain)
+        SettingsShortcutPanelButton(
+            viewModel: viewModel,
+            isActive: selectedTab == .config,
+            highlightColor: { isOpen in
+                sidebarItemHighlightColor(isActive: selectedTab == .config, isHovering: isOpen)
+            },
+            onBeforeToggle: {
+                cancelSessionDeleteConfirmation()
+            },
+            onOpenSettingsSection: onOpenSettingsSection
+        )
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .popover(isPresented: $isSettingsShortcutMenuPresented, arrowEdge: .trailing) {
-            SettingsShortcutMenu(
-                viewModel: viewModel,
-                onOpenSettingsSection: { section in
-                    isSettingsShortcutMenuPresented = false
-                    onOpenSettingsSection(section)
-                }
-            )
-            .frame(width: 320)
-        }
-    }
-
-    private struct SettingsShortcutMenu: View {
-        @ObservedObject var viewModel: DashboardViewModel
-        let onOpenSettingsSection: (SettingsPageSection) -> Void
-        @State private var isBillingExpanded = false
-        @State private var isBudgetExpanded = false
-        #if REQUIRE_LOGIN
-        @EnvironmentObject var authManager: AuthManager
-        @EnvironmentObject var membershipManager: MembershipManager
-        #endif
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 12) {
-                accountHeader
-
-                SettingsShortcutActionRow(title: "Profile", systemImage: "person.crop.circle") {
-                    onOpenSettingsSection(.profile)
-                }
-
-                Divider()
-
-                DefaultModelShortcutPicker(viewModel: viewModel) {
-                    onOpenSettingsSection(.provider)
-                }
-
-                #if REQUIRE_LOGIN
-                BillingShortcutSummary(
-                    isExpanded: $isBillingExpanded,
-                    membershipManager: membershipManager
-                )
-                #endif
-
-                BudgetShortcutSummary(
-                    isExpanded: $isBudgetExpanded,
-                    viewModel: viewModel,
-                    onOpenBudget: { onOpenSettingsSection(.budget) }
-                )
-
-                Divider()
-
-                SettingsShortcutActionRow(title: "All settings", systemImage: "gearshape") {
-                    onOpenSettingsSection(.profile)
-                }
-
-                #if REQUIRE_LOGIN
-                Button(role: authManager.isLoggedIn ? .destructive : nil) {
-                    if authManager.isLoggedIn {
-                        authManager.logout()
-                    } else {
-                        authManager.login()
-                    }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: authManager.isLoggedIn ? "rectangle.portrait.and.arrow.right" : "person.crop.circle.badge.plus")
-                            .frame(width: 16)
-                        Text(authManager.isLoggedIn ? "Log out" : "Log in")
-                        Spacer()
-                    }
-                    .font(.system(size: 13, weight: .medium))
-                    .padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-                #endif
-            }
-            .padding(14)
-            .task {
-                if viewModel.models.isEmpty {
-                    await viewModel.loadModels()
-                }
-                if viewModel.budgetSnapshots.isEmpty {
-                    await viewModel.loadBudgets()
-                }
-                #if REQUIRE_LOGIN
-                if membershipManager.keysBilling.isEmpty {
-                    await viewModel.loadKeysBilling()
-                }
-                #endif
-            }
-        }
-
-        @ViewBuilder
-        private var accountHeader: some View {
-            #if REQUIRE_LOGIN
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(accountDisplayName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                    Text(authManager.isLoggedIn ? "Signed in" : "Not signed in")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                if let membership = membershipManager.membership {
-                    Text(membership.level.displayName)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(membershipBadgeColor(membership.level))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(membershipBadgeColor(membership.level).opacity(0.14))
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-            }
-            #else
-            HStack(spacing: 10) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.secondary)
-                Text("Local user")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-            }
-            #endif
-        }
-
-        #if REQUIRE_LOGIN
-        private var accountDisplayName: String {
-            if let email = authManager.userEmail, !email.isEmpty {
-                return email
-            }
-            if case .loggedIn(let nickname) = authManager.state, !nickname.isEmpty {
-                return nickname
-            }
-            if let userId = authManager.userId, !userId.isEmpty {
-                return userId
-            }
-            return "User"
-        }
-
-        private func membershipBadgeColor(_ level: MembershipLevel) -> SwiftUI.Color {
-            switch level {
-            case .free: return .gray
-            case .pro: return .blue
-            case .max: return .purple
-            }
-        }
-        #endif
-    }
-
-    private struct SettingsShortcutActionRow: View {
-        let title: String
-        let systemImage: String
-        let action: () -> Void
-
-        var body: some View {
-            Button(action: action) {
-                HStack(spacing: 10) {
-                    Image(systemName: systemImage)
-                        .frame(width: 16)
-                    Text(title)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .font(.system(size: 13, weight: .medium))
-                .padding(.vertical, 6)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private struct DefaultModelShortcutPicker: View {
-        @ObservedObject var viewModel: DashboardViewModel
-        let onOpenProvider: () -> Void
-
-        private var selectedModelID: String {
-            if let current = viewModel.models.first(where: \.isDefault)?.modelId {
-                return current
-            }
-            return viewModel.modelOverview.defaultModel
-        }
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Label("Model", systemImage: "cube")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    Button("Configure") {
-                        onOpenProvider()
-                    }
-                    .font(.system(size: 11))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-
-                if viewModel.models.isEmpty {
-                    Text("No models loaded")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Picker("", selection: Binding<String>(
-                        get: { selectedModelID },
-                        set: { modelID in
-                            guard let model = viewModel.models.first(where: { $0.modelId == modelID }) else { return }
-                            Task { await viewModel.setDefaultModel(model) }
-                        }
-                    )) {
-                        ForEach(viewModel.models, id: \.modelId) { model in
-                            Text(model.modelId).tag(model.modelId)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-            }
-            .padding(10)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.72))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-    }
-
-    #if REQUIRE_LOGIN
-    private struct BillingShortcutSummary: View {
-        @Binding var isExpanded: Bool
-        @ObservedObject var membershipManager: MembershipManager
-
-        private var totalSpend: Double {
-            membershipManager.keysBilling.reduce(0) { $0 + $1.spend }
-        }
-
-        private var totalBudget: Double? {
-            let budgets = membershipManager.keysBilling.compactMap(\.maxBudget)
-            guard !budgets.isEmpty else { return nil }
-            return budgets.reduce(0, +)
-        }
-
-        private var percent: Double {
-            guard let totalBudget, totalBudget > 0 else { return 0 }
-            return min(totalSpend / totalBudget, 1)
-        }
-
-        var body: some View {
-            DisclosureGroup(isExpanded: $isExpanded) {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Text(String(format: "$%.2f", totalSpend))
-                            .font(.system(size: 18, weight: .semibold, design: .rounded))
-                        if let totalBudget {
-                            Text("/ $\(String(format: "%.2f", totalBudget))")
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-
-                    if totalBudget != nil {
-                        ProgressView(value: percent)
-                    }
-
-                    if membershipManager.keysBilling.isEmpty {
-                        Text("No billing data yet")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.top, 6)
-            } label: {
-                Label("Billing", systemImage: "creditcard")
-                    .font(.system(size: 13, weight: .medium))
-            }
-        }
-    }
-    #endif
-
-    private struct BudgetShortcutSummary: View {
-        @Binding var isExpanded: Bool
-        @ObservedObject var viewModel: DashboardViewModel
-        let onOpenBudget: () -> Void
-
-        private var globalSnapshot: BudgetSnapshot? {
-            viewModel.budgetSnapshots.first(where: { $0.scope == .global })
-        }
-
-        var body: some View {
-            DisclosureGroup(isExpanded: $isExpanded) {
-                VStack(alignment: .leading, spacing: 7) {
-                    if let snapshot = globalSnapshot {
-                        HStack {
-                            Text(formatTokenCount(snapshot.tokensUsed))
-                                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                            if snapshot.tokenLimit > 0 {
-                                Text("/ \(formatTokenCount(snapshot.tokenLimit))")
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                        }
-                        if snapshot.tokenLimit > 0 {
-                            ProgressView(value: min(snapshot.tokenPercent, 1))
-                        }
-                    } else {
-                        Text("No local budget rule")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Button("Edit budget rules") {
-                        onOpenBudget()
-                    }
-                    .font(.system(size: 11))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(.top, 6)
-            } label: {
-                Label("Budget", systemImage: "dollarsign.gauge.chart.lefthalf.righthalf")
-                    .font(.system(size: 13, weight: .medium))
-            }
-        }
-
-        private func formatTokenCount(_ value: Int) -> String {
-            if value >= 1_000_000 {
-                return String(format: "%.1fM", Double(value) / 1_000_000)
-            }
-            if value >= 1_000 {
-                return String(format: "%.1fK", Double(value) / 1_000)
-            }
-            return "\(value)"
-        }
     }
 
     // MARK: - Agents List
@@ -2491,7 +2193,7 @@ struct SidebarView: View {
     }
 }
 
-private struct SidebarCollapsibleRow<Icon: View, Actions: View, Children: View>: View {
+struct SidebarCollapsibleRow<Icon: View, Actions: View, Children: View>: View {
     private static var expansionAnimation: Animation {
         .spring(response: 0.28, dampingFraction: 0.86)
     }
@@ -2711,8 +2413,6 @@ private struct DetailContentView: View {
     @Binding var selectedSettingsSection: SettingsPageSection
     @Binding var terminalOpen: Bool
     @Binding var terminalHeight: CGFloat
-    let onOpenSkillDetail: (SkillDetailPresentationItem) -> Void
-    let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void
     let marketplaceInstallRefreshID: Int
     let onOpenMarketplaceDetail: (MarketplaceAgent) -> Void
     @State private var collabPanelWidth: CGFloat = 320
@@ -2816,14 +2516,13 @@ private struct DetailContentView: View {
                     case .config:
                         ConfigTabView(
                             viewModel: viewModel,
-                            selectedSection: $selectedSettingsSection,
-                            onOpenSkillDetail: onOpenSkillDetail,
-                            onOpenPluginDetail: onOpenPluginDetail
+                            selectedSection: $selectedSettingsSection
                         )
                     case .skills:
                         SkillsTabView(
-                            viewModel: viewModel,
-                            onOpenSkillDetail: onOpenSkillDetail
+                            openclawService: viewModel.openclawService,
+                            notifySuccess: viewModel.showSuccessMessage,
+                            notifyError: viewModel.showErrorMessage
                         )
                     case .models:
                         ModelsTabView(viewModel: viewModel)
@@ -2833,8 +2532,9 @@ private struct DetailContentView: View {
                         ChannelsTabView(viewModel: viewModel)
                     case .plugins:
                         PluginsTabView(
-                            viewModel: viewModel,
-                            onOpenPluginDetail: onOpenPluginDetail
+                            openclawService: viewModel.openclawService,
+                            notifySuccess: viewModel.showSuccessMessage,
+                            notifyError: viewModel.showErrorMessage
                         )
                     case .cron:
                         CronTabView(viewModel: viewModel)
@@ -3011,100 +2711,6 @@ struct PendingComposerMessage: Identifiable, Equatable {
     }
 }
 
-private struct WorkStatusHeaderHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct ChatScrollCompensationApplier: NSViewRepresentable {
-    let delta: CGFloat
-    let revision: Int
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeNSView(context: Context) -> NSView {
-        NSView(frame: .zero)
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        guard revision != context.coordinator.appliedRevision,
-              abs(delta) > 0.5 else {
-            return
-        }
-        context.coordinator.appliedRevision = revision
-
-        DispatchQueue.main.async {
-            guard let scrollView = Self.nearestScrollView(from: nsView) else { return }
-            Self.applyCompensation(delta, in: scrollView, remainingRetries: 3)
-        }
-    }
-
-    private static func nearestScrollView(from view: NSView) -> NSScrollView? {
-        var current: NSView? = view
-        while let candidate = current {
-            if let scrollView = candidate as? NSScrollView {
-                return scrollView
-            }
-            if let scrollView = candidate.enclosingScrollView {
-                return scrollView
-            }
-            current = candidate.superview
-        }
-        return nil
-    }
-
-    private static func applyCompensation(
-        _ delta: CGFloat,
-        in scrollView: NSScrollView,
-        remainingRetries: Int,
-        desiredOffset: CGFloat? = nil
-    ) {
-        guard let documentView = scrollView.documentView else { return }
-
-        scrollView.layoutSubtreeIfNeeded()
-        documentView.layoutSubtreeIfNeeded()
-
-        let clipView = scrollView.contentView
-        var bounds = clipView.bounds
-        let targetOffset = desiredOffset ?? (bounds.origin.y + visualCompensationOffset(delta, documentView: documentView))
-        let maxOffset = max(0, documentView.bounds.height - clipView.bounds.height)
-        let nextOffset = min(max(targetOffset, 0), maxOffset)
-
-        if abs(nextOffset - bounds.origin.y) > 0.5 {
-            bounds.origin.y = nextOffset
-            clipView.setBoundsOrigin(bounds.origin)
-            scrollView.reflectScrolledClipView(clipView)
-        }
-
-        guard remainingRetries > 0,
-              abs(nextOffset - targetOffset) > 0.5 else {
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
-            Self.applyCompensation(
-                delta,
-                in: scrollView,
-                remainingRetries: remainingRetries - 1,
-                desiredOffset: targetOffset
-            )
-        }
-    }
-
-    private static func visualCompensationOffset(_ delta: CGFloat, documentView: NSView) -> CGFloat {
-        documentView.isFlipped ? delta : -delta
-    }
-
-    final class Coordinator {
-        var appliedRevision = 0
-    }
-}
-
 private enum ChatAutoScrollMode: Equatable {
     case followingBottom
     case userDetached
@@ -3242,9 +2848,8 @@ struct ChatView: View {
     // @ Agent mention panel
     @State private var agentSelectedIndex: Int = 0
     @State private var agentJustSelected: Bool = false
-    // Composer agent/model selector
+    // Composer model selector
     @State private var showComposerSelector = false
-    @State private var composerSelectorShowsModels = false
     // File attachments
     @State private var attachedFiles: [URL] = []
     // Scroll debounce for streaming content
@@ -3254,15 +2859,11 @@ struct ChatView: View {
     @State private var chatScrollIsAtBottom = true
     @State private var scheduledBottomScrollGeneration = 0
     @State private var scrollEventMonitor: Any?
-    @State private var showChatScrollIndicator = false
-    @State private var chatScrollIndicatorHideTask: DispatchWorkItem?
     // Store ScrollViewProxy so sendMessage() can scroll to bottom
     @State private var chatScrollProxy: ScrollViewProxy?
     @State private var highlightedMessageId: UUID?
     @State private var highlightedMessageFlashOn = false
     @State private var highlightFlashTask: Task<Void, Never>?
-    @State private var pendingWorkStatusScrollCompensation: CGFloat = 0
-    @State private var workStatusExpansionCompensationRevision = 0
     // Create agent sheet
     @State private var showCreateAgentSheet = false
     @StateObject private var createAgentVM: SubAgentsViewModel
@@ -3270,6 +2871,7 @@ struct ChatView: View {
     @State private var renderObservationStartBySession: [UUID: ContinuousClock.Instant] = [:]
     private static let layoutMetrics = OutputsSidebarLayoutMetrics()
     private static let emptyChatContentYOffset: CGFloat = -48
+    private let composerEditorHeight: CGFloat = 76
     private let composerSuggestionPanelMaxHeight: CGFloat = 184
 
     init(
@@ -3328,74 +2930,18 @@ struct ChatView: View {
 
     @ViewBuilder
     private func chatScrollContent(proxy: ScrollViewProxy) -> some View {
-        let richMarkdownMessageIds = MarkdownRenderPolicy.recentRichMessageIds(in: viewModel.chatMessages)
-        let scrollView = ScrollView(showsIndicators: false) {
-            HStack(alignment: .top, spacing: 0) {
-                Spacer(minLength: 0)
-
-                LazyVStack(spacing: 16) {
-                    Color.clear
-                        .frame(width: 0, height: 0)
-                        .id("chatTop")
-
-                    ForEach(viewModel.chatMessages, id: \.id) { message in
-                        // Hide bubbles that are "transient placeholders" —
-                        // empty assistant messages still in `.loading`. Empty
-                        // `.background` messages still pass through so users see
-                        // the background-running affordance.
-                        let isLoadingPlaceholder = message.role == .assistant
-                            && message.content.isEmpty
-                            && message.attachments.isEmpty
-                            && message.taskStatus == .loading
-                        if !isLoadingPlaceholder {
-                            if message.scrollTargetId != nil {
-                                BackgroundTaskNotification(message: message, scrollProxy: proxy)
-                                    .id(message.id)
-                            } else {
-                                ChatBubble(
-                                    message: message,
-                                    allowsRichMarkdown: richMarkdownMessageIds.contains(message.id),
-                                    isJumpHighlighted: highlightedMessageId == message.id && highlightedMessageFlashOn,
-                                    onConfirmEditResend: { original, editedText in
-                                        viewModel.rewindToMessage(original, replacementText: editedText)
-                                    },
-                                    onCancel: { viewModel.cancelChat($0.id) },
-                                    onWorkStatusExpansionHeightChange: compensateWorkStatusExpansion
-                                )
-                                    .id(message.id)
-                            }
-                        }
-                    }
-
-                    ForEach(viewModel.chatMessages.filter { $0.taskStatus == .loading && $0.content.isEmpty }, id: \.id) { loadingMsg in
-                        ThinkingIndicator(
-                            message: loadingMsg,
-                            viewModel: viewModel,
-                            onWorkStatusExpansionHeightChange: compensateWorkStatusExpansion
-                        )
-                        .id("loading-\(loadingMsg.id)")
-                    }
-
-                    Color.clear
-                        .frame(width: 0, height: 0)
-                        .id("chatBottom")
-                }
-                .frame(maxWidth: Self.layoutMetrics.chatColumnMaxWidth)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-            .padding(.bottom, 20)
-            .background(
-                ChatScrollCompensationApplier(
-                    delta: pendingWorkStatusScrollCompensation,
-                    revision: workStatusExpansionCompensationRevision
-                )
-                .frame(width: 0, height: 0)
-                .allowsHitTesting(false)
-            )
-        }
+        let scrollView = ChatTimelineSurface(
+            messages: viewModel.chatMessages,
+            viewModel: viewModel,
+            proxy: proxy,
+            columnMaxWidth: Self.layoutMetrics.chatColumnMaxWidth,
+            highlightedMessageId: highlightedMessageId,
+            highlightedMessageFlashOn: highlightedMessageFlashOn,
+            onConfirmEditResend: { original, editedText in
+                viewModel.rewindToMessage(original, replacementText: editedText)
+            },
+            onCancel: { viewModel.cancelChat($0.id) }
+        )
         .alert(
             "回滚失败",
             isPresented: Binding(
@@ -3552,39 +3098,12 @@ struct ChatView: View {
                     })
                     .frame(width: 0, height: 0)
                     .allowsHitTesting(false)
-                    chatScrollIndicator
                 }
             }
             .id("chatScrollView")
 
             composerArea(maxWidth: Self.layoutMetrics.chatColumnMaxWidth, horizontalPadding: 16, bottomPadding: 16)
         }
-    }
-
-    private var chatScrollIndicator: some View {
-        Capsule(style: .continuous)
-            .fill(Color.primary.opacity(colorScheme == .dark ? 0.30 : 0.22))
-            .frame(width: 3, height: 38)
-            .padding(.top, 12)
-            .padding(.trailing, 8)
-            .opacity(showChatScrollIndicator ? 1 : 0)
-        .allowsHitTesting(false)
-        .animation(.easeInOut(duration: 0.16), value: showChatScrollIndicator)
-    }
-
-    private func showTransientChatScrollIndicator() {
-        chatScrollIndicatorHideTask?.cancel()
-        withAnimation(.easeInOut(duration: 0.12)) {
-            showChatScrollIndicator = true
-        }
-
-        let task = DispatchWorkItem {
-            withAnimation(.easeInOut(duration: 0.22)) {
-                showChatScrollIndicator = false
-            }
-        }
-        chatScrollIndicatorHideTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: task)
     }
 
     private func handleChatScrollPositionChange(isAtBottom: Bool) {
@@ -3616,7 +3135,6 @@ struct ChatView: View {
         .animation(.easeInOut(duration: 0.15), value: showSlashPanel)
         .animation(.easeInOut(duration: 0.15), value: showSkillsPanel)
         .animation(.easeInOut(duration: 0.18), value: showComposerSelector)
-        .animation(.easeInOut(duration: 0.18), value: composerSelectorShowsModels)
     }
 
     private var composerFloatingPanels: some View {
@@ -3810,119 +3328,23 @@ struct ChatView: View {
     }
 
     private var composerInputCard: some View {
-        VStack(spacing: 0) {
-            if !attachedFiles.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(attachedFiles, id: \.absoluteString) { url in
-                            AttachmentPreview(url: url) {
-                                attachedFiles.removeAll { $0 == url }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                }
-            }
-
-            ZStack(alignment: .topLeading) {
-	                if inputText.isEmpty && !isInputFocused {
-	                    Text(String(localized: "Ask Anything", bundle: LanguageManager.shared.localizedBundle))
-	                        .font(DashboardTypography.composerPlaceholder)
-	                        .foregroundColor(Color(NSColor.placeholderTextColor).opacity(0.6))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
-
-	                Text(inputText.isEmpty ? " " : inputText)
-	                    .font(DashboardTypography.composer)
-	                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .opacity(0)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-		                TextEditor(text: $inputText)
-		                    .font(DashboardTypography.composer)
-		                    .padding(.horizontal, 6)
-	                    .padding(.vertical, 2)
-	                    .scrollContentBackground(.hidden)
-	                    .tint(Color(NSColor.labelColor))
-	                    .disabled(isInputLocked)
-	                    .focused($isInputFocused)
-            }
-            .frame(minHeight: 44, maxHeight: 200)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 8)
-            .padding(.top, attachedFiles.isEmpty ? 8 : 2)
-            .padding(.bottom, 2)
-
-            HStack(spacing: 6) {
-                Button(action: { openFilePicker() }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.plain)
-                .help(String(localized: "Attach File", bundle: LanguageManager.shared.localizedBundle))
-                .disabled(isInputLocked)
-
-                Spacer(minLength: 8)
-
-                ComposerAgentModelSelector(
-                    viewModel: viewModel,
-                    isOpen: $showComposerSelector,
-                    showingModels: $composerSelectorShowsModels
-                )
-
-	                Button(action: {
-                        if shouldShowStopButton, let messageId = currentForegroundTaskMessageId {
-                            viewModel.cancelChat(messageId)
-                        } else {
-                            sendMessage()
-                        }
-                    }) {
-		                    Image(systemName: shouldShowStopButton ? "square.fill" : "arrow.up")
-		                        .font(.system(size: shouldShowStopButton ? 9 : 13, weight: .semibold))
-		                        .foregroundColor(sendButtonIconColor)
-		                        .frame(width: 26, height: 26)
-	                        .background(
-	                            Circle()
-	                                .fill(sendButtonFillColor)
-	                        )
-	                }
-                .buttonStyle(.plain)
-                .disabled(!canSend && !shouldShowStopButton)
-                .animation(.easeInOut(duration: 0.15), value: canSend)
-                .animation(.easeInOut(duration: 0.15), value: shouldShowStopButton)
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 2)
-            .padding(.bottom, 8)
-        }
-        .background(Color(NSColor.windowBackgroundColor))
-        .cornerRadius(16)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+        ChatComposerView(
+            viewModel: viewModel,
+            inputText: $inputText,
+            attachedFiles: $attachedFiles,
+            showComposerSelector: $showComposerSelector,
+            isInputFocused: $isInputFocused,
+            isInputLocked: isInputLocked,
+            shouldShowStopButton: shouldShowStopButton,
+            currentForegroundTaskMessageId: currentForegroundTaskMessageId,
+            canSend: canSend,
+            sendButtonFillColor: sendButtonFillColor,
+            sendButtonIconColor: sendButtonIconColor,
+            composerEditorHeight: composerEditorHeight,
+            onOpenFilePicker: openFilePicker,
+            onSendMessage: sendMessage,
+            onCancelMessage: { viewModel.cancelChat($0) }
         )
-        .shadow(color: .black.opacity(0.08), radius: 8, y: -2)
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { data, _ in
-                    guard let urlData = data as? Data,
-                          let url = URL(dataRepresentation: urlData, relativeTo: nil) else { return }
-                    DispatchQueue.main.async {
-                        if !attachedFiles.contains(url) {
-                            attachedFiles.append(url)
-                        }
-                    }
-                }
-            }
-            return true
-        }
     }
 
     private var terminalPanel: some View {
@@ -3948,7 +3370,6 @@ struct ChatView: View {
     private func closeComposerSelector() {
         withAnimation(.easeInOut(duration: 0.16)) {
             showComposerSelector = false
-            composerSelectorShowsModels = false
         }
     }
 
@@ -3996,12 +3417,14 @@ struct ChatView: View {
                     composerSelectorDismissLayer
                         .zIndex(0)
 
-                    ComposerAgentModelPanel(
-                        viewModel: viewModel,
+                    ComposerModelPanel(
+                        models: viewModel.availableModelsForSettings,
+                        currentModel: composerCurrentModel,
+                        defaultModel: viewModel.modelOverview.defaultModel,
                         isOpen: $showComposerSelector,
-                        showingModels: $composerSelectorShowsModels
+                        onSelectModel: viewModel.updateAgentModel(model:)
                     )
-                    .fixedSize(horizontal: true, vertical: true)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.trailing, trailingOffset)
                     .padding(.bottom, bottomOffset)
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
@@ -4009,9 +3432,12 @@ struct ChatView: View {
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .animation(.easeInOut(duration: 0.18), value: showComposerSelector)
-                .animation(.easeInOut(duration: 0.18), value: composerSelectorShowsModels)
             }
         }
+    }
+
+    private var composerCurrentModel: String {
+        viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }?.model ?? ""
     }
 
     private var chatContent: some View {
@@ -4061,7 +3487,6 @@ struct ChatView: View {
                     chatAutoScrollMode = .userDetached
                     scheduledBottomScrollGeneration += 1
                 }
-                showTransientChatScrollIndicator()
 
                 return event
             }
@@ -4308,8 +3733,6 @@ struct ChatView: View {
                 NSEvent.removeMonitor(monitor)
                 scrollEventMonitor = nil
             }
-            chatScrollIndicatorHideTask?.cancel()
-            chatScrollIndicatorHideTask = nil
             highlightFlashTask?.cancel()
             highlightFlashTask = nil
         }
@@ -4792,12 +4215,6 @@ struct ChatView: View {
         }
     }
 
-    private func compensateWorkStatusExpansion(by delta: CGFloat) {
-        guard abs(delta) > 0.5 else { return }
-        pendingWorkStatusScrollCompensation = delta
-        workStatusExpansionCompensationRevision += 1
-    }
-
     private func selectSlashCommand(_ cmd: SlashCommand) {
         slashSelectedIndex = 0
         if cmd.hasParam {
@@ -4950,17 +4367,12 @@ private struct ComposerSelectorButtonBoundsKey: PreferenceKey {
     }
 }
 
-private struct ComposerAgentModelSelector: View {
+struct ComposerModelSelector: View {
     @ObservedObject var viewModel: DashboardViewModel
     @Binding var isOpen: Bool
-    @Binding var showingModels: Bool
 
     private var currentAgent: AgentOption? {
         viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
-    }
-
-    private var agentLabel: String {
-        currentAgent?.name ?? viewModel.selectedAgentId
     }
 
     private var modelLabel: String {
@@ -4972,20 +4384,15 @@ private struct ComposerAgentModelSelector: View {
 
     var body: some View {
         Button {
-            if !isOpen {
-                Task { await viewModel.loadModelsForSettings() }
-            }
             withAnimation(.easeInOut(duration: 0.18)) {
                 isOpen.toggle()
-                if !isOpen {
-                    showingModels = false
-                }
             }
         } label: {
             HStack(spacing: 4) {
-                AgentAvatarImage(size: 16)
+                Image(systemName: "cube")
+                    .font(.system(size: 12, weight: .medium))
 
-                Text("\(agentLabel) · \(modelLabel)")
+                Text(modelLabel)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
@@ -4998,187 +4405,103 @@ private struct ComposerAgentModelSelector: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Agent and model")
+        .help("Model")
         .anchorPreference(key: ComposerSelectorButtonBoundsKey.self, value: .bounds) { anchor in
             isOpen ? anchor : nil
         }
     }
 }
 
-private struct ComposerAgentModelPanel: View {
-    @ObservedObject var viewModel: DashboardViewModel
+private struct ComposerModelPanel: View {
+    let models: [ModelOption]
+    let currentModel: String
+    let defaultModel: String
     @Binding var isOpen: Bool
-    @Binding var showingModels: Bool
+    let onSelectModel: (String) -> Void
 
-    private var currentAgent: AgentOption? {
-        viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
-    }
-
-    private var currentRawModel: String {
-        currentAgent?.model ?? ""
-    }
+    private static let maxModelPanelHeight: CGFloat = 420
 
     private var resolvedDefaultModel: String {
-        let defaultModel = viewModel.modelOverview.defaultModel
         let cleaned = stripProviderPrefix(defaultModel)
         return cleaned.isEmpty || cleaned == "-" ? "" : cleaned
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 8) {
-                primaryPanel
-                if showingModels {
-                    modelPanel
-                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomLeading)))
-                }
-            }
-
-            VStack(alignment: .trailing, spacing: 8) {
-                if showingModels {
-                    modelPanel
-                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
-                }
-                primaryPanel
-            }
-        }
-    }
-
-    private var primaryPanel: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Agent")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-
-            ForEach(viewModel.availableAgents) { agent in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        viewModel.selectedAgentId = agent.id
-                        showingModels = false
-                        isOpen = false
-                    }
-                } label: {
-                    selectorRow(
-                        title: agent.name,
-                        subtitle: agent.id == agent.name ? nil : agent.id,
-                        selected: agent.id == viewModel.selectedAgentId,
-                        showsDisclosure: false,
-                        showsAgentAvatar: true
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-
-            Divider()
-                .padding(.vertical, 4)
-
-            Button {
-                Task { await viewModel.loadModelsForSettings() }
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    showingModels.toggle()
-                }
-            } label: {
-                selectorRow(
-                    title: "Model",
-                    subtitle: currentModelDisplay,
-                    selected: false,
-                    showsDisclosure: true,
-                    showsAgentAvatar: false
-                )
-            }
-            .buttonStyle(.plain)
-            .padding(.bottom, 6)
-        }
-        .frame(width: 240)
-        .panelChrome(cornerRadius: 12)
-    }
-
-    private var modelPanel: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("Model")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 10)
 
-            Button {
-                selectModel("")
-            } label: {
-                selectorRow(
-                    title: resolvedDefaultModel.isEmpty ? "Default" : "Default (\(resolvedDefaultModel))",
-                    subtitle: "Inherit",
-                    selected: currentRawModel.isEmpty,
-                    showsDisclosure: false,
-                    showsAgentAvatar: false
-                )
-            }
-            .buttonStyle(.plain)
+            ScrollView(showsIndicators: true) {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    Button {
+                        selectModel("")
+                    } label: {
+                        selectorRow(
+                            title: resolvedDefaultModel.isEmpty ? "Default" : "Default (\(resolvedDefaultModel))",
+                            subtitle: "Inherit",
+                            selected: currentModel.isEmpty,
+                            showsDisclosure: false
+                        )
+                    }
+                    .buttonStyle(.plain)
 
-            if !currentRawModel.isEmpty
-                && !viewModel.availableModelsForSettings.contains(where: { $0.id == currentRawModel }) {
-                Button {
-                    selectModel(currentRawModel)
-                } label: {
-                    selectorRow(
-                        title: stripProviderPrefix(currentRawModel),
-                        subtitle: nil,
-                        selected: true,
-                        showsDisclosure: false,
-                        showsAgentAvatar: false
-                    )
+                    if !currentModel.isEmpty
+                        && !models.contains(where: { $0.id == currentModel }) {
+                        Button {
+                            selectModel(currentModel)
+                        } label: {
+                            selectorRow(
+                                title: stripProviderPrefix(currentModel),
+                                subtitle: nil,
+                                selected: true,
+                                showsDisclosure: false
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    ForEach(models) { model in
+                        Button {
+                            selectModel(model.id)
+                        } label: {
+                            selectorRow(
+                                title: stripProviderPrefix(model.name),
+                                subtitle: nil,
+                                selected: model.id == currentModel,
+                                showsDisclosure: false
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
-            }
-
-            ForEach(viewModel.availableModelsForSettings) { model in
-                Button {
-                    selectModel(model.id)
-                } label: {
-                    selectorRow(
-                        title: stripProviderPrefix(model.name),
-                        subtitle: nil,
-                        selected: model.id == currentRawModel,
-                        showsDisclosure: false,
-                        showsAgentAvatar: false
-                    )
-                }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
             }
         }
-        .frame(width: 230)
-        .panelChrome(cornerRadius: 12)
-    }
-
-    private var currentModelDisplay: String {
-        let raw = currentRawModel.isEmpty ? viewModel.modelOverview.defaultModel : currentRawModel
-        let cleaned = stripProviderPrefix(raw)
-        return cleaned.isEmpty || cleaned == "-" ? "Model" : cleaned
+        .frame(width: 300)
+        .frame(maxHeight: Self.maxModelPanelHeight)
+        .panelChrome(cornerRadius: 22)
     }
 
     private func selectorRow(
         title: String,
         subtitle: String?,
         selected: Bool,
-        showsDisclosure: Bool,
-        showsAgentAvatar: Bool
+        showsDisclosure: Bool
     ) -> some View {
         HStack(spacing: 8) {
-            if showsAgentAvatar {
-                AgentAvatarImage(size: 18)
-            }
-
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .font(.system(size: 15, weight: selected ? .semibold : .regular))
                     .foregroundColor(.primary)
                     .lineLimit(1)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -5186,19 +4509,19 @@ private struct ComposerAgentModelPanel: View {
             Spacer()
             if selected {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 15, weight: .regular))
                     .foregroundColor(.secondary)
             }
             if showsDisclosure {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 15, weight: .regular))
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, subtitle == nil ? 8 : 6)
+        .padding(.horizontal, 14)
+        .frame(minHeight: subtitle == nil ? 44 : 52)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(selected ? Color.secondary.opacity(0.12) : Color.clear)
         )
         .contentShape(Rectangle())
@@ -5206,8 +4529,7 @@ private struct ComposerAgentModelPanel: View {
 
     private func selectModel(_ model: String) {
         withAnimation(.easeInOut(duration: 0.16)) {
-            viewModel.updateAgentModel(model: model)
-            showingModels = false
+            onSelectModel(model)
             isOpen = false
         }
     }
@@ -5297,7 +4619,6 @@ struct BackgroundTaskNotification: View {
 struct ThinkingIndicator: View {
     let message: ChatMessage
     @ObservedObject var viewModel: DashboardViewModel
-    var onWorkStatusExpansionHeightChange: ((CGFloat) -> Void)? = nil
     @State private var elapsedSeconds: Int = 0
     @State private var timer: Timer?
 
@@ -5316,8 +4637,7 @@ struct ThinkingIndicator: View {
             WorkStatusHeader(
                 start: message.timestamp,
                 end: nil,
-                activityEvents: message.activityEvents,
-                onExpansionHeightChange: onWorkStatusExpansionHeightChange
+                activityEvents: message.activityEvents
             )
             // "Move to Background" button — only visible after 60 seconds
             if showBackgroundButton {
@@ -5596,243 +4916,6 @@ struct MessageActionIcon: View {
     }
 }
 
-/// Top-of-response working status. The schedule is anchored to the run start
-/// time so SwiftUI keeps one stable timeline subscription while streaming.
-private struct WorkStatusHeader: View {
-    private static let expansionAnimation = Animation.spring(response: 0.28, dampingFraction: 0.86)
-    private static let measuredHeightDeltaThreshold: CGFloat = 2
-
-    let start: Date?
-    let end: Date?
-    let activityEvents: [ChatActivityEvent]
-    let onExpansionHeightChange: ((CGFloat) -> Void)?
-    @State private var isExpanded = false
-    @State private var measuredHeight: CGFloat = 0
-    @State private var hasMeasuredHeight = false
-
-    var body: some View {
-        Group {
-            if let start = start {
-                if let end = end {
-                    statusBody {
-                        Text(WorkStatusDurationText.status(
-                            elapsedSeconds: max(0, Int(end.timeIntervalSince(start))),
-                            isFinished: true,
-                        ))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                    }
-                } else {
-                    statusBody {
-                        IsolatedElapsedWorkStatusText(start: start)
-                    }
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    headerButton {
-                        Text(String(localized: "Working", bundle: LanguageManager.shared.localizedBundle))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                    if isExpanded {
-                        activityRows
-                    }
-                }
-            }
-        }
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: WorkStatusHeaderHeightKey.self, value: proxy.size.height)
-            }
-        )
-        .onPreferenceChange(WorkStatusHeaderHeightKey.self) { newHeight in
-            guard hasMeasuredHeight else {
-                measuredHeight = newHeight
-                hasMeasuredHeight = true
-                return
-            }
-
-            let delta = newHeight - measuredHeight
-            measuredHeight = newHeight
-            guard abs(delta) >= Self.measuredHeightDeltaThreshold else { return }
-            onExpansionHeightChange?(delta)
-        }
-        .animation(Self.expansionAnimation, value: isExpanded)
-    }
-
-    private func statusBody<Label: View>(@ViewBuilder label: () -> Label) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            headerButton {
-                label()
-            }
-            if isExpanded {
-                activityRows
-            }
-            Divider()
-        }
-    }
-
-    private var activityRows: some View {
-        ActivitySummaryRows(events: activityEvents)
-            .transition(.move(edge: .top).combined(with: .opacity))
-            .clipped()
-    }
-
-    private func headerButton<Label: View>(@ViewBuilder label: () -> Label) -> some View {
-        Button {
-            withAnimation(Self.expansionAnimation) {
-                isExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 4) {
-                label()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.75))
-                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                    .animation(Self.expansionAnimation, value: isExpanded)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-}
-
-private enum WorkStatusDurationText {
-    static func status(elapsedSeconds: Int, isFinished: Bool) -> String {
-        let key = isFinished ? "Worked for %@" : "Working for %@"
-        return String(
-            format: String(localized: String.LocalizationValue(key), bundle: LanguageManager.shared.localizedBundle),
-            localizedDuration(elapsedSeconds)
-        )
-    }
-
-    private static func localizedDuration(_ seconds: Int) -> String {
-        let minutes = seconds / 60
-        let remainingSeconds = seconds % 60
-        if minutes > 0 {
-            return String(
-                format: String(localized: "%lldm %llds", bundle: LanguageManager.shared.localizedBundle),
-                Int64(minutes),
-                Int64(remainingSeconds)
-            )
-        }
-        return String(
-            format: String(localized: "%llds", bundle: LanguageManager.shared.localizedBundle),
-            Int64(remainingSeconds)
-        )
-    }
-}
-
-private struct IsolatedElapsedWorkStatusText: View {
-    private static let reservedWidth: CGFloat = 156
-
-    let start: Date
-
-    var body: some View {
-        TimelineView(.periodic(from: start, by: 1)) { ctx in
-            ShimmeringWorkStatusText(
-                text: WorkStatusDurationText.status(
-                    elapsedSeconds: max(0, Int(ctx.date.timeIntervalSince(start))),
-                    isFinished: false
-                )
-            )
-            .monospacedDigit()
-            .lineLimit(1)
-            .frame(width: Self.reservedWidth, alignment: .leading)
-        }
-    }
-}
-
-private struct ShimmeringWorkStatusText: View {
-    let text: String
-    @State private var highlightIsTrailing = false
-
-    private var label: some View {
-        Text(text)
-            .font(.system(size: 13, weight: .medium))
-            .monospacedDigit()
-    }
-
-    var body: some View {
-        label
-            .foregroundColor(.secondary)
-            .overlay {
-                GeometryReader { proxy in
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0.0),
-                            .init(color: .primary.opacity(0.10), location: 0.35),
-                            .init(color: .primary.opacity(0.70), location: 0.50),
-                            .init(color: .primary.opacity(0.10), location: 0.65),
-                            .init(color: .clear, location: 1.0)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(width: max(proxy.size.width * 0.72, 36), height: proxy.size.height)
-                    .offset(x: highlightIsTrailing ? proxy.size.width : -max(proxy.size.width * 0.72, 36))
-                }
-                .mask(label)
-                .allowsHitTesting(false)
-            }
-            .onAppear {
-                highlightIsTrailing = false
-                withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) {
-                    highlightIsTrailing = true
-                }
-            }
-    }
-}
-
-private struct ActivitySummaryRows: View {
-    let events: [ChatActivityEvent]
-
-    var body: some View {
-        if !events.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(events) { event in
-                    if event.kind == .progressUpdate {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Array(event.details.enumerated()), id: \.offset) { _, detail in
-                                Text(detail)
-                                    .font(.system(size: 14, weight: .regular))
-                                    .foregroundColor(.primary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    } else {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                Image(systemName: event.kind.systemImage)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .frame(width: 14)
-                                Text(event.kind.title(count: event.count))
-                                    .font(.system(size: 13, weight: .regular))
-                                    .lineLimit(1)
-                            }
-                            if !event.details.isEmpty {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    ForEach(Array(event.details.enumerated()), id: \.offset) { _, detail in
-                                        Text(detail)
-                                            .font(.system(size: 12, weight: .regular, design: .monospaced))
-                                            .lineLimit(nil)
-                                    }
-                                }
-                                .padding(.leading, 22)
-                                .foregroundColor(.secondary.opacity(0.66))
-                            }
-                        }
-                        .foregroundColor(.secondary.opacity(0.72))
-                    }
-                }
-            }
-        }
-    }
-}
-
 struct ChatBubble: View {
     let message: ChatMessage
     let allowsRichMarkdown: Bool
@@ -5843,7 +4926,6 @@ struct ChatBubble: View {
     /// Cancel the in-flight run for this message. When set, a cancel button
     /// appears next to the streaming spinner so a run can be stopped mid-stream.
     var onCancel: ((ChatMessage) -> Void)? = nil
-    var onWorkStatusExpansionHeightChange: ((CGFloat) -> Void)? = nil
     @State private var isHovering = false
     @State private var cachedMediaURLs: [URL] = []
     @State private var lastMediaScanContent: String = ""
@@ -5938,8 +5020,7 @@ struct ChatBubble: View {
                     WorkStatusHeader(
                         start: message.timestamp,
                         end: message.completedAt,
-                        activityEvents: message.activityEvents,
-                        onExpansionHeightChange: onWorkStatusExpansionHeightChange
+                        activityEvents: message.activityEvents
                     )
                 }
 
@@ -7238,15 +6319,14 @@ private struct OutputsTabView: View {
 }
 
 private struct WorkspaceFilePanel: View {
-    let agentId: String
+    let root: WorkspaceSidebarRoot
     @Binding var editingFilePath: String?
-    @Binding var isSearching: Bool
-    @Binding var searchText: String
+    let onOpenFile: (String) -> Void
+    let onCloseFile: () -> Void
     let editingFileDirty: Bool
     let width: CGFloat
 
     @State private var expandedFolders: Set<String> = []
-    @FocusState private var isSearchFocused: Bool
 
     // Context menu state
     @State private var renamingPath: String?
@@ -7280,68 +6360,23 @@ private struct WorkspaceFilePanel: View {
         "pdf", "patch", "diff", "log"
     ]
 
-    private var workspacePath: String {
-        DashboardViewModel.resolveAgentWorkspace(agentId)
-    }
+    private var workspacePath: String { root.path }
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                if isSearching {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        TextField("Search files...", text: $searchText)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12))
-                            .focused($isSearchFocused)
-                        if !searchText.isEmpty {
-                            Button(action: { searchText = "" }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(6)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 8)
-                }
-
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-                        if query.isEmpty {
-                            let visibleItems = buildVisibleItems(root: workspacePath, depth: 0)
-                            if visibleItems.isEmpty {
-                                outputsEmptyState
-                            } else {
-                                ForEach(visibleItems, id: \.item.path) { entry in
-                                    fileRowView(item: entry.item, depth: entry.depth)
-                                }
-                            }
-                            // New item input row at workspace root level
-                            if newItemParent == workspacePath {
-                                newItemInputRow(depth: 0)
-                            }
+                        let visibleItems = buildVisibleItems(root: workspacePath, depth: 0)
+                        if visibleItems.isEmpty {
+                            outputsEmptyState
                         } else {
-                            let results = searchFiles(root: workspacePath, query: query)
-                            if results.isEmpty {
-                                Text("No results")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .padding(12)
-                            } else {
-                                ForEach(results, id: \.path) { item in
-                                    searchResultRow(item: item)
-                                }
+                            ForEach(visibleItems, id: \.item.path) { entry in
+                                fileRowView(item: entry.item, depth: entry.depth)
                             }
+                        }
+                        if newItemParent == workspacePath {
+                            newItemInputRow(depth: 0)
                         }
                     }
                     .padding(.vertical, 8)
@@ -7350,15 +6385,6 @@ private struct WorkspaceFilePanel: View {
             }
             .frame(width: width)
             .background(Color(NSColor.windowBackgroundColor))
-            .onChange(of: isSearching) { active in
-                if active {
-                    DispatchQueue.main.async {
-                        isSearchFocused = true
-                    }
-                } else {
-                    isSearchFocused = false
-                }
-            }
             .alert("Delete", isPresented: Binding<Bool>(
                 get: { deleteConfirmPath != nil },
                 set: { if !$0 { deleteConfirmPath = nil } }
@@ -7391,95 +6417,6 @@ private struct WorkspaceFilePanel: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
-    }
-
-    // MARK: - Search result row (flat, with relative path)
-
-    private func searchResultRow(item: FileItem) -> some View {
-        let isSelected = editingFilePath == item.path
-        let isDirtyFile = isSelected && editingFileDirty
-        let relativePath = item.path.replacingOccurrences(of: workspacePath + "/", with: "")
-
-        return Button(action: {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                if item.isDirectory {
-                    // Expand all ancestor folders + this folder, then exit search
-                    var current = item.path
-                    while current != workspacePath && current != "/" {
-                        expandedFolders.insert(current)
-                        current = (current as NSString).deletingLastPathComponent
-                    }
-                    searchText = ""
-                    isSearching = false
-                    isSearchFocused = false
-                } else {
-                    editingFilePath = item.path
-                }
-            }
-        }) {
-            HStack(spacing: 6) {
-                workspaceItemIcon(item: item, isExpanded: false)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(item.name)
-                        .font(.system(size: 13))
-                        .foregroundColor(isSelected ? .white : .primary)
-                        .lineLimit(1)
-                    if relativePath != item.name {
-                        Text(relativePath)
-                            .font(.system(size: 10))
-                            .foregroundColor(isSelected ? .white.opacity(0.7) : .secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-
-                if isDirtyFile {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 6, height: 6)
-                }
-
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
-            .cornerRadius(4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Recursive file search
-
-    private func searchFiles(root: String, query: String) -> [FileItem] {
-        var results: [FileItem] = []
-        searchFilesRecursive(directory: root, query: query, depth: 0, results: &results)
-        return results.sorted {
-            // Directories first, then by name
-            if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
-    }
-
-    private func searchFilesRecursive(directory: String, query: String, depth: Int, results: inout [FileItem]) {
-        guard depth < 4 else { return }
-        let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: directory) else { return }
-        for name in names {
-            if isHiddenWorkspaceItem(name: name) { continue }
-            let fullPath = (directory as NSString).appendingPathComponent(name)
-            var isDir: ObjCBool = false
-            fm.fileExists(atPath: fullPath, isDirectory: &isDir)
-            let item = FileItem(name: name, path: fullPath, isDirectory: isDir.boolValue)
-            if name.lowercased().contains(query), shouldShowOutputItem(item) {
-                results.append(FileItem(name: name, path: fullPath, isDirectory: isDir.boolValue))
-            }
-            if isDir.boolValue {
-                searchFilesRecursive(directory: fullPath, query: query, depth: depth + 1, results: &results)
-            }
-        }
     }
 
     private struct DepthItem {
@@ -7564,7 +6501,7 @@ private struct WorkspaceFilePanel: View {
                     }
                 } else {
                     withAnimation(.easeInOut(duration: 0.25)) {
-                        editingFilePath = item.path
+                        onOpenFile(item.path)
                     }
                 }
             }) {
@@ -7734,6 +6671,7 @@ private struct WorkspaceFilePanel: View {
             try fm.moveItem(atPath: oldPath, toPath: newPath)
             if editingFilePath == oldPath {
                 editingFilePath = newPath
+                onOpenFile(newPath)
             }
         } catch {}
         renamingPath = nil
@@ -7743,7 +6681,7 @@ private struct WorkspaceFilePanel: View {
     private func performDelete(path: String) {
         try? FileManager.default.removeItem(atPath: path)
         if let editing = editingFilePath, editing.hasPrefix(path) {
-            editingFilePath = nil
+            onCloseFile()
         }
         if let clip = clipboardPath, clip.hasPrefix(path) {
             clipboardPath = nil
@@ -7774,7 +6712,9 @@ private struct WorkspaceFilePanel: View {
             if clipboardIsCut {
                 try fm.moveItem(atPath: source, toPath: dest)
                 if let editing = editingFilePath, editing.hasPrefix(source) {
-                    editingFilePath = editing.replacingOccurrences(of: source, with: dest)
+                    let newEditingPath = editing.replacingOccurrences(of: source, with: dest)
+                    editingFilePath = newEditingPath
+                    onOpenFile(newEditingPath)
                 }
                 clipboardPath = nil
             } else {
@@ -7888,6 +6828,334 @@ private struct WorkspaceFilePanel: View {
         }
 
         return false
+    }
+}
+
+private struct ProjectFilesPanel: View {
+    let root: WorkspaceSidebarRoot
+    let selectedFilePath: String?
+    @Binding var searchText: String
+    let width: CGFloat
+    let onOpenFile: (String) -> Void
+
+    @State private var expandedFolders: Set<String> = []
+    @FocusState private var isSearchFocused: Bool
+
+    private static let hiddenNames: Set<String> = [
+        ".git", ".svn", ".hg", ".DS_Store", "node_modules", ".build",
+        "DerivedData", ".next", ".turbo", ".cache", "dist", "build"
+    ]
+
+    private var workspacePath: String { root.path }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 1)
+                .shadow(color: .black.opacity(0.15), radius: 6, x: -3, y: 0)
+
+            VStack(alignment: .leading, spacing: 0) {
+                workspaceRootHeader
+                searchField
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        if query.isEmpty {
+                            let visibleItems = buildVisibleItems(root: workspacePath, depth: 0)
+                            if visibleItems.isEmpty {
+                                emptyState
+                            } else {
+                                ForEach(visibleItems, id: \.item.path) { entry in
+                                    fileRow(item: entry.item, depth: entry.depth)
+                                }
+                            }
+                        } else {
+                            let results = searchFiles(root: workspacePath, query: query)
+                            if results.isEmpty {
+                                emptySearchState
+                            } else {
+                                ForEach(results, id: \.path) { item in
+                                    searchResultRow(item)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .frame(width: width)
+            .background(Color(NSColor.windowBackgroundColor))
+        }
+        .onAppear {
+            expandedFolders.insert(workspacePath)
+        }
+        .onChange(of: root) { newRoot in
+            expandedFolders = [newRoot.path]
+            searchText = ""
+        }
+    }
+
+    private var workspaceRootHeader: some View {
+        HStack(spacing: 8) {
+            SecondaryProjectSidebarIcon()
+                .foregroundColor(root.isProjectBound ? .accentColor : .secondary)
+                .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(root.displayName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                Text(root.isProjectBound ? root.path : "Fallback: \(root.path)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            TextField("Filter files...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($isSearchFocused)
+            if !searchText.isEmpty {
+                Button(action: { searchText = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(6)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .onAppear {
+            DispatchQueue.main.async {
+                isSearchFocused = true
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 24))
+                .foregroundColor(.secondary.opacity(0.65))
+            Text("No files")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+    }
+
+    private var emptySearchState: some View {
+        Text("No matching files")
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+    }
+
+    private struct DepthItem {
+        let item: FileItem
+        let depth: Int
+    }
+
+    private func buildVisibleItems(root: String, depth: Int) -> [DepthItem] {
+        var result: [DepthItem] = []
+        for item in listDirectory(root) {
+            result.append(DepthItem(item: item, depth: depth))
+            if item.isDirectory && expandedFolders.contains(item.path) {
+                result.append(contentsOf: buildVisibleItems(root: item.path, depth: depth + 1))
+            }
+        }
+        return result
+    }
+
+    private func fileRow(item: FileItem, depth: Int) -> some View {
+        let isExpanded = expandedFolders.contains(item.path)
+        let isSelected = selectedFilePath == item.path
+
+        return Button(action: {
+            if item.isDirectory {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    if isExpanded {
+                        expandedFolders.remove(item.path)
+                    } else {
+                        expandedFolders.insert(item.path)
+                    }
+                }
+            } else {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    onOpenFile(item.path)
+                }
+            }
+        }) {
+            HStack(spacing: 6) {
+                if item.isDirectory {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 16)
+                } else {
+                    Spacer().frame(width: 16)
+                }
+
+                projectItemIcon(item: item, isExpanded: isExpanded)
+
+                Text(item.name)
+                    .font(.system(size: 13))
+                    .foregroundColor(isSelected ? .white : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, CGFloat(depth) * 16 + 12)
+            .padding(.trailing, 12)
+            .padding(.vertical, 7)
+            .background(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
+            .cornerRadius(4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func searchResultRow(_ item: FileItem) -> some View {
+        let isSelected = selectedFilePath == item.path
+        let relativePath = item.path.replacingOccurrences(of: workspacePath + "/", with: "")
+
+        return Button(action: {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                if item.isDirectory {
+                    expandAncestors(for: item.path)
+                    searchText = ""
+                } else {
+                    onOpenFile(item.path)
+                }
+            }
+        }) {
+            HStack(spacing: 6) {
+                projectItemIcon(item: item, isExpanded: false)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.name)
+                        .font(.system(size: 13))
+                        .foregroundColor(isSelected ? .white : .primary)
+                        .lineLimit(1)
+                    if relativePath != item.name {
+                        Text(relativePath)
+                            .font(.system(size: 10))
+                            .foregroundColor(isSelected ? .white.opacity(0.7) : .secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
+            .cornerRadius(4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func expandAncestors(for path: String) {
+        var current = path
+        while current != workspacePath && current != "/" {
+            expandedFolders.insert(current)
+            current = (current as NSString).deletingLastPathComponent
+        }
+        expandedFolders.insert(workspacePath)
+    }
+
+    private func searchFiles(root: String, query: String) -> [FileItem] {
+        var results: [FileItem] = []
+        searchFilesRecursive(directory: root, query: query, depth: 0, results: &results)
+        return results.sorted { a, b in
+            if a.isDirectory != b.isDirectory { return a.isDirectory }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    private func searchFilesRecursive(directory: String, query: String, depth: Int, results: inout [FileItem]) {
+        guard depth < 5 else { return }
+        for item in listDirectory(directory) {
+            if item.name.lowercased().contains(query) {
+                results.append(item)
+            }
+            if item.isDirectory {
+                searchFilesRecursive(directory: item.path, query: query, depth: depth + 1, results: &results)
+            }
+        }
+    }
+
+    private func listDirectory(_ path: String) -> [FileItem] {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: path) else { return [] }
+        return names.compactMap { name in
+            guard !isHiddenProjectItem(name: name) else { return nil }
+            let fullPath = (path as NSString).appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { return nil }
+            return FileItem(name: name, path: fullPath, isDirectory: isDir.boolValue)
+        }
+        .sorted { a, b in
+            if a.isDirectory != b.isDirectory { return a.isDirectory }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    private func isHiddenProjectItem(name: String) -> Bool {
+        name.hasPrefix(".") || Self.hiddenNames.contains(name)
+    }
+
+    @ViewBuilder
+    private func projectItemIcon(item: FileItem, isExpanded: Bool) -> some View {
+        if item.isDirectory {
+            WorkspaceFolderIcon(isExpanded: isExpanded, size: 20)
+        } else {
+            Image(systemName: fileIcon(for: item.name))
+                .font(.system(size: 17))
+                .foregroundColor(.secondary)
+                .frame(width: 20, height: 20)
+        }
+    }
+
+    private func fileIcon(for name: String) -> String {
+        let ext = (name as NSString).pathExtension.lowercased()
+        switch ext {
+        case "md": return "doc.richtext"
+        case "json": return "curlybraces"
+        case "yaml", "yml": return "list.bullet.rectangle"
+        case "txt": return "doc.text"
+        case "py": return "chevron.left.forwardslash.chevron.right"
+        case "swift": return "swift"
+        case "js", "ts": return "chevron.left.forwardslash.chevron.right"
+        default: return "doc"
+        }
     }
 }
 

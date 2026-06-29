@@ -35,13 +35,13 @@ let subAgents = read("OpenClawInstaller/Views/Agent/SubAgentsTabView.swift")
 
 let typography = slice(
     dashboard,
-    from: "private enum DashboardTypography",
+    from: "enum DashboardTypography",
     to: "struct DashboardView"
 )
 let chatView = slice(
     dashboard,
     from: "struct ChatView: View",
-    to: "private struct ComposerAgentModelSelector: View"
+    to: "struct ComposerModelSelector: View"
 )
 let chatBubble = slice(
     dashboard,
@@ -56,13 +56,13 @@ let createAgentSheet = slice(
 
 assertContains(
     typography,
-    "static let userMessage = Font.system(size: 16",
-    "user message typography should be larger than the assistant/default message size"
+    "static let userMessage = Font.system(size: 14",
+    "user message typography should use the scoped 14pt text size"
 )
 assertContains(
     chatBubble,
-    "DashboardTypography.userMessage",
-    "user chat bubbles should use the larger user message font"
+    "fontSize: 14",
+    "user chat bubbles should use the scoped 14pt readable text size"
 )
 
 assertContains(

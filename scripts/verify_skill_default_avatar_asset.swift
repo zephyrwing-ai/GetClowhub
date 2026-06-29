@@ -18,6 +18,7 @@ let skillsView = root
     .appendingPathComponent("OpenClawInstaller")
     .appendingPathComponent("Views")
     .appendingPathComponent("Dashboard")
+    .appendingPathComponent("Skills")
     .appendingPathComponent("SkillsTabView.swift")
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -42,20 +43,33 @@ let agentLightSVG = (try? String(contentsOf: agentLightImage, encoding: .utf8)) 
 let agentDarkSVG = (try? String(contentsOf: agentDarkImage, encoding: .utf8)) ?? ""
 expect(lightSVG.contains(#"viewBox="0 0 24 24""#), "skill light SVG should use the compact 24x24 viewBox")
 expect(darkSVG.contains(#"viewBox="0 0 24 24""#), "skill dark SVG should use the compact 24x24 viewBox")
-expect(lightSVG.contains(#"stroke-width="1.8""#), "skill light SVG ring stroke changed unexpectedly")
-expect(darkSVG.contains(#"stroke-width="1.8""#), "skill dark SVG ring stroke changed unexpectedly")
-for radius in ["9", "6", "3"] {
-    expect(lightSVG.contains(#"r="\#(radius)""#), "skill light SVG \(radius)pt ring is missing")
-    expect(darkSVG.contains(#"r="\#(radius)""#), "skill dark SVG \(radius)pt ring is missing")
-    expect(agentLightSVG.contains(#"r="\#(radius)""#), "agent light SVG \(radius)pt ring is missing")
-    expect(agentDarkSVG.contains(#"r="\#(radius)""#), "agent dark SVG \(radius)pt ring is missing")
+expect(lightSVG.contains(#"stroke-width="1.5""#), "skill light SVG should use the approved module stroke")
+expect(darkSVG.contains(#"stroke-width="1.5""#), "skill dark SVG should use the approved module stroke")
+expect(lightSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "skill light SVG must use the rounded module container")
+expect(darkSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "skill dark SVG must use the rounded module container")
+expect(lightSVG.contains(#"d="M12 8.4v7.2""#), "skill light SVG must include the vertical capability connector")
+expect(darkSVG.contains(#"d="M12 8.4v7.2""#), "skill dark SVG must include the vertical capability connector")
+expect(lightSVG.contains(#"d="M8.4 12h7.2""#), "skill light SVG must include the horizontal capability connector")
+expect(darkSVG.contains(#"d="M8.4 12h7.2""#), "skill dark SVG must include the horizontal capability connector")
+for point in [
+    #"cx="7.1" cy="7.1""#,
+    #"cx="16.9" cy="7.1""#,
+    #"cx="7.1" cy="16.9""#,
+    #"cx="16.9" cy="16.9""#
+] {
+    expect(lightSVG.contains(point), "skill light SVG module node \(point) is missing")
+    expect(darkSVG.contains(point), "skill dark SVG module node \(point) is missing")
 }
-expect(lightSVG.contains(##"r="1" fill="#151515""##), "skill light SVG must include a small filled center dot")
-expect(darkSVG.contains(##"r="1" fill="#ffffff""##), "skill dark SVG must include a small filled center dot")
+expect(lightSVG.contains(##"cx="12" cy="12" r="1.35" fill="#151515""##), "skill light SVG must include the center capability node")
+expect(darkSVG.contains(##"cx="12" cy="12" r="1.35" fill="#ffffff""##), "skill dark SVG must include the center capability node")
+expect(!lightSVG.contains(#"<circle cx="12" cy="12" r="9""#), "skill light SVG must not use the old concentric target icon")
+expect(!darkSVG.contains(#"<circle cx="12" cy="12" r="9""#), "skill dark SVG must not use the old concentric target icon")
 expect(!lightSVG.contains(##"r="11" fill="#151515""##), "skill light SVG must not use a filled black disk")
 expect(!agentLightSVG.contains(##"r="11" fill="#151515""##), "agent light SVG must not use a filled black disk")
 expect(!agentLightSVG.contains(##"r="1" fill="#151515""##), "agent light SVG must not include the skill center dot")
 expect(!agentDarkSVG.contains(##"r="1" fill="#ffffff""##), "agent dark SVG must not include the skill center dot")
+expect(!agentLightSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "agent light SVG must not reuse the skill module container")
+expect(!agentDarkSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "agent dark SVG must not reuse the skill module container")
 expect(!lightSVG.contains(#"width="1254""#), "skill light SVG still uses the oversized generated canvas")
 expect(!darkSVG.contains(#"width="1254""#), "skill dark SVG still uses the oversized generated canvas")
 
@@ -64,4 +78,4 @@ expect(viewText.contains(#"Image("SkillAvatarUnifiedDark")"#), "SkillsTabView do
 expect(viewText.contains("isUsingDefaultIcon"), "SkillCatalogIcon should distinguish default icons from custom icons")
 expect(viewText.contains("skillDefaultIconBackground"), "SkillCatalogIcon should give the default icon its own contrast background")
 
-print("Skill default avatar keeps the center dot while agent avatar stays hollow")
+print("Skill default avatar uses the approved capability module icon")

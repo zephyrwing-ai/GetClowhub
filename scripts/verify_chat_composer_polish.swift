@@ -41,6 +41,8 @@ func slice(_ haystack: String, from start: String, to end: String) -> String {
 }
 
 let dashboard = read("OpenClawInstaller/Views/Dashboard/DashboardView.swift")
+let chatComposer = read("OpenClawInstaller/Views/Dashboard/ChatComposerView.swift")
+let markdownHTML = read("OpenClawInstaller/Views/Dashboard/MarkdownHTML.swift")
 let rightInspectorSplit = read("OpenClawInstaller/Views/Dashboard/Inspector/RightInspectorSplitView.swift")
 let config = read("OpenClawInstaller/Views/Dashboard/ConfigTabView.swift")
 let metrics = read("OpenClawInstaller/Views/Dashboard/OutputsSidebarLayoutMetrics.swift")
@@ -58,7 +60,7 @@ assertContains(
     "agents empty-state label must use the active language bundle"
 )
 assertContains(
-    dashboard,
+    chatComposer,
     #"String(localized: "Ask Anything", bundle: LanguageManager.shared.localizedBundle)"#,
     "composer placeholder must use the active language bundle"
 )
@@ -86,13 +88,13 @@ assertNotContains(
 )
 assertContains(
     dashboard,
-    #".id("chatTop")"#,
-    "timeline branch must keep chatTop anchor"
+    #".id("chatScrollView")"#,
+    "timeline branch must keep the chat scroll view identity"
 )
 assertContains(
     dashboard,
-    #".id("chatBottom")"#,
-    "timeline branch must keep chatBottom anchor"
+    #"proxy.scrollTo("chatBottom", anchor: .bottom)"#,
+    "timeline branch must keep bottom-scroll targeting"
 )
 assertContains(
     dashboard,
@@ -121,7 +123,7 @@ assertContains(
     "assistant chat bubbles must use a system gray fill"
 )
 assertContains(
-    dashboard,
+    markdownHTML,
     #"let codeBg = isDark ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.10)""#,
     "code blocks must remain visibly distinct inside gray chat bubbles"
 )
@@ -143,13 +145,23 @@ assertContains(
 )
 assertContains(
     dashboard,
-    #"ComposerAgentModelPanel("#,
-    "composer must use the custom agent/model panel"
+    #"ComposerModelPanel("#,
+    "composer must use the custom model-only panel"
 )
 assertContains(
+    chatComposer,
+    #"ComposerModelSelector("#,
+    "composer must use the model-only selector"
+)
+assertNotContains(
+    dashboard,
+    #"ComposerAgentModelPanel"#,
+    "composer must not keep the old agent/model panel"
+)
+assertNotContains(
     dashboard,
     #"composerSelectorShowsModels"#,
-    "composer selector must support the adjacent model panel state"
+    "composer selector must not keep the old adjacent agent/model panel state"
 )
 assertContains(
     dashboard,

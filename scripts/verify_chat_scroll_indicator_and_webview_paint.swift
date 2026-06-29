@@ -7,6 +7,10 @@ let dashboard = try String(
     contentsOf: root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/DashboardView.swift"),
     encoding: .utf8
 )
+let chatTimelineSurfaceSource = try String(
+    contentsOf: root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/ChatTimelineSurface.swift"),
+    encoding: .utf8
+)
 let selectableSource = try String(
     contentsOf: root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/SelectableMarkdownView.swift"),
     encoding: .utf8
@@ -46,6 +50,11 @@ let timelineSurface = slice(
     from: "private var timelineChatSurface: some View",
     to: "private func composerArea"
 )
+let timelineSurfaceView = slice(
+    chatTimelineSurfaceSource,
+    from: "struct ChatTimelineSurface: View",
+    to: "***END***"
+)
 let scrollContent = slice(
     dashboard,
     from: "private func chatScrollContent(proxy: ScrollViewProxy) -> some View",
@@ -62,22 +71,25 @@ let markdownWebView = slice(
     to: "***END***"
 )
 
-require(chatView.contains("@State private var showChatScrollIndicator = false"), "chat view should own custom scroll indicator visibility")
-require(chatView.contains("@State private var chatScrollIndicatorHideTask"), "chat view should debounce scroll indicator hide")
+require(!chatView.contains("@State private var showChatScrollIndicator"), "chat view should not own custom scroll indicator visibility when native indicators are enabled")
+require(!chatView.contains("@State private var chatScrollIndicatorHideTask"), "chat view should not debounce a custom scroll indicator hide when native indicators are enabled")
 require(!chatView.contains("@State private var chatScrollOffset"), "chat view should not track continuous scroll offset")
 require(!chatView.contains("@State private var chatScrollViewportHeight"), "chat view should not track continuous viewport height")
 require(!chatView.contains("@State private var chatScrollContentHeight"), "chat view should not track continuous content height")
 require(!chatView.contains("private let chatScrollOffsetUpdateStep"), "chat scroll should not need offset quantization after geometry writeback removal")
 require(!chatView.contains("private let chatScrollSizeMetricEpsilon"), "chat scroll should not need size metric thresholds after geometry writeback removal")
 
-require(timelineSurface.contains("chatScrollIndicator"), "timeline surface should overlay the custom scroll indicator")
-require(chatView.contains("private var chatScrollIndicator: some View"), "chat view should define a custom scroll indicator")
-require(chatView.contains(".frame(width: 3, height: 38)"), "custom scroll indicator should be narrow and fixed height")
-require(chatView.contains("showTransientChatScrollIndicator()"), "scroll wheel handling should show the custom indicator")
-require(chatView.contains("chatScrollIndicatorHideTask"), "scroll wheel handling should schedule indicator hide")
+require(!timelineSurface.contains("chatScrollIndicator"), "timeline surface should not overlay a custom chat scroll indicator")
+require(!chatView.contains("private var chatScrollIndicator: some View"), "chat view should not define a custom chat scroll indicator")
+require(!chatView.contains("showTransientChatScrollIndicator()"), "scroll wheel handling should not show a custom chat scroll indicator")
+require(!chatView.contains("chatScrollIndicatorHideTask"), "scroll wheel handling should not schedule custom indicator hiding")
 require(!chatView.contains(".animation(.easeOut(duration: 0.08), value: chatScrollOffset)"), "custom scroll indicator should not animate every scroll-offset state update")
 
-require(scrollContent.contains("ScrollView(showsIndicators: false)"), "native chat scroll indicators should be hidden")
+require(
+    scrollContent.contains("ScrollView(showsIndicators: true)") ||
+        timelineSurfaceView.contains("ScrollView(showsIndicators: true)"),
+    "native chat scroll indicators should be shown"
+)
 require(!scrollContent.contains(".coordinateSpace(name: \"chatScrollSpace\")"), "chat scroll should not expose a coordinate space just for indicator metrics")
 require(!scrollContent.contains("ChatScrollContentMetricsKey"), "chat scroll content should not publish offset/content metrics")
 require(!scrollContent.contains("ChatScrollViewportHeightKey"), "chat scroll view should not publish viewport height")
@@ -106,4 +118,4 @@ require(!markdownWebView.contains("requestAnimationFrame"), "WKWebView readiness
 require(!markdownWebView.contains("window.webkit.messageHandlers.rendered.postMessage"), "WKWebView should not post rendered messages through JS")
 require(!markdownWebView.contains("config.userContentController.add(context.coordinator, name: \"rendered\")"), "WKWebView should not register a rendered script handler")
 
-print("PASS: chat custom scroll indicator and WKWebView paint-ready contracts verified")
+print("PASS: native chat scroll indicators and WKWebView paint-ready contracts verified")

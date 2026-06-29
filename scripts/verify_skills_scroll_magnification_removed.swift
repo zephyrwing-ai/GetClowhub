@@ -3,7 +3,7 @@
 import Foundation
 
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-let skillsViewPath = root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/SkillsTabView.swift")
+let skillsViewPath = root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/Skills/SkillsTabView.swift")
 let skillsView = try String(contentsOf: skillsViewPath, encoding: .utf8)
 
 func require(_ condition: @autoclosure () -> Bool, _ message: String) {

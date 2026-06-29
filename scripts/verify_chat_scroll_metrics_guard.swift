@@ -52,14 +52,14 @@ require(
     "ChatView should not write geometry metrics back into @State."
 )
 require(
-    chatView.contains("showTransientChatScrollIndicator()"),
-    "Scroll wheel handling should keep lightweight indicator feedback."
+    !chatView.contains("showTransientChatScrollIndicator()"),
+    "Scroll wheel handling should not drive a custom chat indicator when native indicators are enabled."
 )
 require(
-    chatView.contains("private var chatScrollIndicator: some View") &&
-        chatView.contains(".frame(width: 3, height: 38)") &&
-        !chatView.contains("GeometryReader { proxy in\n            let indicatorHeight"),
-    "Chat scroll indicator should be fixed-size and should not depend on geometry preference state."
+    !chatView.contains("private var chatScrollIndicator: some View") &&
+        !chatView.contains("chatScrollIndicatorHideTask") &&
+        chatView.contains("ChatScrollIntentObserver("),
+    "ChatView should remove the custom indicator while keeping bottom reattachment observation."
 )
 
-print("Chat scroll geometry writeback removal verification passed")
+print("Native chat scrollbar guard verification passed")

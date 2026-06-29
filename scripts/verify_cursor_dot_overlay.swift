@@ -52,7 +52,7 @@ let dashboardRoot = slice(
 let sidebarView = slice(
     dashboard,
     from: "struct SidebarView: View",
-    to: "private struct AgentListRow"
+    to: "private struct SidebarCollapsibleRow"
 )
 let chatScrollContent = slice(
     dashboard,
@@ -127,16 +127,9 @@ require(
     "Dashboard root should not install the cursor-dot overlay globally."
 )
 require(
-    !sidebarView.contains(".cursorDotOverlay(isEnabled: true)") &&
-        sidebarView.contains(".cursorDotOverlay(") &&
-        sidebarView.contains("configuration: sidebarCursorDotConfiguration"),
-    "SidebarView should install the cursor-dot overlay with a theme-aware color configuration, not the default white cursor."
-)
-require(
-    sidebarView.contains("private var sidebarCursorDotConfiguration: CursorDotConfiguration") &&
-        sidebarView.contains("dotColor: isDark ? .white : .black") &&
-        sidebarView.contains("ringColor: isDark ? .white.opacity(0.74) : .black.opacity(0.62)"),
-    "Sidebar cursor-dot colors should stay visible in both dark and light appearances."
+    !sidebarView.contains(".cursorDotOverlay(") &&
+        !sidebarView.contains("sidebarCursorDotConfiguration"),
+    "SidebarView should use the normal system cursor and should not install custom cursor-dot behavior."
 )
 require(
     !dashboard.contains(".cursorDotHoverTarget()"),

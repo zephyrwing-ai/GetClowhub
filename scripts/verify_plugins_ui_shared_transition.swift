@@ -5,6 +5,7 @@ let pluginsViewURL = root
     .appendingPathComponent("OpenClawInstaller")
     .appendingPathComponent("Views")
     .appendingPathComponent("Dashboard")
+    .appendingPathComponent("Plugins")
     .appendingPathComponent("PluginsTabView.swift")
 let dashboardViewURL = root
     .appendingPathComponent("OpenClawInstaller")
@@ -21,9 +22,9 @@ let pluginsView = try String(contentsOf: pluginsViewURL, encoding: .utf8)
 let dashboardView = try String(contentsOf: dashboardViewURL, encoding: .utf8)
 let configView = try String(contentsOf: configViewURL, encoding: .utf8)
 let pluginDetailOverlayView = section(
-    in: dashboardView,
+    in: pluginsView,
     from: "private func pluginDetailOverlay(for item: PluginDetailPresentationItem)",
-    to: "private var installedSkillByName"
+    to: "private struct PluginLookupIndex"
 )
 
 func require(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -38,36 +39,40 @@ require(
     "DashboardView should not keep a plugin detail namespace; Plugins should match the Skills sheet transition."
 )
 require(
-    dashboardView.contains("@State private var selectedPluginDetailItem: PluginDetailPresentationItem?"),
-    "DashboardView should own the selected plugin detail item like it owns selected skill details."
+    !dashboardView.contains("@State private var selectedPluginDetailItem: PluginDetailPresentationItem?"),
+    "DashboardView should not own plugin detail state."
 )
 require(
-    dashboardView.contains("private let pluginDetailAnimation"),
-    "DashboardView should centralize the plugin detail spring animation."
+    pluginsView.contains("@State private var selectedPluginDetailItem: PluginDetailPresentationItem?"),
+    "PluginsTabView should own plugin detail state locally."
 )
 require(
-    dashboardView.contains("withAnimation(pluginDetailAnimation)"),
-    "DashboardView should open and close plugin details with the shared spring animation."
+    pluginsView.contains("@StateObject private var model: PluginsTabModel"),
+    "PluginsTabView should own its module model locally."
 )
 require(
-    dashboardView.contains("onOpenPluginDetail: presentPluginDetail"),
-    "DashboardView should route plugin row clicks into the global plugin detail presenter."
+    pluginsView.contains("withAnimation(.spring(response: 0.26, dampingFraction: 0.86))"),
+    "PluginsTabView should open and close plugin details with its local spring animation."
 )
 require(
-    dashboardView.contains("if let selectedPluginDetailItem, shouldShowPluginDetailOverlay"),
-    "DashboardView should render the plugin detail overlay at the app overlay level."
+    !dashboardView.contains("onOpenPluginDetail:"),
+    "DashboardView should not route plugin row clicks through root callbacks."
 )
 require(
-    dashboardView.contains("private var shouldShowPluginDetailOverlay: Bool"),
-    "DashboardView should centralize plugin detail overlay visibility."
+    pluginsView.contains("if let selectedPluginDetailItem"),
+    "PluginsTabView should render the plugin detail overlay inside its module root."
 )
 require(
-    dashboardView.contains("private func pluginDetailOverlay(for item: PluginDetailPresentationItem)"),
-    "DashboardView should implement the plugin detail overlay beside the skill detail overlay."
+    !dashboardView.contains("private var shouldShowPluginDetailOverlay: Bool"),
+    "DashboardView should not centralize plugin detail overlay visibility."
 )
 require(
-    dashboardView.contains("PluginCatalogDetailSheet("),
-    "DashboardView should host the plugin detail sheet."
+    pluginsView.contains("private func pluginDetailOverlay(for item: PluginDetailPresentationItem)"),
+    "PluginsTabView should implement the plugin detail overlay."
+)
+require(
+    pluginsView.contains("PluginCatalogDetailSheet("),
+    "PluginsTabView should host the plugin detail sheet."
 )
 require(
     pluginDetailOverlayView.contains(".background(.regularMaterial)"),
@@ -94,8 +99,8 @@ require(
     "ConfigTabView should not pass a plugin detail namespace after removing shared element transitions."
 )
 require(
-    pluginsView.contains("let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void"),
-    "PluginsTabView should emit detail presentation items instead of owning the overlay."
+    !pluginsView.contains("let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void"),
+    "PluginsTabView should not emit detail presentation items to DashboardView."
 )
 require(
     !dashboardView.contains("Color(NSColor.windowBackgroundColor).opacity"),
@@ -103,11 +108,11 @@ require(
 )
 require(
     !pluginsView.contains("@State private var selectedDetailItem"),
-    "PluginsTabView should not own selected detail state."
+    "PluginsTabView should use the explicit selectedPluginDetailItem state name."
 )
 require(
     !pluginsView.contains("private var detailOverlay"),
-    "PluginsTabView should not render the plugin detail overlay inside the scroll view."
+    "PluginsTabView should not keep the old generic detailOverlay helper."
 )
 require(
     !pluginsView.contains("detailBackdropOpacity"),

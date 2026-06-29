@@ -75,12 +75,12 @@ require(markdownHTML.contains("enum MarkdownHTML"), "MarkdownHTML.swift should o
 
 require(!renderModel.isEmpty, "assistant messages should be parsed through MessageRenderModel")
 require(renderModel.contains("enum Renderer"), "MessageRenderModel should expose a renderer enum")
-require(renderModel.contains("case a2ui(A2UICardPayload)"), "A2UI should be one render-model case")
+require(!renderModel.contains("A2UI"), "release renderer should not reference A2UI")
+require(!renderModel.contains("a2ui"), "release renderer should not contain A2UI render cases")
 require(renderModel.contains("case nativeText"), "ordinary native rendering should be one render-model case")
 require(renderModel.contains("case webViewFallback"), "WKWebView fallback should be one render-model case")
 require(renderModel.contains("let isStreaming: Bool"), "MessageRenderModel should carry streaming state into the renderer")
 require(renderModel.contains("static func build(content: String, isStreaming: Bool, allowsRichMarkdown: Bool) -> MessageRenderModel"), "MessageRenderModel should own render decisions")
-require(renderModel.contains("if !isStreaming, let payload = A2UICardParser.parse(content)"), "A2UI parsing should happen inside the render model")
 require(renderModel.contains("MarkdownRenderPolicy.mode("), "MarkdownRenderPolicy should be consumed by the render model")
 require(renderModel.contains("for: content"), "MessageRenderModel should pass content to MarkdownRenderPolicy")
 require(renderModel.contains("isStreaming: isStreaming"), "MessageRenderModel should pass streaming state to MarkdownRenderPolicy")
@@ -123,6 +123,8 @@ require(!chatBubble.contains("private var isSelectionModeEnabled: Bool"), "ChatB
 require(!chatBubble.contains("prefersNativeTextSelection:"), "ChatBubble should not pass selection mode into assistant renderer")
 require(renderer.contains("NativeSelectableMarkdownView("), "NSTextView bridge should provide direct selection by default")
 require(!renderer.contains(".textSelection(.enabled)"), "ordinary assistant renderer should avoid SwiftUI SelectionOverlay")
+require(!renderer.contains("A2UICardView("), "release assistant renderer should not render A2UI cards")
+require(!renderer.contains("logRenderMode(\"a2ui\")"), "release assistant renderer should not log A2UI render mode")
 
 require(!markdownWebView.contains("window.webkit.messageHandlers.rendered.postMessage"), "WebView fallback should not need a JS postMessage just to mark readiness")
 require(!markdownWebView.contains("config.userContentController.add(context.coordinator, name: \"rendered\")"), "WebView fallback should not register a rendered message handler")

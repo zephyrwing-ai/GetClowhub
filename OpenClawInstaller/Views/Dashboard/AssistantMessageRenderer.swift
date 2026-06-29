@@ -112,7 +112,6 @@ enum MarkdownRenderPolicy {
 
 private struct MessageRenderModel {
     enum Renderer {
-        case a2ui(A2UICardPayload)
         case nativeText
         case webViewFallback
     }
@@ -122,10 +121,6 @@ private struct MessageRenderModel {
     let renderer: Renderer
 
     static func build(content: String, isStreaming: Bool, allowsRichMarkdown: Bool) -> MessageRenderModel {
-        if !isStreaming, let payload = A2UICardParser.parse(content) {
-            return MessageRenderModel(content: content, isStreaming: isStreaming, renderer: .a2ui(payload))
-        }
-
         let mode = MarkdownRenderPolicy.mode(
             for: content,
             isStreaming: isStreaming,
@@ -163,11 +158,6 @@ struct AssistantMessageContentView: View {
         )
 
         switch renderModel.renderer {
-        case .a2ui(let payload):
-            A2UICardView(payload: payload)
-                .onAppear {
-                    logRenderMode("a2ui")
-                }
         case .webViewFallback:
             SelectableMarkdownView(
                 content: renderModel.content,

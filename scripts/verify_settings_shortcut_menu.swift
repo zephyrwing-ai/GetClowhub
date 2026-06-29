@@ -8,6 +8,11 @@ let dashboardURL = root
     .appendingPathComponent("Views")
     .appendingPathComponent("Dashboard")
     .appendingPathComponent("DashboardView.swift")
+let settingsPanelURL = root
+    .appendingPathComponent("OpenClawInstaller")
+    .appendingPathComponent("Views")
+    .appendingPathComponent("Dashboard")
+    .appendingPathComponent("SettingsShortcutPanel.swift")
 let configURL = root
     .appendingPathComponent("OpenClawInstaller")
     .appendingPathComponent("Views")
@@ -15,6 +20,7 @@ let configURL = root
     .appendingPathComponent("ConfigTabView.swift")
 
 let dashboard = try String(contentsOf: dashboardURL, encoding: .utf8)
+let settingsPanel = try String(contentsOf: settingsPanelURL, encoding: .utf8)
 let config = try String(contentsOf: configURL, encoding: .utf8)
 
 func require(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -90,13 +96,16 @@ require(
     "Main sidebar should not expose Settings, Budget, or Billing as top-level management rows."
 )
 require(
-    dashboard.contains("@State private var isSettingsShortcutMenuPresented = false") &&
-        dashboard.contains("SettingsShortcutMenu(") &&
-        sidebarBottomBar.contains(".popover(isPresented: $isSettingsShortcutMenuPresented"),
-    "Sidebar bottom bar should expose one Settings button that opens the shortcut menu."
+    dashboard.contains("SettingsShortcutPanelButton(") &&
+        !dashboard.contains("SettingsShortcutPanelHost(") &&
+        !dashboard.contains("SettingsShortcutMenu(") &&
+        settingsPanel.contains("SettingsShortcutPanelHost(") &&
+        settingsPanel.contains("SettingsShortcutMenu(") &&
+        !sidebarBottomBar.contains(".popover(isPresented:"),
+    "Sidebar bottom bar should expose one Settings button that opens the arrowless shortcut panel."
 )
 require(
-    sidebarBottomBar.contains(#"Text("Settings")"#) &&
+    settingsPanel.contains(#"Text("Settings")"#) &&
         !sidebarBottomBar.contains("sparkleUpdater.checkForUpdates") &&
         !sidebarBottomBar.contains("appAppearance = isDark ?"),
     "Sidebar bottom bar should contain only the Settings shortcut, not update or theme controls."
@@ -109,17 +118,17 @@ require(
     "Settings shortcut menu should route specific sections into the independent Settings page."
 )
 require(
-    dashboard.contains("authManager.logout()"),
+    settingsPanel.contains("authManager.logout()"),
     "Settings shortcut menu should call the existing logout flow."
 )
 require(
-    dashboard.contains("BillingShortcutSummary") &&
-        dashboard.contains("BudgetShortcutSummary") &&
-        dashboard.contains("DefaultModelShortcutPicker"),
+    settingsPanel.contains("BillingShortcutSummary") &&
+        settingsPanel.contains("BudgetShortcutSummary") &&
+        settingsPanel.contains("DefaultModelShortcutPicker"),
     "Shortcut menu should include Billing, Budget, and model quick-switch summaries."
 )
 require(
-    !dashboard.contains("StatusShortcutSummary"),
+    !settingsPanel.contains("StatusShortcutSummary"),
     "Shortcut menu should not add a Status summary; Status belongs in the Settings page."
 )
 require(

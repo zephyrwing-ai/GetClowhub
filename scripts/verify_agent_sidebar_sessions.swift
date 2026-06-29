@@ -38,7 +38,8 @@ let sidebarMainList = slice(dashboard, from: "private var sidebarMainList: some 
 let navRow = slice(dashboard, from: "private func navRow", to: "private func sidebarRowContent")
 let agentSectionContent = slice(dashboard, from: "private var agentSectionContent: some View", to: "// MARK: - Sidebar Bottom Bar")
 let sessionsSectionContent = slice(dashboard, from: "private func sessionsSectionContent(for agent: AgentOption) -> some View", to: "// MARK: - Agent Section Content")
-let agentListRow = slice(dashboard, from: "private struct AgentListRow: View", to: "// MARK: - Pulsing Dot")
+let agentSidebarRow = slice(dashboard, from: "private func agentSidebarRow(_ agent: AgentOption) -> some View", to: "private func agentRowWithContextMenu")
+let sidebarCollapsibleRow = slice(dashboard, from: "struct SidebarCollapsibleRow<Icon: View, Actions: View, Children: View>: View", to: "// MARK: - Pulsing Dot")
 
 assertNotContains(
     dashboard,
@@ -46,24 +47,24 @@ assertNotContains(
     "selected agent sessions must not render a Chat History heading"
 )
 assertContains(
-    agentListRow,
+    agentSidebarRow,
     "AgentAvatarImage(size: DashboardSidebarMetrics.agentAvatarSize)",
     "agent sidebar rows must use the shared SVG avatar metric"
 )
 assertContains(
-    agentListRow,
+    sidebarCollapsibleRow,
     "HStack(spacing: DashboardSidebarMetrics.agentTitleSpacing)",
     "agent title spacing should use the shared sidebar metric"
 )
 assertContains(
     dashboard,
-    "static let sessionRowContentHeight: CGFloat = 19",
-    "session row vertical content height should be 19pt"
+    "static let sessionRowContentHeight: CGFloat = 20",
+    "session row vertical content height should be 20pt"
 )
 assertContains(
     dashboard,
-    "static let sessionRowActionSize: CGFloat = 19",
-    "session row hover action should use the same 19pt vertical size"
+    "static let sessionRowActionSize: CGFloat = 20",
+    "session row hover action should use the same 20pt vertical size"
 )
 assertContains(
     dashboard,
@@ -77,8 +78,8 @@ assertContains(
 )
 assertContains(
     dashboard,
-    "static let sidebarSectionTitle = Font.system(size: 13, weight: .semibold)",
-    "sidebar section titles should use a larger shared typography token"
+    "static let sidebarSectionTitle = Font.system(size: 14, weight: .regular)",
+    "sidebar section titles should use the shared typography token"
 )
 assertContains(
     agentSectionContent,
@@ -166,8 +167,8 @@ assertContains(
     "sidebar navigation rows should cancel pending delete confirmation and still switch to their tab"
 )
 assertContains(
-    dashboard,
-    "onCreateSession: { createSession(for: agent) }",
+    agentSidebarRow,
+    "createSession(for: agent)",
     "agent hover plus must create a new session for that agent"
 )
 assertContains(
@@ -216,23 +217,23 @@ assertContains(
     "agent session lists must animate when expanding or collapsing"
 )
 assertContains(
-    dashboard,
-    #".animation(.spring(response: 0.28, dampingFraction: 0.86), value: expandedAgentIds)"#,
+    sidebarCollapsibleRow,
+    ".spring(response: 0.28, dampingFraction: 0.86)",
     "agent session expansion must use a spring layout animation"
 )
 assertContains(
-    dashboard,
+    agentSidebarRow,
     "Image(systemName: \"plus\")",
     "agent rows must expose a hover plus affordance"
 )
 assertContains(
-    dashboard,
+    sidebarCollapsibleRow,
     "Image(systemName: \"chevron.right\")",
     "agent rows must expose a hover chevron affordance"
 )
 assertContains(
-    dashboard,
-    #"let isHovering = hoveredAgentId == agent.id"#,
+    sidebarCollapsibleRow,
+    #"@State private var isHovering = false"#,
     "agent row hover state must drive both row chrome and hover affordances"
 )
 assertContains(
@@ -241,8 +242,8 @@ assertContains(
     "session row hover state should be owned by the sidebar so row background and actions stay in sync"
 )
 assertContains(
-    dashboard,
-    #".padding(.vertical, 3)"#,
+    agentSidebarRow,
+    #"verticalPadding: 4"#,
     "agent highlight height must be reduced vertically from the previous 44pt row"
 )
 assertContains(
@@ -354,12 +355,12 @@ assertContains(
 assertContains(
     sessionRow,
     ".frame(height: DashboardSidebarMetrics.sessionRowContentHeight)",
-    "session rows must keep a stable 19pt vertical content height when hover actions appear"
+    "session rows must keep a stable vertical content height when hover actions appear"
 )
 assertContains(
     sessionRow,
     ".frame(width: DashboardSidebarMetrics.sessionRowActionSize, height: DashboardSidebarMetrics.sessionRowActionSize)",
-    "session row hover action should be 19pt high instead of the previous 20pt"
+    "session row hover action should share the stable row action metric"
 )
 assertContains(
     sessionRow,

@@ -5,7 +5,8 @@ import Foundation
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let viewModelPath = root.appendingPathComponent("OpenClawInstaller/ViewModels/DashboardViewModel.swift")
 let skillCatalogItemPath = root.appendingPathComponent("OpenClawInstaller/Models/SkillCatalogItem.swift")
-let skillsViewPath = root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/SkillsTabView.swift")
+let skillsViewPath = root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/Skills/SkillsTabView.swift")
+let skillsModelPath = root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/Skills/SkillsTabModel.swift")
 let dashboardViewPath = root.appendingPathComponent("OpenClawInstaller/Views/Dashboard/DashboardView.swift")
 let skillCatalogServicePath = root.appendingPathComponent("OpenClawInstaller/Services/SkillCatalogService.swift")
 let unifiedSearchFieldPath = root.appendingPathComponent("OpenClawInstaller/Views/Shared/UnifiedSearchField.swift")
@@ -13,6 +14,7 @@ let unifiedSearchFieldPath = root.appendingPathComponent("OpenClawInstaller/View
 let viewModel = try String(contentsOf: viewModelPath, encoding: .utf8)
 let skillCatalogItem = try String(contentsOf: skillCatalogItemPath, encoding: .utf8)
 let skillsView = try String(contentsOf: skillsViewPath, encoding: .utf8)
+let skillsModel = try String(contentsOf: skillsModelPath, encoding: .utf8)
 let dashboardView = try String(contentsOf: dashboardViewPath, encoding: .utf8)
 let skillCatalogService = try String(contentsOf: skillCatalogServicePath, encoding: .utf8)
 let unifiedSearchField = try String(contentsOf: unifiedSearchFieldPath, encoding: .utf8)
@@ -50,19 +52,19 @@ let detailSheet = slice(
 )
 
 require(
-    viewModel.contains("private var hasLoadedSkillCatalog = false"),
+    skillsModel.contains("private var hasLoadedSkillCatalog = false"),
     "Skill catalog should remember when the catalog is already loaded."
 )
 require(
-    viewModel.contains("func loadSkillMarket(forceSync: Bool = false) async"),
+    skillsModel.contains("func loadSkillMarket(forceSync: Bool = false) async"),
     "loadSkillMarket should expose an explicit forceSync flag."
 )
 require(
-    viewModel.contains("if hasLoadedSkillCatalog && !forceSync"),
+    skillsModel.contains("if hasLoadedSkillCatalog && !forceSync"),
     "Skill market should reuse the loaded catalog unless refresh is explicit."
 )
 require(
-    viewModel.contains("let shouldSync = forceSync || !FileManager.default.fileExists"),
+    skillsModel.contains("let shouldSync = forceSync || !FileManager.default.fileExists"),
     "Skill market should sync only for forced refresh or a missing cache."
 )
 require(
@@ -70,7 +72,7 @@ require(
     "Refresh action should force catalog sync."
 )
 require(
-    viewModel.contains(#"showSuccessMessage("Skills updated successfully")"#),
+    skillsModel.contains(#"notifySuccess("Skills updated successfully")"#),
     "Forced skill catalog refresh should show a success toast after updating."
 )
 require(
@@ -197,7 +199,7 @@ require(
     "Skill detail should render the SKILL.md body as Markdown."
 )
 require(
-    dashboardView.contains(".transition(.asymmetric("),
+    skillsView.contains(".transition(.asymmetric("),
     "Skill detail sheet should animate in and out instead of appearing abruptly."
 )
 require(
@@ -209,20 +211,21 @@ require(
     "Skill detail Markdown should live in a fixed-height scroll box."
 )
 require(
-    !skillsView.contains("private func catalogDetailOverlay"),
-    "Skill detail overlay should not be scoped to the Skills tab column."
+    !dashboardView.contains("private func skillDetailOverlay"),
+    "DashboardView should not own Skills detail overlay state."
 )
 require(
-    dashboardView.contains("private func skillDetailOverlay"),
-    "DashboardView should own the full-window skill detail overlay."
+    skillsView.contains("private func skillDetailOverlay"),
+    "SkillsTabView should own the full-window skill detail overlay."
 )
 require(
-    dashboardView.contains(".frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)"),
+    skillsView.contains(".frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)"),
     "Skill detail overlay should fill the whole dashboard window and center the narrower sheet."
 )
 require(
-    skillsView.contains("let onOpenSkillDetail: (SkillDetailPresentationItem) -> Void"),
-    "SkillsTabView should notify DashboardView with a unified skill detail presentation item."
+    skillsView.contains("@StateObject private var model: SkillsTabModel") &&
+        skillsView.contains("@State private var selectedSkillDetailItem: SkillDetailPresentationItem?"),
+    "SkillsTabView should keep module-local model and detail state."
 )
 require(
     skillsView.contains(".font(.system(size: 22, weight: .semibold))"),
@@ -276,7 +279,7 @@ require(
     "Both catalog and installed skills should be converted into the same detail presentation model."
 )
 require(
-    !skillsView.contains("selectedSkillDetail") &&
+    skillsView.contains("selectedSkillDetailItem") &&
         !skillsView.contains("func loadSkillDetail"),
     "SkillsTabView should not use the old selectedSkillDetail sheet path."
 )
@@ -333,10 +336,10 @@ require(
     "Skills UI should expose manual GitHub repository skill installation from the plus button."
 )
 require(
-    viewModel.contains("@Published var isInstallingManualSkill = false") &&
-        viewModel.contains("func installManualSkill") &&
-        viewModel.contains("SkillCatalogService.manualInstallCommand"),
-    "DashboardViewModel should keep manual repository skill installation state and actions."
+    skillsModel.contains("@Published var isInstallingManualSkill = false") &&
+        skillsModel.contains("func installManualSkill") &&
+        skillsModel.contains("SkillCatalogService.manualInstallCommand"),
+    "SkillsTabModel should keep manual repository skill installation state and actions."
 )
 require(
     skillCatalogService.contains("manualInstallCommand") &&
@@ -351,11 +354,11 @@ require(
     "All skills should include custom installed skills that are missing from the catalog."
 )
 require(
-    dashboardView.contains("onInstall: {") &&
-        dashboardView.contains("installCatalogSkill(catalogItem)") &&
-        dashboardView.contains("onRemove: {") &&
-        dashboardView.contains("skillPendingRemoval = skill"),
-    "Dashboard skill detail overlay should wire install and uninstall actions."
+    skillsView.contains("onInstall: {") &&
+        skillsView.contains("installCatalogSkill(catalogItem)") &&
+        skillsView.contains("onRemove: {") &&
+        skillsView.contains("skillPendingRemoval = skill"),
+    "Skills detail overlay should wire install and uninstall actions locally."
 )
 
 print("OK: skills UI cache and hover policy verified")

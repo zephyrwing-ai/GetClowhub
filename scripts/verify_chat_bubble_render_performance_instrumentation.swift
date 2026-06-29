@@ -64,17 +64,12 @@ assertContains(
 )
 assertContains(
     assistantContent,
-    #"logRenderMode("a2ui")"#,
-    "assistant content should log A2UI render mode"
-)
-assertContains(
-    assistantContent,
     #"logRenderMode("webview")"#,
     "assistant content should log WebView render mode"
 )
 assertContains(
     assistantContent,
-    #"logRenderMode("native_text")"#,
+    #"logRenderMode("native_selectable")"#,
     "assistant content should log lightweight native text render mode"
 )
 assertContains(

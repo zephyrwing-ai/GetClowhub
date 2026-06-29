@@ -54,8 +54,6 @@ struct ConfigTabView: View {
     @EnvironmentObject var languageManager: LanguageManager
     @AppStorage("appAppearance") private var appAppearance: String = "system"
     @AppStorage("appAccent") private var appAccent: String = "green"
-    let onOpenSkillDetail: (SkillDetailPresentationItem) -> Void
-    let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void
     #if REQUIRE_LOGIN
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var membershipManager: MembershipManager
@@ -63,14 +61,10 @@ struct ConfigTabView: View {
 
     init(
         viewModel: DashboardViewModel,
-        selectedSection: Binding<SettingsPageSection> = .constant(.profile),
-        onOpenSkillDetail: @escaping (SkillDetailPresentationItem) -> Void = { _ in },
-        onOpenPluginDetail: @escaping (PluginDetailPresentationItem) -> Void = { _ in }
+        selectedSection: Binding<SettingsPageSection> = .constant(.profile)
     ) {
         self.viewModel = viewModel
         self._selectedSection = selectedSection
-        self.onOpenSkillDetail = onOpenSkillDetail
-        self.onOpenPluginDetail = onOpenPluginDetail
     }
 
     var body: some View {
@@ -1458,6 +1452,8 @@ struct ModelConfigSection: View {
                     .help(showApiKey ? "Hide" : "Show")
                 }
 
+                customProviderModelsView
+
             } // end isExpanded
         }
         .padding(20)
@@ -1480,6 +1476,61 @@ struct ModelConfigSection: View {
             }
         } message: {
             Text("Switching provider will replace the current Base URL. API Key will be cleared. Continue?")
+        }
+    }
+
+    private var customProviderModelsView: some View {
+        HStack(alignment: .top) {
+            Text("Models")
+                .frame(width: 120, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("\(viewModel.editedConfiguredModels.count) models configured")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.primary)
+
+                    Spacer()
+
+                    Button {
+                        Task { await viewModel.fetchModelsForSelectedProvider() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if viewModel.isFetchingProviderModels {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                            Text("Fetch Models")
+                        }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(viewModel.isFetchingProviderModels || viewModel.editedModelBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if !viewModel.editedConfiguredModels.isEmpty {
+                    Text(viewModel.editedConfiguredModels.prefix(4).map { $0.name.isEmpty ? $0.id : $0.name }.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Text("Fetch models from this provider or add them before saving.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                if !viewModel.providerModelFetchMessage.isEmpty {
+                    Text(viewModel.providerModelFetchMessage)
+                        .font(.caption)
+                        .foregroundColor(viewModel.providerModelFetchMessage.hasPrefix("Fetched") ? .secondary : .red)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

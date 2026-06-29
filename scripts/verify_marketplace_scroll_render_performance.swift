@@ -29,8 +29,8 @@ func slice(_ source: String, from start: String, to end: String) -> String {
     return String(source[startRange.lowerBound..<endRange.lowerBound])
 }
 
-let plugins = read("OpenClawInstaller/Views/Dashboard/PluginsTabView.swift")
-let skills = read("OpenClawInstaller/Views/Dashboard/SkillsTabView.swift")
+let plugins = read("OpenClawInstaller/Views/Dashboard/Plugins/PluginsTabView.swift")
+let skills = read("OpenClawInstaller/Views/Dashboard/Skills/SkillsTabView.swift")
 
 let pluginCatalogSection = slice(
     plugins,

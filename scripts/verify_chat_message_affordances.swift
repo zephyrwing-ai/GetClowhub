@@ -35,7 +35,7 @@ let dashboard = read("OpenClawInstaller/Views/Dashboard/DashboardView.swift")
 let chatView = slice(
     dashboard,
     from: "struct ChatView: View",
-    to: "private struct ComposerAgentModelSelector: View"
+    to: "struct ComposerModelSelector: View"
 )
 let chatBubble = slice(
     dashboard,

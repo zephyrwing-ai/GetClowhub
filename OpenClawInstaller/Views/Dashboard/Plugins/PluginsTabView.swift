@@ -61,11 +61,11 @@ struct PluginDetailPresentationItem: Identifiable {
 
 struct PluginsTabView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject var viewModel: DashboardViewModel
-    let onOpenPluginDetail: (PluginDetailPresentationItem) -> Void
+    @StateObject private var model: PluginsTabModel
     @State private var searchText = ""
     @State private var displayMode: PluginDisplayMode = .recommend
     @State private var showInstallSheet = false
+    @State private var selectedPluginDetailItem: PluginDetailPresentationItem?
 
     private enum PluginDisplayMode: String, CaseIterable {
         case recommend = "Recommend"
@@ -80,18 +80,18 @@ struct PluginsTabView: View {
     }
 
     private var hasGlobalPlugins: Bool {
-        viewModel.plugins.contains { $0.origin == .global }
+        model.plugins.contains { $0.origin == .global }
     }
 
     private var pluginLookupIndex: PluginLookupIndex {
         PluginLookupIndex(
-            catalogItems: viewModel.pluginCatalog,
-            installedPlugins: viewModel.plugins
+            catalogItems: model.pluginCatalog,
+            installedPlugins: model.plugins
         )
     }
 
     private var filteredCatalogItems: [PluginCatalogItem] {
-        viewModel.pluginCatalog.filter { item in
+        model.pluginCatalog.filter { item in
             matchesSearch(
                 name: item.displayName,
                 description: item.description,
@@ -109,7 +109,7 @@ struct PluginsTabView: View {
     }
 
     private func filteredInstalledPlugins(using lookup: PluginLookupIndex) -> [PluginInfo] {
-        viewModel.plugins.filter { plugin in
+        model.plugins.filter { plugin in
             let catalogItem = lookup.catalogItem(for: plugin)
             return matchesSearch(
                 name: catalogItem?.displayName ?? plugin.channel,
@@ -133,30 +133,51 @@ struct PluginsTabView: View {
         }
     }
 
+    init(
+        openclawService: OpenClawService,
+        notifySuccess: @escaping (String) -> Void = { _ in },
+        notifyError: @escaping (String) -> Void = { _ in }
+    ) {
+        _model = StateObject(
+            wrappedValue: PluginsTabModel(
+                openclawService: openclawService,
+                notifySuccess: notifySuccess,
+                notifyError: notifyError
+            )
+        )
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                searchAndActions
-                modePicker
-                content
+        ZStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    searchAndActions
+                    modePicker
+                    content
+                }
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.top, 34)
+                .padding(.bottom, 44)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: 760, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.top, 34)
-            .padding(.bottom, 44)
-            .frame(maxWidth: .infinity)
+
+            if let selectedPluginDetailItem {
+                pluginDetailOverlay(for: selectedPluginDetailItem)
+            }
         }
         .background(Color(NSColor.windowBackgroundColor))
         .task {
-            await viewModel.loadPluginMarket()
+            await model.loadPluginMarket()
         }
         .sheet(isPresented: $showInstallSheet) {
             InstallPluginSheet(
-                viewModel: viewModel,
+                model: model,
                 isPresented: $showInstallSheet
             )
         }
+        .animation(.spring(response: 0.26, dampingFraction: 0.86), value: selectedPluginDetailItem?.id)
     }
 
     private var header: some View {
@@ -171,8 +192,8 @@ struct PluginsTabView: View {
 
             Spacer()
 
-            if !viewModel.pluginCatalog.isEmpty || !viewModel.plugins.isEmpty {
-                Text("\(viewModel.plugins.count) installed")
+            if !model.pluginCatalog.isEmpty || !model.plugins.isEmpty {
+                Text("\(model.plugins.count) installed")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -185,14 +206,14 @@ struct PluginsTabView: View {
 
             if hasGlobalPlugins {
                 Button {
-                    Task { await viewModel.updateAllPlugins() }
+                    Task { await model.updateAllPlugins() }
                 } label: {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 15, weight: .medium))
                         .frame(width: 30, height: 30)
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.isLoadingPlugins || viewModel.isPerformingAction)
+                .disabled(model.isLoadingPlugins || model.isPerformingAction)
                 .help("Update installed plugins")
             }
 
@@ -204,13 +225,13 @@ struct PluginsTabView: View {
                     .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
-            .disabled(viewModel.isPerformingAction)
+            .disabled(model.isPerformingAction)
             .help("Install custom plugin")
 
             Button {
-                Task { await viewModel.loadPluginMarket(forceSync: true) }
+                Task { await model.loadPluginMarket(forceSync: true) }
             } label: {
-                if viewModel.isLoadingPluginCatalog {
+                if model.isLoadingPluginCatalog {
                     Text("...")
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 30, height: 30)
@@ -221,7 +242,7 @@ struct PluginsTabView: View {
                 }
             }
             .buttonStyle(.plain)
-            .disabled(viewModel.isLoadingPluginCatalog || viewModel.isLoadingPlugins)
+            .disabled(model.isLoadingPluginCatalog || model.isLoadingPlugins)
             .help("Refresh plugins")
         }
     }
@@ -255,9 +276,9 @@ struct PluginsTabView: View {
 
     @ViewBuilder
     private func recommendedPluginsContent(lookup: PluginLookupIndex) -> some View {
-        if viewModel.isLoadingPluginCatalog && viewModel.pluginCatalog.isEmpty {
+        if model.isLoadingPluginCatalog && model.pluginCatalog.isEmpty {
             PluginLoadingStateView(text: "Loading plugin catalog...")
-        } else if let error = viewModel.pluginCatalogError, viewModel.pluginCatalog.isEmpty {
+        } else if let error = model.pluginCatalogError, model.pluginCatalog.isEmpty {
             EmptyPluginStateView(
                 systemImage: "exclamationmark.triangle",
                 title: "Could not load plugin catalog",
@@ -266,7 +287,7 @@ struct PluginsTabView: View {
         } else if filteredRecommendedCatalogItems.isEmpty {
             EmptyPluginStateView(
                 systemImage: "puzzlepiece",
-                title: viewModel.pluginCatalog.isEmpty ? "No recommended plugins" : "No matching recommended plugins",
+                title: model.pluginCatalog.isEmpty ? "No recommended plugins" : "No matching recommended plugins",
                 detail: nil
             )
         } else {
@@ -280,10 +301,10 @@ struct PluginsTabView: View {
 
     @ViewBuilder
     private func allPluginsContent(customPlugins: [PluginInfo], lookup: PluginLookupIndex) -> some View {
-        if viewModel.isLoadingPluginCatalog && viewModel.pluginCatalog.isEmpty {
+        if model.isLoadingPluginCatalog && model.pluginCatalog.isEmpty {
             PluginLoadingStateView(text: "Loading plugin catalog...")
-        } else if let error = viewModel.pluginCatalogError,
-                  viewModel.pluginCatalog.isEmpty,
+        } else if let error = model.pluginCatalogError,
+                  model.pluginCatalog.isEmpty,
                   customPlugins.isEmpty {
             EmptyPluginStateView(
                 systemImage: "exclamationmark.triangle",
@@ -293,7 +314,7 @@ struct PluginsTabView: View {
         } else if filteredCatalogItems.isEmpty && customPlugins.isEmpty {
             EmptyPluginStateView(
                 systemImage: "puzzlepiece",
-                title: viewModel.pluginCatalog.isEmpty && viewModel.plugins.isEmpty ? "No plugins found" : "No matching plugins",
+                title: model.pluginCatalog.isEmpty && model.plugins.isEmpty ? "No plugins found" : "No matching plugins",
                 detail: nil
             )
         } else {
@@ -327,12 +348,12 @@ struct PluginsTabView: View {
 
     @ViewBuilder
     private func installedPluginsContent(sections: [InstalledSection], lookup: PluginLookupIndex) -> some View {
-        if viewModel.isLoadingPlugins && viewModel.plugins.isEmpty {
+        if model.isLoadingPlugins && model.plugins.isEmpty {
             PluginLoadingStateView(text: "Loading installed plugins...")
         } else if sections.isEmpty {
             EmptyPluginStateView(
                 systemImage: "checkmark.circle",
-                title: viewModel.plugins.isEmpty ? "No installed plugins" : "No matching installed plugins",
+                title: model.plugins.isEmpty ? "No installed plugins" : "No matching installed plugins",
                 detail: nil
             )
         } else {
@@ -355,12 +376,12 @@ struct PluginsTabView: View {
                     CatalogPluginListRow(
                         item: item,
                         installedPlugin: installedPlugin,
-                        isInstalling: viewModel.installingCatalogPluginName == item.name,
+                        isInstalling: model.installingCatalogPluginName == item.name,
                         onInstall: {
-                            Task { await viewModel.installCatalogPlugin(item) }
+                            Task { await model.installCatalogPlugin(item) }
                         },
                         onOpen: {
-                            onOpenPluginDetail(PluginDetailPresentationItem.fromCatalog(item, installedPlugin: installedPlugin))
+                            presentPluginDetail(PluginDetailPresentationItem.fromCatalog(item, installedPlugin: installedPlugin))
                         }
                     )
 
@@ -385,7 +406,7 @@ struct PluginsTabView: View {
                         plugin: plugin,
                         catalogItem: catalogItem,
                         onOpen: {
-                            onOpenPluginDetail(PluginDetailPresentationItem.fromInstalled(plugin, catalogItem: catalogItem))
+                            presentPluginDetail(PluginDetailPresentationItem.fromInstalled(plugin, catalogItem: catalogItem))
                         }
                     )
 
@@ -406,6 +427,97 @@ struct PluginsTabView: View {
             .joined(separator: " ")
             .lowercased()
         return haystack.contains(query)
+    }
+
+    private func presentPluginDetail(_ item: PluginDetailPresentationItem) {
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+            selectedPluginDetailItem = item
+        }
+    }
+
+    private func dismissPluginCatalogDetail() {
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+            selectedPluginDetailItem = nil
+        }
+    }
+
+    private func resolvedPluginDetailInstalledPlugin(for item: PluginDetailPresentationItem) -> PluginInfo? {
+        let lookup = pluginLookupIndex
+        if let catalogItem = item.catalogItem {
+            return lookup.installedPlugin(for: catalogItem)
+        }
+        if let installedPlugin = item.installedPlugin {
+            return lookup.installedPluginsByID[PluginLookupIndex.lookupKey(installedPlugin.pluginId)]
+                ?? lookup.installedPluginsByChannel[PluginLookupIndex.lookupKey(installedPlugin.channel)]
+                ?? installedPlugin
+        }
+        return nil
+    }
+
+    private func pluginDetailOverlay(for item: PluginDetailPresentationItem) -> some View {
+        let installedPlugin = resolvedPluginDetailInstalledPlugin(for: item)
+        let isDark = colorScheme == .dark
+
+        return GeometryReader { _ in
+            ZStack {
+                Color.black
+                    .opacity(0.001)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if model.installingCatalogPluginName == nil && !model.isPerformingAction {
+                            dismissPluginCatalogDetail()
+                        }
+                    }
+
+                PluginCatalogDetailSheet(
+                    item: item,
+                    installedPlugin: installedPlugin,
+                    isInstalling: item.catalogItem.map { model.installingCatalogPluginName == $0.name } ?? false,
+                    isPerformingAction: model.isPerformingAction,
+                    onInstall: {
+                        if let catalogItem = item.catalogItem {
+                            Task { await model.installCatalogPlugin(catalogItem) }
+                        }
+                    },
+                    onEnable: {
+                        if let installedPlugin {
+                            Task { await model.enablePlugin(installedPlugin) }
+                        }
+                    },
+                    onDisable: {
+                        if let installedPlugin {
+                            Task { await model.disablePlugin(installedPlugin) }
+                        }
+                    },
+                    onUpdate: {
+                        if let installedPlugin {
+                            Task { await model.updatePlugin(installedPlugin) }
+                        }
+                    },
+                    onUninstall: {
+                        if let installedPlugin {
+                            Task { await model.uninstallPlugin(installedPlugin) }
+                        }
+                    },
+                    onClose: dismissPluginCatalogDetail
+                )
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .shadow(color: Color.black.opacity(isDark ? 0.45 : 0.18), radius: 28, x: 0, y: 18)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(isDark ? 0.16 : 0.08), lineWidth: 1)
+                )
+                .padding(28)
+                .onTapGesture {}
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+        .transition(.asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.965, anchor: .center)),
+            removal: .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
+        ))
     }
 }
 
@@ -456,7 +568,7 @@ private struct PluginLookupIndex {
         return result
     }
 
-    private static func lookupKey(_ value: String) -> String {
+    static func lookupKey(_ value: String) -> String {
         let lower = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard let slashIndex = lower.lastIndex(of: "/") else { return lower }
         return String(lower[lower.index(after: slashIndex)...])
@@ -1048,7 +1160,7 @@ enum PluginPreset: String, CaseIterable {
 }
 
 struct InstallPluginSheet: View {
-    @ObservedObject var viewModel: DashboardViewModel
+    @ObservedObject var model: PluginsTabModel
     @Binding var isPresented: Bool
 
     @State private var installMethod: InstallMethod = .npm
@@ -1070,7 +1182,7 @@ struct InstallPluginSheet: View {
         guard installMethod == .npm else { return false }
         guard selectedPreset != .custom else { return false }
         let keywords = selectedPreset.matchKeywords
-        return viewModel.plugins.contains { plugin in
+        return model.plugins.contains { plugin in
             let id = plugin.pluginId.lowercased()
             let name = plugin.channel.lowercased()
             let source = plugin.source.lowercased()
@@ -1082,7 +1194,7 @@ struct InstallPluginSheet: View {
 
     private var canInstall: Bool {
         if isPresetAlreadyInstalled { return false }
-        return !currentSpec.isEmpty && !isInstalling && !viewModel.isPerformingAction
+        return !currentSpec.isEmpty && !isInstalling && !model.isPerformingAction
     }
 
     var body: some View {
@@ -1243,9 +1355,9 @@ struct InstallPluginSheet: View {
         let isWeixin = installMethod == .npm && selectedPreset == .weixin
         Task {
             if isWeixin {
-                await viewModel.installWeixinPlugin()
+                await model.installWeixinPlugin()
             } else {
-                await viewModel.installPlugin(spec: spec)
+                await model.installPlugin(spec: spec)
             }
             await MainActor.run {
                 isInstalling = false
@@ -1258,23 +1370,11 @@ struct InstallPluginSheet: View {
 private struct PluginsTabPreviewWrapper: View {
     var body: some View {
         PluginsTabView(
-            viewModel: DashboardViewModel(
-                openclawService: OpenClawService(
-                    commandExecutor: CommandExecutor(
-                        permissionManager: PermissionManager()
-                    )
-                ),
-                settings: AppSettingsManager(),
-                systemEnvironment: SystemEnvironment(
-                    commandExecutor: CommandExecutor(
-                        permissionManager: PermissionManager()
-                    )
-                ),
+            openclawService: OpenClawService(
                 commandExecutor: CommandExecutor(
                     permissionManager: PermissionManager()
                 )
-            ),
-            onOpenPluginDetail: { _ in }
+            )
         )
     }
 }

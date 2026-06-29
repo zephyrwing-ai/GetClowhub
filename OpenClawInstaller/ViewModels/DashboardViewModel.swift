@@ -10,14 +10,6 @@ private let sessionSwitchPerfLog = Logger(subsystem: "com.openclaw.installer", c
 
 @MainActor
 class DashboardViewModel: ObservableObject {
-    private static let a2uiDisplayCardInstruction = """
-
-    If a structured visual answer would be clearer than plain text, you may return exactly one fenced `a2ui` JSON block. Use it only for display cards, not for every response. Supported components are Card, Text, Image, Icon, List, Row, Column, and Divider. Do not include interactive form controls. Example:
-    ```a2ui
-    {"version":"0.1","title":"Summary","components":[{"component":"Card","title":"Key point","children":[{"component":"Text","text":"Short display text"}]}]}
-    ```
-    """
-
     @Published var openclawService: OpenClawService
     @Published var settings: AppSettingsManager
     @Published var systemEnvironment: SystemEnvironment
@@ -54,7 +46,11 @@ class DashboardViewModel: ObservableObject {
     @Published var showProviderSwitchConfirm = false
     @Published var editedActiveServiceSource: String = "custom" // "getclawhub" or "custom"
     @Published var editedGetClawHubApiKey: String = "" // Editable API key for GetClawHub
+    @Published var isFetchingProviderModels = false
+    @Published var providerModelFetchMessage: String = ""
     var pendingProviderKey: String = ""
+    private let providerModelFetchService = ProviderModelFetchService()
+    private let attachmentProcessor = AttachmentProcessor()
 
     /// Computed: true when any edited field differs from saved settings.
     /// Works because editedXxx are @Published — any change triggers SwiftUI re-render,
@@ -93,7 +89,7 @@ class DashboardViewModel: ObservableObject {
     private var budgetMonitorTimer: Timer?
 
     private let _commandExecutor: CommandExecutor
-    private let semanticRepoMapService = SemanticRepoMapService()
+    private let projectWorkspaceService = ProjectWorkspaceService()
     private var cancellables = Set<AnyCancellable>()
 
     #if REQUIRE_LOGIN
@@ -833,7 +829,7 @@ class DashboardViewModel: ObservableObject {
             case .persona: return "person.text.rectangle"
             case .subAgents: return "person.3.fill"
             case .market: return "storefront"
-            case .tasksLogs: return "checklist"
+            case .tasksLogs: return "clock.badge"
             case .config: return "gearshape"
             case .skills: return "bolt.fill"
             case .models: return "cube.fill"
@@ -1009,6 +1005,7 @@ class DashboardViewModel: ObservableObject {
     func confirmSwitchProvider() {
         let key = pendingProviderKey
         editedSelectedProviderKey = key
+        providerModelFetchMessage = ""
         if let preset = presetManager.findProvider(byKey: key) {
             editedModelBaseUrl = preset.baseUrl
             editedProviderApi = preset.api
@@ -1017,6 +1014,25 @@ class DashboardViewModel: ObservableObject {
         }
         pendingProviderKey = ""
         showProviderSwitchConfirm = false
+    }
+
+    func fetchModelsForSelectedProvider() async {
+        guard !isFetchingProviderModels else { return }
+        isFetchingProviderModels = true
+        providerModelFetchMessage = ""
+        defer { isFetchingProviderModels = false }
+
+        do {
+            let models = try await providerModelFetchService.fetchModels(
+                baseURL: editedModelBaseUrl,
+                apiKey: editedModelApiKey
+            )
+            editedConfiguredModels = models
+            providerModelFetchMessage = "Fetched \(models.count) model\(models.count == 1 ? "" : "s")."
+            refreshAvailableModelsForCurrentProvider()
+        } catch {
+            providerModelFetchMessage = error.localizedDescription
+        }
     }
 
     /// Cancel provider switch
@@ -1036,6 +1052,7 @@ class DashboardViewModel: ObservableObject {
     func removeModel(at index: Int) {
         guard index >= 0, index < editedConfiguredModels.count else { return }
         editedConfiguredModels.remove(at: index)
+        refreshAvailableModelsForCurrentProvider()
     }
 
     /// Open the providers preset file in TextEdit
@@ -1141,7 +1158,7 @@ class DashboardViewModel: ObservableObject {
 
     // MARK: - UI Helpers
 
-    private func showErrorMessage(_ message: String) {
+    func showErrorMessage(_ message: String) {
         errorMessage = message
         showError = true
 
@@ -1152,7 +1169,7 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
-    private func showSuccessMessage(_ message: String) {
+    func showSuccessMessage(_ message: String) {
         successMessage = message
         showSuccess = true
 
@@ -1603,16 +1620,6 @@ class DashboardViewModel: ObservableObject {
     /// should not be persisted unless the user actually types into them.
     private var pendingSessionMetadataByAgent: [String: ChatSessionMetadata] = [:]
 
-    private var projectRegistryURL: URL {
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first!
-        return appSupport
-            .appendingPathComponent("GetClowHub", isDirectory: true)
-            .appendingPathComponent("ProjectRegistry", isDirectory: true)
-            .appendingPathComponent("projects.json")
-    }
-
     /// Refresh `sessionsByAgent` from the store's index. Pinned-first then
     /// newest-first within each agent. Archived sessions are excluded so the
     /// sidebar list stays clean; the underlying file remains on disk.
@@ -1734,36 +1741,18 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
-    private struct ProjectRegistrySnapshot: Codable {
-        var projects: [ProjectRecord]
-        var bindings: [AgentProjectBinding]
-    }
-
     private func loadProjectRegistry() {
-        guard let data = try? Data(contentsOf: projectRegistryURL) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let snapshot = try? decoder.decode(ProjectRegistrySnapshot.self, from: data) else { return }
-
+        guard let snapshot = projectWorkspaceService.loadRegistry() else { return }
         projectsById = Dictionary(uniqueKeysWithValues: snapshot.projects.map { ($0.id, $0) })
         projectBindingsByAgent = Dictionary(grouping: snapshot.bindings, by: \.agentId)
     }
 
     private func saveProjectRegistry() {
-        let snapshot = ProjectRegistrySnapshot(
-            projects: Array(projectsById.values).sorted { $0.sortKey < $1.sortKey },
-            bindings: projectBindingsByAgent.values.flatMap { $0 }
-        )
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
-            try FileManager.default.createDirectory(
-                at: projectRegistryURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
+            try projectWorkspaceService.saveRegistry(
+                projects: Array(projectsById.values),
+                bindingsByAgent: projectBindingsByAgent
             )
-            let data = try encoder.encode(snapshot)
-            try data.write(to: projectRegistryURL, options: .atomic)
         } catch {
             logChat("PROJECT_REGISTRY_SAVE_FAILED: \(error.localizedDescription)")
         }
@@ -1771,15 +1760,7 @@ class DashboardViewModel: ObservableObject {
 
     func openProject(forAgent agentId: String) {
         let agentName = agentDisplayName(for: agentId)
-        let panel = NSOpenPanel()
-        panel.title = "Choose Work Folder for \(agentName)"
-        panel.message = "Select the local folder this agent should work in. GetClowHub will remember it under this agent. Files stay local and are only read when needed."
-        panel.prompt = "Use as Work Folder"
-        panel.nameFieldLabel = "Work Folder:"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
+        let panel = ProjectWorkspacePicker.makePanel(agentName: agentName)
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
@@ -1789,34 +1770,24 @@ class DashboardViewModel: ObservableObject {
     }
 
     private func attachProject(_ url: URL, toAgent agentId: String) {
-        let standardized = url.standardizedFileURL
-        let rootPath = standardized.path
-        let displayName = standardized.lastPathComponent.isEmpty ? rootPath : standardized.lastPathComponent
-        let existing = projectsById.values.first { $0.rootPath == rootPath }
-        var project = existing ?? ProjectRecord(displayName: displayName, rootPath: rootPath)
-        project.displayName = displayName
-        project.rootPath = rootPath
-        project.lastOpenedAt = Date()
-        project.indexStatus = .ready
-        projectsById[project.id] = project
-
-        var bindings = projectBindingsByAgent[agentId] ?? []
-        if let idx = bindings.firstIndex(where: { $0.projectId == project.id }) {
-            bindings[idx].lastOpenedAt = Date()
-        } else {
-            bindings.append(AgentProjectBinding(agentId: agentId, projectId: project.id, sortOrder: bindings.count))
-        }
-        projectBindingsByAgent[agentId] = bindings
+        let attachment = projectWorkspaceService.attachProject(
+            url: url,
+            toAgent: agentId,
+            projectsById: projectsById,
+            bindingsByAgent: projectBindingsByAgent
+        )
+        projectsById = attachment.projectsById
+        projectBindingsByAgent = attachment.bindingsByAgent
 
         saveProjectRegistry()
         rebuildSessionsMirror()
-        createNewSession(forAgent: agentId, projectId: project.id)
+        createNewSession(forAgent: agentId, projectId: attachment.project.id)
 
-        Task { [semanticRepoMapService] in
-            await semanticRepoMapService.bootstrapProject(project)
+        Task { [projectWorkspaceService] in
+            await projectWorkspaceService.bootstrapProject(attachment.project)
         }
 
-        showSuccessMessage("\(agentDisplayName(for: agentId)) is now working in \(displayName)")
+        showSuccessMessage("\(agentDisplayName(for: agentId)) is now working in \(attachment.project.displayName)")
     }
 
     private func agentDisplayName(for agentId: String) -> String {
@@ -1824,12 +1795,11 @@ class DashboardViewModel: ObservableObject {
     }
 
     func toggleProjectCollapse(agentId: String, projectId: String) {
-        guard var bindings = projectBindingsByAgent[agentId],
-              let idx = bindings.firstIndex(where: { $0.projectId == projectId }) else {
-            return
-        }
-        bindings[idx].isCollapsed.toggle()
-        projectBindingsByAgent[agentId] = bindings
+        projectBindingsByAgent = projectWorkspaceService.toggleCollapse(
+            agentId: agentId,
+            projectId: projectId,
+            bindingsByAgent: projectBindingsByAgent
+        )
         saveProjectRegistry()
         rebuildSessionsMirror()
     }
@@ -1840,7 +1810,11 @@ class DashboardViewModel: ObservableObject {
     }
 
     func removeProject(_ projectId: String, fromAgent agentId: String) {
-        projectBindingsByAgent[agentId]?.removeAll { $0.projectId == projectId }
+        projectBindingsByAgent = projectWorkspaceService.removeProject(
+            projectId,
+            fromAgent: agentId,
+            bindingsByAgent: projectBindingsByAgent
+        )
         if activeProjectIdByAgent[agentId] == projectId {
             activeProjectIdByAgent.removeValue(forKey: agentId)
         }
@@ -3072,132 +3046,6 @@ class DashboardViewModel: ObservableObject {
         return chatSessionStore.index.first { $0.id == sessionId }
     }
 
-    private func projectContextMessage(for project: ProjectRecord?) -> String {
-        guard let project else { return "" }
-        return """
-
-        [Project Context]
-        Current project: \(project.displayName)
-        Project root: \(project.rootPath)
-        Use local project tools or local file paths to inspect source. Do not assume stale paths are correct.
-        """
-    }
-
-    /// Extensions that the gateway accepts as image attachments (via base64 in `content` field).
-    private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp"]
-    private static let maxInlineImageAttachmentCount = 8
-    private static let maxInlineImageAttachmentBytes = 12 * 1024 * 1024
-
-    /// True iff `url` is an existing directory. Cheap stat; called per-attachment.
-    private static func urlIsDirectory(_ url: URL) -> Bool {
-        var isDir: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-        return exists && isDir.boolValue
-    }
-
-    private static func fileSize(at url: URL) -> Int64? {
-        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
-              let size = values.fileSize else {
-            return nil
-        }
-        return Int64(size)
-    }
-
-    /// Process attachments: images → base64 attachments array; other files → pass file path in message;
-    /// directories → pass folder path with a "folder" hint so the agent picks list_dir over read_file.
-    /// Returns (imageAttachments, textToAppend).
-    private func processAttachments(_ urls: [URL]) -> (attachments: [[String: Any]], inlineText: String) {
-        var imageAttachments: [[String: Any]] = []
-        var textParts: [String] = []
-        let imageFileURLs = urls.filter { url in
-            !Self.urlIsDirectory(url) && Self.imageExtensions.contains(url.pathExtension.lowercased())
-        }
-        var totalImageBytes: Int64 = 0
-        var allImageSizesKnown = true
-        for url in imageFileURLs {
-            if let size = Self.fileSize(at: url) {
-                totalImageBytes += size
-            } else {
-                allImageSizesKnown = false
-            }
-        }
-        let shouldInlineImageAttachments = imageFileURLs.count <= Self.maxInlineImageAttachmentCount
-            && allImageSizesKnown
-            && totalImageBytes <= Int64(Self.maxInlineImageAttachmentBytes)
-        let imageBatchUsesPathMode = !imageFileURLs.isEmpty && !shouldInlineImageAttachments
-        if imageBatchUsesPathMode {
-            let totalMB = Double(totalImageBytes) / 1024.0 / 1024.0
-            os_log(
-                .info,
-                "processAttachments: image batch path mode count=%d totalMB=%.2f knownSizes=%{public}@",
-                imageFileURLs.count,
-                totalMB,
-                String(allImageSizesKnown)
-            )
-            textParts.append(
-                String(
-                    format: "Image batch passed by file path because it contains %d image(s), %.2f MB total. Review these local image paths directly.",
-                    imageFileURLs.count,
-                    totalMB
-                )
-            )
-        }
-
-        for url in urls {
-            let ext = url.pathExtension.lowercased()
-            let fileName = url.lastPathComponent
-            let isDir = Self.urlIsDirectory(url)
-
-            // Directories → never read as image, never base64; just inline the path
-            // with an explicit "folder" hint so the AI agent reaches for list_dir /
-            // glob tools rather than read_file. Must run before the image branch
-            // because the path might literally end in `.png` and still be a folder.
-            if isDir {
-                os_log(.info, "processAttachments: directory '%{public}@' → passing folder path", fileName)
-                textParts.append("Attached folder: \(url.path)")
-                continue
-            }
-
-            // Image files → send as base64 attachment (gateway only accepts image/*)
-            if Self.imageExtensions.contains(ext) {
-                if imageBatchUsesPathMode {
-                    os_log(.info, "processAttachments: image '%{public}@' path-mode due to large batch", fileName)
-                    textParts.append("Attached image file: \(url.path)")
-                    continue
-                }
-                guard let data = try? Data(contentsOf: url) else {
-                    os_log(.error, "processAttachments: failed to read image file: %{public}@", fileName)
-                    continue
-                }
-                let base64 = data.base64EncodedString()
-                os_log(.info, "processAttachments: image '%{public}@' ext=%{public}@ base64Len=%d", fileName, ext, base64.count)
-                let mimeType: String
-                switch ext {
-                case "png": mimeType = "image/png"
-                case "jpg", "jpeg": mimeType = "image/jpeg"
-                case "gif": mimeType = "image/gif"
-                case "webp": mimeType = "image/webp"
-                default: mimeType = "image/png"
-                }
-                imageAttachments.append([
-                    "type": "image",
-                    "mimeType": mimeType,
-                    "content": base64
-                ])
-                // Also pass the file path in the message so the AI knows which image file this is
-                textParts.append("Attached image file: \(url.path)")
-                continue
-            }
-
-            // Non-image files → pass local file path so the AI agent can read it directly
-            os_log(.info, "processAttachments: non-image '%{public}@' ext=%{public}@ → passing path", fileName, ext)
-            textParts.append("Attachment file: \(url.path)")
-        }
-
-        let inlineText = textParts.isEmpty ? "" : "\n\n" + textParts.joined(separator: "\n\n")
-        return (imageAttachments, inlineText)
-    }
-
     private struct LocalImageReviewChunkResult {
         let chunkIndex: Int
         let status: String
@@ -3645,12 +3493,10 @@ class DashboardViewModel: ObservableObject {
             return
         }
 
-        // Process attachments: images → base64 attachments; text files → inline in message
-        let processed = processAttachments(attachments)
-        let finalMessage = text
-            + projectContextMessage(for: currentProject)
-            + processed.inlineText
-            + Self.a2uiDisplayCardInstruction
+        let processed = attachmentProcessor.process(attachments)
+        let baseMessage = text
+            + ProjectSessionContextBuilder.message(for: currentProject)
+            + processed.manifestText
 
         // Subscribe to events BEFORE sending to avoid race condition
         let subscriberId = msgId.uuidString
@@ -3659,8 +3505,8 @@ class DashboardViewModel: ObservableObject {
         // Send the message
         let runId = await gatewayClient.chatSend(
             sessionKey: sessionKey,
-            message: finalMessage,
-            attachments: processed.attachments.isEmpty ? nil : processed.attachments
+            message: baseMessage,
+            attachments: processed.inlineAttachments.isEmpty ? nil : processed.inlineAttachments
         )
 
         guard let runId = runId else {
@@ -3672,6 +3518,10 @@ class DashboardViewModel: ObservableObject {
             taskSessionMap.removeValue(forKey: msgId)
             recomputeIsSendingMessage()
             return
+        }
+
+        if !attachments.isEmpty {
+            showSuccessMessage("Attachments sent as a selective manifest. Large files and folders will not be read wholesale.")
         }
 
         activeChatRuns[msgId] = runId
@@ -5722,7 +5572,42 @@ class DashboardViewModel: ObservableObject {
             timeout: 30
         )
         let models = SubAgentsViewModel.parseModelList(output: output)
-        availableModelsForSettings = models
+        availableModelsForSettings = modelsForActiveProvider(from: models)
+    }
+
+    private func activeModelProviderKey() -> String {
+        if editedActiveServiceSource == "getclawhub" {
+            return "getclawhub"
+        }
+
+        if !editedSelectedProviderKey.isEmpty {
+            return editedSelectedProviderKey
+        }
+
+        if let currentAgentModel = availableAgents.first(where: { $0.id == selectedAgentId })?.model,
+           let slash = currentAgentModel.firstIndex(of: "/") {
+            let provider = String(currentAgentModel[..<slash])
+            if provider != "getclawhub" {
+                return provider
+            }
+        }
+
+        return "custom"
+    }
+
+    private func modelsForActiveProvider(from models: [ModelOption]) -> [ModelOption] {
+        let providerKey = activeModelProviderKey()
+        return models.filter { option in
+            option.id == providerKey || option.id.hasPrefix("\(providerKey)/")
+        }
+    }
+
+    private func refreshAvailableModelsForCurrentProvider() {
+        let providerKey = activeModelProviderKey()
+        availableModelsForSettings = editedConfiguredModels.map { model in
+            let modelId = model.id.hasPrefix("\(providerKey)/") ? model.id : "\(providerKey)/\(model.id)"
+            return ModelOption(id: modelId, name: model.name.isEmpty ? model.id : model.name, tags: [])
+        }
     }
 
     /// Save a persona file for the selected agent.

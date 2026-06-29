@@ -46,7 +46,8 @@ let agentCard = slice(dashboard, from: "private var agentCard: some View", to: "
 let agentSettingsPanel = slice(dashboard, from: "private struct AgentSettingsPanel: View", to: "Button(action: onClose)")
 let marketplaceRow = slice(dashboard, from: "private struct MarketplaceAgentRow: View", to: "private struct PulsingDot: View")
 let agentSectionContent = slice(dashboard, from: "private var agentSectionContent: some View", to: "// MARK: - Sidebar Bottom Bar")
-let agentListRow = slice(dashboard, from: "private struct AgentListRow: View", to: "// MARK: - Pulsing Dot")
+let agentSidebarRow = slice(dashboard, from: "private func agentSidebarRow(_ agent: AgentOption) -> some View", to: "private func agentRowWithContextMenu")
+let sidebarCollapsibleRow = slice(dashboard, from: "struct SidebarCollapsibleRow<Icon: View, Actions: View, Children: View>: View", to: "// MARK: - Pulsing Dot")
 let identityCard = slice(persona, from: "struct IdentityCardView: View", to: "VStack(alignment: .leading, spacing: 4)")
 let activityContent = slice(dashboard, from: "private var activityContent: some View", to: "// MARK: - Sub-blocks")
 let subAgentCard = slice(subAgents, from: "private struct AgentSummaryCard: View", to: "// Name")
@@ -84,18 +85,62 @@ assertContains(
     #"stroke-width="1.8""#,
     "dark agent SVG stroke must stay crisp after shrinking in AgentsMarket rows"
 )
-for radius in ["9", "6", "3"] {
+assertContains(
+    agentDaySVG,
+    ##"fill="#F9F9F7""##,
+    "light agent SVG must use a soft light-mode avatar fill"
+)
+assertContains(
+    agentNightSVG,
+    ##"fill="#222522""##,
+    "dark agent SVG must use a quiet dark-mode avatar fill"
+)
+for path in [
+    #"M12 12 L6.0 6.8"#,
+    #"M12 12 L18.1 6.7"#,
+    #"M12 12 L12 20.1"#
+] {
     assertContains(
         agentDaySVG,
-        #"r="\#(radius)""#,
-        "light agent SVG must include the \(radius)pt concentric ring"
+        path,
+        "light agent SVG must use center-to-edge orchestration lines"
     )
     assertContains(
         agentNightSVG,
-        #"r="\#(radius)""#,
-        "dark agent SVG must include the \(radius)pt concentric ring"
+        path,
+        "dark agent SVG must use center-to-edge orchestration lines"
     )
 }
+assertContains(
+    agentDaySVG,
+    #"r="2.35""#,
+    "light agent SVG must include a single filled center node"
+)
+assertContains(
+    agentNightSVG,
+    #"r="2.35""#,
+    "dark agent SVG must include a single filled center node"
+)
+assertNotContains(
+    agentDaySVG,
+    #"r="6""#,
+    "light agent SVG must no longer use the old middle concentric ring"
+)
+assertNotContains(
+    agentNightSVG,
+    #"r="6""#,
+    "dark agent SVG must no longer use the old middle concentric ring"
+)
+assertNotContains(
+    agentDaySVG,
+    #"r="3""#,
+    "light agent SVG must no longer use the old inner concentric ring"
+)
+assertNotContains(
+    agentNightSVG,
+    #"r="3""#,
+    "dark agent SVG must no longer use the old inner concentric ring"
+)
 assertNotContains(
     agentDaySVG,
     ##"fill="#151515""##,
@@ -104,17 +149,7 @@ assertNotContains(
 assertNotContains(
     agentNightSVG,
     ##"fill="#ffffff""##,
-    "dark agent SVG must not include a filled center dot"
-)
-assertNotContains(
-    agentDaySVG,
-    ##"r="1""##,
-    "agent SVG must not include the skill center dot"
-)
-assertNotContains(
-    agentNightSVG,
-    ##"r="1""##,
-    "agent SVG must not include a filled center dot"
+    "dark agent SVG must avoid a pure-white filled disk"
 )
 assertContains(
     avatarContents,
@@ -152,19 +187,39 @@ assertContains(
     "Agent section title chevron must rotate between collapsed and expanded states"
 )
 assertContains(
-    agentListRow,
+    agentSidebarRow,
+    "AgentAvatarImage(size: DashboardSidebarMetrics.agentAvatarSize)",
+    "agent sidebar rows must use the shared SVG avatar metric"
+)
+assertContains(
+    agentSidebarRow,
+    ".contextMenu",
+    "agent sidebar rows must expose context menus from the full row wrapper"
+)
+assertContains(
+    agentSidebarRow,
+    #"Label("Remove Agent", systemImage: "trash")"#,
+    "agent sidebar row context menu must keep the custom agent delete action"
+)
+assertContains(
+    sidebarCollapsibleRow,
+    ".contentShape(Rectangle())",
+    "agent sidebar rows must keep a full-width hit target for taps and context menus"
+)
+assertContains(
+    sidebarCollapsibleRow,
     ".opacity(isHovering || isExpanded ? 1 : 0)",
     "agent row chevron must reserve layout space and fade on hover or expanded state"
 )
 assertContains(
-    agentListRow,
+    sidebarCollapsibleRow,
     ".opacity(isHovering ? 1 : 0)",
     "agent row plus button must reserve layout space and fade on hover"
 )
 assertContains(
     marketplaceRow,
     "AgentAvatarImage(size: 26)",
-    "AgentsMarket list rows must use a large enough avatar for the concentric icon"
+    "AgentsMarket list rows must use a large enough avatar for the agent mark"
 )
 
 for (name, source) in [

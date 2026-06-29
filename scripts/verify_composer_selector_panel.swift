@@ -31,13 +31,12 @@ func slice(_ haystack: String, from start: String, to end: String) -> String {
 }
 
 let dashboard = read("OpenClawInstaller/Views/Dashboard/DashboardView.swift")
-let avatarSVG = read("OpenClawInstaller/Assets.xcassets/AgentAvatar.imageset/agent-avatar-concentric-circles.svg")
+let chatComposer = read("OpenClawInstaller/Views/Dashboard/ChatComposerView.swift")
 
-let emptySurface = slice(dashboard, from: "private var emptyChatSurface: some View", to: "private var chatTopChrome: some View")
+let emptySurface = slice(dashboard, from: "private var emptyChatSurface: some View", to: "private var timelineChatSurface: some View")
 let dismissLayer = slice(dashboard, from: "private var composerSelectorDismissLayer: some View", to: "private var chatContent: some View")
-let agentAvatarImage = slice(dashboard, from: "private struct AgentAvatarImage: View", to: "// MARK: - Pulsing Dot")
-let selectorButton = slice(dashboard, from: "private struct ComposerAgentModelSelector: View", to: "private struct ComposerAgentModelPanel: View")
-let selectorPanel = slice(dashboard, from: "private struct ComposerAgentModelPanel: View", to: "private func stripProviderPrefix")
+let selectorButton = slice(dashboard, from: "struct ComposerModelSelector: View", to: "private struct ComposerModelPanel: View")
+let selectorPanel = slice(dashboard, from: "private struct ComposerModelPanel: View", to: "private func stripProviderPrefix")
 
 assertContains(
     emptySurface,
@@ -55,14 +54,14 @@ assertNotContains(
     "empty chat surface must not keep the old fixed bottom offset"
 )
 assertContains(
-    dashboard,
-    #"String(localized: "Do Anything", bundle: LanguageManager.shared.localizedBundle)"#,
-    "composer placeholder must be Do Anything"
+    chatComposer,
+    #"String(localized: "Ask Anything", bundle: LanguageManager.shared.localizedBundle)"#,
+    "composer placeholder must be Ask Anything"
 )
 assertContains(
     dashboard,
-    ".font(.system(size: 16, weight: .regular))",
-    "composer placeholder must use the requested 16pt font"
+    "static let composerPlaceholder = Font.system(size: 14, weight: .regular)",
+    "composer placeholder must use the scoped 14pt font"
 )
 assertContains(
     dashboard,
@@ -85,34 +84,99 @@ assertContains(
     "outside-click layer must close the selector"
 )
 assertContains(
+    chatComposer,
+    "ComposerModelSelector(",
+    "composer must use a model-only selector"
+)
+assertContains(
+    dashboard,
+    "ComposerModelPanel(",
+    "composer selector overlay must use a model-only panel"
+)
+assertNotContains(
+    dashboard,
+    "ComposerAgentModelSelector",
+    "composer must not use the old agent/model selector"
+)
+assertNotContains(
+    dashboard,
+    "ComposerAgentModelPanel",
+    "composer must not use the old agent/model panel"
+)
+assertNotContains(
     selectorButton,
-    "AgentAvatarImage(size: 16)",
-    "composer selector button must show the shared SVG agent avatar"
+    "AgentAvatarImage(",
+    "composer selector button must not show or depend on agent selection"
+)
+assertNotContains(
+    selectorPanel,
+    "viewModel.selectedAgentId = agent.id",
+    "composer model panel must not switch agents"
+)
+assertNotContains(
+    selectorPanel,
+    "ForEach(viewModel.availableAgents)",
+    "composer model panel must not render an agent list"
+)
+assertNotContains(
+    selectorPanel,
+    #"Text("Agent")"#,
+    "composer model panel must not expose an Agent section"
 )
 assertContains(
     selectorPanel,
-    "showsAgentAvatar: true",
-    "composer agent rows must show the shared SVG agent avatar"
+    "let models: [ModelOption]",
+    "composer model panel must receive model data as an explicit input"
+)
+assertContains(
+    selectorPanel,
+    "let onSelectModel: (String) -> Void",
+    "composer model panel must select models through a narrow callback"
+)
+assertNotContains(
+    selectorPanel,
+    "@ObservedObject var viewModel: DashboardViewModel",
+    "composer model panel must not observe the whole dashboard view model"
+)
+assertContains(
+    selectorPanel,
+    "ForEach(models)",
+    "composer model panel must render the injected model list directly"
+)
+assertContains(
+    selectorPanel,
+    "private static let maxModelPanelHeight",
+    "composer model panel must define a fixed maximum height for long model lists"
+)
+assertContains(
+    selectorPanel,
+    "ScrollView",
+    "composer model panel must put model rows inside an internal scroll view"
+)
+assertContains(
+    selectorPanel,
+    "LazyVStack",
+    "composer model panel must lazily render model rows inside the scrollable area"
+)
+assertContains(
+    selectorPanel,
+    ".frame(maxHeight: Self.maxModelPanelHeight)",
+    "composer model panel must clamp height instead of growing beyond the window"
+)
+assertContains(
+    dashboard,
+    ".fixedSize(horizontal: true, vertical: false)",
+    "composer selector overlay must not force the panel to its full vertical content height"
+)
+assertNotContains(
+    dashboard,
+    ".fixedSize(horizontal: true, vertical: true)",
+    "composer selector overlay must allow the panel height clamp to take effect"
 )
 assertNotContains(
     selectorPanel,
     #"title: "\(agent.emoji) \(agent.name)""#,
     "composer agent rows must not show emoji icons"
-)
-assertNotContains(
-    agentAvatarImage,
-    ".clipShape(",
-    "agent avatar image must not add an outer clipping frame"
-)
-assertNotContains(
-    agentAvatarImage,
-    ".strokeBorder(",
-    "agent avatar image must not add an outer border"
-)
-assertNotContains(
-    avatarSVG,
-    "<rect",
-    "agent avatar SVG must not include the white outer rectangle"
 )
 
 print("Composer selector panel verification passed")

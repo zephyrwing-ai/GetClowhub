@@ -7,17 +7,12 @@ struct SessionTitleUserMessagesPopover: View {
     let onTapMessage: (ChatMessage) -> Void
 
     @State private var isTitleHovering = false
-    @State private var isPopoverHovering = false
-    @State private var isPopoverPresented = false
-    @State private var popoverCloseTask: DispatchWorkItem?
 
     var body: some View {
-        SessionTitlePopoverHost(
-            isPresented: $isPopoverPresented,
+        SessionTitlePanelHost(
+            isTitleHovering: isTitleHovering,
             messages: messages,
-            onPopoverHoverChange: updatePopoverHover,
             onTapMessage: { message in
-                closePopover()
                 onTapMessage(message)
             }
         ) {
@@ -30,73 +25,23 @@ struct SessionTitleUserMessagesPopover: View {
                 .padding(.vertical, 5)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.secondary.opacity(isTitleHovering || isPopoverPresented ? 0.14 : 0.08))
+                        .fill(Color.secondary.opacity(isTitleHovering ? 0.14 : 0.08))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.secondary.opacity(isTitleHovering || isPopoverPresented ? 0.22 : 0.12), lineWidth: 1)
+                        .stroke(Color.secondary.opacity(isTitleHovering ? 0.22 : 0.12), lineWidth: 1)
                 )
                 .contentShape(Rectangle())
         }
         .onHover { hovering in
             isTitleHovering = hovering
-            if hovering {
-                openPopoverIfPossible()
-            } else {
-                schedulePopoverClose()
-            }
-        }
-        .onDisappear {
-            closePopover()
-        }
-        .onChange(of: messages.count) { count in
-            if count == 0 {
-                closePopover()
-            }
-        }
-    }
-
-    private func openPopoverIfPossible() {
-        popoverCloseTask?.cancel()
-        popoverCloseTask = nil
-        guard !messages.isEmpty else { return }
-        isPopoverPresented = true
-    }
-
-    private func schedulePopoverClose() {
-        popoverCloseTask?.cancel()
-        let task = DispatchWorkItem {
-            if !isTitleHovering && !isPopoverHovering {
-                closePopover()
-            }
-        }
-        popoverCloseTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: task)
-    }
-
-    private func closePopover() {
-        popoverCloseTask?.cancel()
-        popoverCloseTask = nil
-        isPopoverPresented = false
-        isTitleHovering = false
-        isPopoverHovering = false
-    }
-
-    private func updatePopoverHover(_ hovering: Bool) {
-        isPopoverHovering = hovering
-        if hovering {
-            popoverCloseTask?.cancel()
-            popoverCloseTask = nil
-        } else {
-            schedulePopoverClose()
         }
     }
 }
 
-private struct SessionTitlePopoverHost<Label: View>: NSViewRepresentable {
-    @Binding var isPresented: Bool
+private struct SessionTitlePanelHost<Label: View>: NSViewRepresentable {
+    let isTitleHovering: Bool
     let messages: [ChatMessage]
-    let onPopoverHoverChange: (Bool) -> Void
     let onTapMessage: (ChatMessage) -> Void
     @ViewBuilder let label: () -> Label
 
@@ -111,115 +56,175 @@ private struct SessionTitlePopoverHost<Label: View>: NSViewRepresentable {
         nsView.rootView = label()
         context.coordinator.update(
             messages: messages,
-            onPopoverHoverChange: onPopoverHoverChange,
             onTapMessage: onTapMessage
         )
-
-        if isPresented, !messages.isEmpty {
-            context.coordinator.schedulePresent(relativeTo: nsView, isPresented: $isPresented)
-        } else {
-            context.coordinator.close()
-        }
+        context.coordinator.setTitleHovering(isTitleHovering, relativeTo: nsView)
     }
 
     func makeCoordinator() -> SessionTitlePopoverCoordinator {
         SessionTitlePopoverCoordinator()
     }
+
+    static func dismantleNSView(_ nsView: NSHostingView<Label>, coordinator: SessionTitlePopoverCoordinator) {
+        coordinator.closeImmediately()
+    }
 }
 
-private final class SessionTitlePopoverCoordinator: NSObject, NSPopoverDelegate {
-    private var popover: NSPopover?
+private final class SessionTitlePopoverCoordinator {
+    private let panelContentSize = NSSize(width: 360, height: 320)
+    private let panelChromeInset: CGFloat = 14
+    private let titlePanelVerticalOffset: CGFloat = 8
+    private var panel: NSPanel?
     private var hostingController: NSHostingController<SessionTitleUserMessagesPopoverContent>?
     private var messages: [ChatMessage] = []
-    private var onPopoverHoverChange: (Bool) -> Void = { _ in }
     private var onTapMessage: (ChatMessage) -> Void = { _ in }
-    private var isPresented: Binding<Bool>?
+    private var isTitleHovering = false
+    private var isPanelHovering = false
     private var pendingPresentWork: DispatchWorkItem?
+    private var panelCloseTask: DispatchWorkItem?
 
-    func update(
-        messages: [ChatMessage],
-        onPopoverHoverChange: @escaping (Bool) -> Void,
-        onTapMessage: @escaping (ChatMessage) -> Void
-    ) {
-        self.messages = messages
-        self.onPopoverHoverChange = onPopoverHoverChange
-        self.onTapMessage = onTapMessage
-        hostingController?.rootView = SessionTitleUserMessagesPopoverContent(
-            messages: messages,
-            onPopoverHoverChange: onPopoverHoverChange,
-            onTapMessage: onTapMessage
+    private var panelWindowSize: NSSize {
+        NSSize(
+            width: panelContentSize.width + (panelChromeInset * 2),
+            height: panelContentSize.height + (panelChromeInset * 2)
         )
     }
 
-    func schedulePresent(relativeTo sourceView: NSView, isPresented: Binding<Bool>) {
-        self.isPresented = isPresented
+    func update(
+        messages: [ChatMessage],
+        onTapMessage: @escaping (ChatMessage) -> Void
+    ) {
+        self.messages = messages
+        self.onTapMessage = onTapMessage
+        hostingController?.rootView = SessionTitleUserMessagesPopoverContent(
+            messages: messages,
+            onPanelHoverChange: updatePanelHover,
+            onTapMessage: handleTapMessage
+        )
+        if messages.isEmpty {
+            closeImmediately()
+        }
+    }
+
+    func setTitleHovering(_ hovering: Bool, relativeTo sourceView: NSView) {
+        isTitleHovering = hovering
+        if hovering {
+            panelCloseTask?.cancel()
+            panelCloseTask = nil
+            schedulePresent(relativeTo: sourceView)
+        } else {
+            schedulePanelClose()
+        }
+    }
+
+    func schedulePresent(relativeTo sourceView: NSView) {
         pendingPresentWork?.cancel()
 
         let work = DispatchWorkItem { [weak self, weak sourceView] in
-            guard let self, let sourceView else {
-                isPresented.wrappedValue = false
-                return
-            }
-            guard isPresented.wrappedValue, !self.messages.isEmpty else { return }
-            guard sourceView.window != nil, !sourceView.bounds.isEmpty else {
-                isPresented.wrappedValue = false
-                return
-            }
+            guard let self, let sourceView else { return }
+            guard self.isTitleHovering, !self.messages.isEmpty else { return }
+            guard sourceView.window != nil, !sourceView.bounds.isEmpty else { return }
 
-            let popover = self.ensurePopover()
-            guard !popover.isShown else { return }
-            popover.show(
-                relativeTo: sourceView.bounds,
-                of: sourceView,
-                preferredEdge: .maxY
-            )
+            let panel = self.ensurePanel()
+            panel.setFrame(self.panelFrame(relativeTo: sourceView), display: true)
+            panel.orderFrontRegardless()
         }
         pendingPresentWork = work
         DispatchQueue.main.async(execute: work)
     }
 
-    func close() {
+    func closeImmediately() {
         pendingPresentWork?.cancel()
         pendingPresentWork = nil
-        popover?.performClose(nil)
+        panelCloseTask?.cancel()
+        panelCloseTask = nil
+        panel?.orderOut(nil)
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        guard isPresented?.wrappedValue == true else { return }
-        DispatchQueue.main.async {
-            self.isPresented?.wrappedValue = false
+    private func updatePanelHover(_ hovering: Bool) {
+        isPanelHovering = hovering
+        if hovering {
+            panelCloseTask?.cancel()
+            panelCloseTask = nil
+        } else {
+            schedulePanelClose()
         }
     }
 
-    private func ensurePopover() -> NSPopover {
-        if let popover {
-            return popover
+    private func schedulePanelClose() {
+        panelCloseTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if !isTitleHovering && !isPanelHovering && !isMouseInsidePanel {
+                panel?.orderOut(nil)
+            }
+        }
+        panelCloseTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: task)
+    }
+
+    private func handleTapMessage(_ message: ChatMessage) {
+        closeImmediately()
+        onTapMessage(message)
+    }
+
+    private func ensurePanel() -> NSPanel {
+        if let panel {
+            return panel
         }
 
         let controller = NSHostingController(
             rootView: SessionTitleUserMessagesPopoverContent(
                 messages: messages,
-                onPopoverHoverChange: onPopoverHoverChange,
-                onTapMessage: onTapMessage
+                onPanelHoverChange: updatePanelHover,
+                onTapMessage: handleTapMessage
             )
         )
-        controller.view.setFrameSize(NSSize(width: 360, height: 1))
+        controller.view.setFrameSize(panelWindowSize)
+        controller.view.wantsLayer = true
+        controller.view.layer?.backgroundColor = NSColor.clear.cgColor
         hostingController = controller
 
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = false
-        popover.contentSize = NSSize(width: 360, height: 320)
-        popover.contentViewController = controller
-        popover.delegate = self
-        self.popover = popover
-        return popover
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: panelWindowSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentViewController = controller
+        self.panel = panel
+        return panel
+    }
+
+    private func panelFrame(relativeTo sourceView: NSView) -> NSRect {
+        guard let window = sourceView.window else {
+            return NSRect(origin: .zero, size: panelWindowSize)
+        }
+
+        let titleFrameInWindow = sourceView.convert(sourceView.bounds, to: nil)
+        let titleFrameOnScreen = window.convertToScreen(titleFrameInWindow)
+        let x = titleFrameOnScreen.midX - (panelWindowSize.width / 2)
+        let visibleTopY = titleFrameOnScreen.minY - titlePanelVerticalOffset
+        let y = visibleTopY - panelContentSize.height - panelChromeInset
+
+        return NSRect(x: x, y: y, width: panelWindowSize.width, height: panelWindowSize.height)
+    }
+
+    private var isMouseInsidePanel: Bool {
+        guard let panel, panel.isVisible else { return false }
+        return panel.frame.contains(NSEvent.mouseLocation)
     }
 }
 
 private struct SessionTitleUserMessagesPopoverContent: View {
     let messages: [ChatMessage]
-    let onPopoverHoverChange: (Bool) -> Void
+    let onPanelHoverChange: (Bool) -> Void
     let onTapMessage: (ChatMessage) -> Void
 
     var body: some View {
@@ -244,68 +249,95 @@ private struct SessionTitleUserMessagesPopoverContent: View {
         .frame(width: 360)
         .frame(maxHeight: 320)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .background(SessionTitleLiquidGlassBackground(cornerRadius: 12))
-        .onHover { hovering in
-            onPopoverHoverChange(hovering)
-        }
+        .background(SessionTitlePanelBackground(cornerRadius: 12))
+        .background(SessionTitlePanelHoverTracker(onPanelHoverChange: onPanelHoverChange))
+        .padding(14)
     }
 }
 
-private struct SessionTitleLiquidGlassBackground: View {
+private struct SessionTitlePanelBackground: View {
     let cornerRadius: CGFloat
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(.ultraThinMaterial)
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.36),
-                                Color.white.opacity(0.14),
-                                Color.white.opacity(0.04),
-                                Color.black.opacity(0.06)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .blendMode(.screen)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color.white.opacity(0.34),
-                                Color.white.opacity(0.12),
-                                Color.clear
-                            ],
-                            center: .topLeading,
-                            startRadius: 4,
-                            endRadius: 180
-                        )
-                    )
-                    .blendMode(.plusLighter)
-            }
+            .fill(.regularMaterial)
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.62),
-                                Color.white.opacity(0.22),
-                                Color.black.opacity(0.18)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
+                        Color.primary.opacity(0.10),
                         lineWidth: 1
                     )
             }
-            .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 10)
-            .shadow(color: Color.white.opacity(0.18), radius: 1, x: 0, y: 1)
+            .shadow(color: Color.black.opacity(0.12), radius: 14, x: 0, y: 8)
+    }
+}
+
+private struct SessionTitlePanelHoverTracker: NSViewRepresentable {
+    let onPanelHoverChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> TrackingView {
+        let view = TrackingView()
+        view.onPanelHoverChange = onPanelHoverChange
+        return view
+    }
+
+    func updateNSView(_ nsView: TrackingView, context: Context) {
+        nsView.onPanelHoverChange = onPanelHoverChange
+    }
+
+    final class TrackingView: NSView {
+        var onPanelHoverChange: (Bool) -> Void = { _ in }
+        private var trackingArea: NSTrackingArea?
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+            layer?.backgroundColor = NSColor.clear.cgColor
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            nil
+        }
+
+        override func updateTrackingAreas() {
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+            }
+
+            let trackingArea = NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(trackingArea)
+            self.trackingArea = trackingArea
+
+            super.updateTrackingAreas()
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            onPanelHoverChange(true)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            onPanelHoverChange(false)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window {
+                let boundsInWindow = convert(bounds, to: nil)
+                onPanelHoverChange(boundsInWindow.contains(window.mouseLocationOutsideOfEventStream))
+            } else {
+                onPanelHoverChange(false)
+            }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            nil
+        }
     }
 }
 

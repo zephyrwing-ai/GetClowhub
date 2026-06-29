@@ -51,6 +51,11 @@ let dashboard = read("OpenClawInstaller/Views/Dashboard/DashboardView.swift")
 let rightInspectorSplit = read("OpenClawInstaller/Views/Dashboard/Inspector/RightInspectorSplitView.swift")
 let project = read("OpenClawInstaller.xcodeproj/project.pbxproj")
 let dashboardView = slice(dashboard, from: "struct DashboardView: View", to: "// MARK: - Sidebar")
+let rightInspectorContentUpdateID = slice(
+    dashboard,
+    from: "private var rightInspectorContentUpdateID: AnyHashable",
+    to: "private var selectedWorkspacePath"
+)
 let detailContentView = slice(dashboard, from: "struct DetailContentView: View", to: "// MARK: - Collab Drag Handle")
 let chatView = slice(dashboard, from: "struct ChatView: View", to: "// MARK: - Chat Welcome View")
 let rightInspectorSplitController = sliceFrom(
@@ -70,8 +75,82 @@ assertContains(
 )
 assertContains(
     dashboardView,
+    "contentUpdateID: rightInspectorContentUpdateID",
+    "right inspector sidebar toggles should not force the middle chat root to refresh"
+)
+assertContains(
+    rightInspectorSplit,
+    "struct RightInspectorSidebarWidthCoordinator",
+    "right inspector should expose an AppKit width coordinator for local sidebar-detail animations"
+)
+assertContains(
+    rightInspectorSplit,
+    "rightInspectorSidebarWidthCoordinator",
+    "right inspector should inject the width coordinator through the SwiftUI environment"
+)
+assertContains(
+    rightInspectorSplit,
+    "struct NestedWorkspaceSplitView<Primary: View, Secondary: View>",
+    "workspace inspector should use a nested AppKit split for Outputs plus the secondary project sidebar"
+)
+assertContains(
+    rightInspectorSplit,
+    "private final class NestedWorkspaceSplitController: NSViewController",
+    "nested workspace split should be isolated from the outer chat/right-inspector split controller"
+)
+assertContains(
+    rightInspectorSplit,
+    "private var secondaryWidthConstraint: NSLayoutConstraint?",
+    "nested workspace split should animate only the secondary project column width"
+)
+assertContains(
+    dashboard,
+    "private struct RightInspectorContentUpdateID: Hashable",
+    "right inspector content identity should be an explicit value separate from layout state"
+)
+for forbiddenState in [
+    "workspaceSidebarExpanded",
+    "isWorkspaceSidebarOpening",
+    "isWorkspaceSidebarClosing",
+    "workspaceSidebarExpandRequestID",
+    "workspaceSidebarCollapseRequestID",
+    "workspaceDetailMode"
+] {
+    assertNotContains(
+        rightInspectorContentUpdateID,
+        forbiddenState,
+        "right inspector content identity should not include sidebar layout state: \(forbiddenState)"
+    )
+}
+assertNotContains(
+    dashboardView,
+    "@State private var workspaceDetailMode",
+    "secondary project sidebar mode should be owned by the workspace inspector pane, not DashboardView"
+)
+assertNotContains(
+    dashboardView,
+    "@State private var workspaceSearchText",
+    "secondary project sidebar search should be owned by the workspace inspector pane, not DashboardView"
+)
+assertNotContains(
+    dashboardView,
+    "@State private var workspaceEditingFilePath",
+    "workspace file preview selection should be owned by the workspace inspector pane, not DashboardView"
+)
+assertContains(
+    dashboardView,
     "workspaceSidebarPane(width:",
     "DashboardView should pass the unified Outputs pane into the AppKit split container"
+)
+assertContains(
+    dashboardView,
+    "private var activeWorkspaceRoot: WorkspaceSidebarRoot",
+    "right workspace file tree should resolve its root from the active session project context"
+)
+assertContains(
+    dashboardView,
+    "currentSessionMetadata?.projectId",
+    "right workspace file tree should use the current session project before falling back to the agent workspace"
 )
 assertContains(
     dashboardView,
@@ -150,6 +229,11 @@ assertContains(
 )
 assertContains(
     rightInspectorSplit,
+    "let contentUpdateID: AnyHashable",
+    "right inspector split should accept a content identity separate from sidebar layout state"
+)
+assertContains(
+    rightInspectorSplit,
     "private final class RightInspectorSplitController: NSViewController",
     "right Outputs column should be managed by a reusable constraint-driven AppKit controller"
 )
@@ -225,6 +309,21 @@ assertContains(
 )
 assertContains(
     rightInspectorSplitController,
+    "private var currentContentUpdateID: AnyHashable?",
+    "right AppKit inspector controller should remember the last middle-content identity"
+)
+assertContains(
+    rightInspectorSplitController,
+    "if currentContentUpdateID != contentUpdateID {\n            contentHost.rootView = content\n            currentContentUpdateID = contentUpdateID\n        }",
+    "right AppKit inspector controller should only replace the middle chat root when its content identity changes"
+)
+assertNotContains(
+    rightInspectorSplitController,
+    "\n        contentHost.rootView = content\n        let previousTargetWidth",
+    "right sidebar layout updates should not unconditionally replace the middle chat root"
+)
+assertContains(
+    rightInspectorSplitController,
     "private var onSidebarCollapseFinished: (() -> Void)?",
     "right AppKit inspector controller should own a collapse completion callback"
 )
@@ -242,6 +341,11 @@ assertContains(
     rightInspectorSplitController,
     "private var lastCollapseRequestID = 0",
     "right AppKit inspector controller should track the latest direct collapse request"
+)
+assertContains(
+    rightInspectorSplitController,
+    "private var locallyManagedSidebarWidth: CGFloat?",
+    "right AppKit inspector controller should keep a local width override while the inspector-internal detail column animates"
 )
 assertContains(
     rightInspectorSplitController,
@@ -265,12 +369,22 @@ assertContains(
 )
 assertContains(
     rightInspectorSplitController,
-    "if !shouldDeferSidebarRootUpdate {\n            sidebarHost.rootView = sidebar\n        }",
+    "if !shouldDeferSidebarRootUpdate {\n            sidebarHost.rootView = AnyView(sidebar.environment(\\.rightInspectorSidebarWidthCoordinator, sidebarWidthCoordinator))\n        }",
     "right sidebar should keep its existing content mounted while closing"
 )
 assertContains(
     rightInspectorSplitController,
-    "self.sidebarHost.rootView = sidebar\n                self.onSidebarCollapseFinished?()",
+    "let effectiveSidebarWidth = locallyManagedSidebarWidth ?? sidebarWidth",
+    "right AppKit inspector controller should prefer the locally animated width over stale parent sidebarWidth updates"
+)
+assertContains(
+    rightInspectorSplitController,
+    "if let locallyManagedSidebarWidth, abs(sidebarWidth - locallyManagedSidebarWidth) <= layoutEpsilon",
+    "right AppKit inspector controller should release the local width override after SwiftUI catches up to the animated width"
+)
+assertContains(
+    rightInspectorSplitController,
+    "self.sidebarHost.rootView = AnyView(sidebar.environment(\\.rightInspectorSidebarWidthCoordinator, self.sidebarWidthCoordinator))\n                    self.onSidebarCollapseFinished?()",
     "right sidebar should update its root and clear state only after the close animation finishes"
 )
 assertContains(
@@ -285,7 +399,7 @@ assertContains(
 )
 assertContains(
     rightInspectorSplitController,
-    "self.sidebarHost.rootView = sidebar\n                    self.onSidebarExpandFinished?()",
+    "self.sidebarHost.rootView = AnyView(sidebar.environment(\\.rightInspectorSidebarWidthCoordinator, self.sidebarWidthCoordinator))\n                    self.onSidebarExpandFinished?()",
     "right sidebar should commit expanded state only after the open animation finishes"
 )
 assertContains(
@@ -302,6 +416,21 @@ assertContains(
     rightInspectorSplitController,
     "view.layoutSubtreeIfNeeded()",
     "right AppKit inspector controller should flush layout before animating the width constraint"
+)
+assertContains(
+    rightInspectorSplitController,
+    "let sourceWidth = sidebarWidthConstraint?.constant ?? 0",
+    "right AppKit inspector controller should know the current rail width before deciding how to size hosted content during an animation"
+)
+assertContains(
+    rightInspectorSplitController,
+    "if targetWidth >= sourceWidth",
+    "right AppKit inspector controller should only grow hosted content immediately; shrinking content width before the rail animation finishes makes the detail panel disappear abruptly"
+)
+assertContains(
+    rightInspectorSplitController,
+    "self.sidebarContentWidthConstraint?.constant = targetWidth",
+    "right AppKit inspector controller should commit the hosted content width after the rail animation completes"
 )
 assertContains(
     rightInspectorSplitController,
@@ -463,14 +592,31 @@ let hideWorkspaceSidebar = slice(dashboardView, from: "private func hideWorkspac
 let completeWorkspaceSidebarOpen = slice(dashboardView, from: "private func completeWorkspaceSidebarOpen()", to: "    private func completeWorkspaceSidebarClose")
 let completeWorkspaceSidebarClose = slice(dashboardView, from: "private func completeWorkspaceSidebarClose()", to: "    private func clearWorkspaceSidebarTransientState")
 let isWorkspaceSidebarExpanded = slice(dashboardView, from: "private var isWorkspaceSidebarExpanded: Bool", to: "    private var shouldRetainWorkspaceSidebarContent")
+let hasWorkspaceDetailPanel = slice(dashboardView, from: "private var hasWorkspaceDetailPanel: Bool", to: "    private func jumpToUserMessage")
+let shouldRetainWorkspaceSidebarContent = slice(dashboardView, from: "private var shouldRetainWorkspaceSidebarContent: Bool", to: "    private var workspaceColumnIdealWidth")
 assertNotContains(
     isWorkspaceSidebarExpanded,
     "!isWorkspaceSidebarClosing",
     "right sidebar close should not commit the visual expanded state before the AppKit collapse animation starts"
 )
 assertContains(
-    dashboardView,
-    "workspaceSidebarExpanded || workspaceEditingFilePath != nil || isWorkspaceSidebarOpening || isWorkspaceSidebarClosing",
+    hasWorkspaceDetailPanel,
+    "workspaceDetailWidth > 0",
+    "DashboardView should only track whether the inspector detail width is present"
+)
+assertContains(
+    workspaceInspectorPane,
+    "case .filePreview(let path):",
+    "workspace inspector pane should own file preview detail state"
+)
+assertContains(
+    workspaceInspectorPane,
+    "case .projectTree:",
+    "workspace inspector pane should own secondary project file tree state"
+)
+assertContains(
+    shouldRetainWorkspaceSidebarContent,
+    "workspaceSidebarExpanded || hasWorkspaceDetailPanel || isWorkspaceSidebarOpening || isWorkspaceSidebarClosing",
     "right sidebar content should stay mounted while opening or closing animations run"
 )
 assertNotContains(
@@ -598,7 +744,7 @@ assertContains(
     ".environment(\\.workspaceSidebarController, workspaceSidebarController)",
     "ChatView should continue receiving the workspace sidebar controller"
 )
-let timelineChatSurface = slice(chatView, from: "private var timelineChatSurface: some View", to: "    private var chatScrollIndicator")
+let timelineChatSurface = slice(dashboard, from: "private var timelineChatSurface: some View", to: "private func handleChatScrollPositionChange")
 let chatContent = slice(chatView, from: "private var chatContent: some View", to: "    var body: some View")
 assertContains(
     chatContent,
@@ -627,6 +773,30 @@ assertNotContains(
 )
 
 let workspaceFilePanel = slice(dashboard, from: "private struct WorkspaceFilePanel: View", to: "    private var outputsEmptyState: some View")
+let workspaceOutputsPaneHeader = slice(dashboard, from: "private struct WorkspaceOutputsPaneHeader: View", to: "private struct RightOutputsTitlebarAccessory")
+let workspaceInspectorPane = slice(dashboard, from: "private struct WorkspaceInspectorPane: View", to: "private struct RightOutputsTitlebarAccessory")
+let projectFilesPanel = slice(dashboard, from: "private struct ProjectFilesPanel: View", to: "private struct FileEditorPanel")
+let openWorkspaceInFinderIcon = slice(dashboard, from: "private struct OpenWorkspaceInFinderIcon: View", to: "private struct SecondaryProjectSidebarIcon: View")
+assertContains(
+    workspaceFilePanel,
+    "let root: WorkspaceSidebarRoot",
+    "WorkspaceFilePanel should receive an explicit root instead of deriving it from the agent"
+)
+assertNotContains(
+    workspaceFilePanel,
+    "DashboardViewModel.resolveAgentWorkspace(agentId)",
+    "WorkspaceFilePanel should not fall back to the agent default workspace internally"
+)
+assertContains(
+    projectFilesPanel,
+    "workspaceRootHeader",
+    "ProjectFilesPanel should show which project/workspace root is currently being rendered"
+)
+assertNotContains(
+    workspaceFilePanel,
+    "workspaceRootHeader",
+    "Outputs list should not show the project tree root header unless the secondary project panel is open"
+)
 assertNotContains(
     workspaceFilePanel,
     "Text(\"Outputs\")",
@@ -639,19 +809,215 @@ assertNotContains(
 )
 assertContains(
     dashboard,
+    "private var currentAgentWorkspacePath: String",
+    "Open/Finder should target the current agent's local workspace directory"
+)
+assertContains(
+    dashboard,
+    "DashboardViewModel.resolveAgentWorkspace(viewModel.selectedAgentId)",
+    "Open/Finder should resolve the workspace from the selected agent id"
+)
+assertContains(
+    dashboard,
+    "try? FileManager.default.createDirectory",
+    "Open/Finder should ensure the current agent workspace exists before asking Finder to open it"
+)
+assertContains(
+    dashboard,
+    "private struct SecondaryProjectSidebarIcon: View",
+    "secondary project sidebar button should use the layered rounded-rectangle vector icon shown in the design reference"
+)
+assertContains(
+    dashboard,
+    "private struct SecondaryProjectSidebarBackShape: Shape",
+    "secondary project sidebar icon should draw the exposed rear rounded-rectangle outline as vector"
+)
+assertContains(
+    dashboard,
+    "private struct SecondaryProjectSidebarFrontShape: Shape",
+    "secondary project sidebar icon should draw the front rounded-rectangle card as vector"
+)
+assertContains(
+    dashboard,
+    "private struct OpenWorkspaceInFinderIcon: View",
+    "Open/Finder button should use the uploaded reference as a custom thin-stroke vector icon"
+)
+assertContains(
+    workspaceOutputsPaneHeader,
+    "OpenWorkspaceInFinderIcon(",
+    "right workspace header should keep a dedicated Open/Finder icon"
+)
+assertContains(
+    workspaceOutputsPaneHeader,
+    "SecondaryProjectSidebarIcon(",
+    "right workspace header should render the secondary project sidebar icon in the old search button position"
+)
+assertContains(
+    dashboard,
+    "private struct WorkspaceHeaderIconButton<Icon: View>: View",
+    "right workspace header icon buttons should share a full-frame hit target wrapper"
+)
+assertContains(
+    workspaceOutputsPaneHeader,
+    "WorkspaceHeaderIconButton(",
+    "right workspace header should wrap icon-only buttons so transparent vector interiors remain clickable"
+)
+assertContains(
+    dashboard,
+    ".contentShape(Rectangle())",
+    "right workspace header icon buttons should make the full icon frame hit-testable"
+)
+assertBefore(
+    workspaceOutputsPaneHeader,
+    "OpenWorkspaceInFinderIcon(",
+    "SecondaryProjectSidebarIcon(",
+    "Open/Finder should sit before the secondary project sidebar button"
+)
+assertContains(
+    workspaceInspectorPane,
+    "@State private var detailMode: WorkspaceDetailMode = .none",
+    "secondary project sidebar state should be owned inside the workspace inspector pane"
+)
+assertContains(
+    workspaceInspectorPane,
+    "@State private var targetDetailMode: WorkspaceDetailMode = .none",
+    "secondary project sidebar should track the user's requested detail mode separately from the committed business state"
+)
+assertContains(
+    workspaceInspectorPane,
+    "toggleWorkspaceProjectFiles",
+    "right workspace header should toggle the secondary project files panel instead of toggling search directly"
+)
+assertContains(
+    workspaceInspectorPane,
+    "if isProjectFilesVisible {",
+    "secondary project sidebar button should close the project files panel when it is already visible or retained during animation"
+)
+assertNotContains(
+    workspaceInspectorPane,
+    "switch targetDetailMode {\n        case .projectTree:",
+    "secondary project sidebar close behavior should not depend only on the committed target mode"
+)
+assertContains(
+    dashboard,
+    "private enum WorkspaceDetailMode: Equatable",
+    "right inspector detail area should switch between file preview and project tree modes"
+)
+assertContains(
+    workspaceInspectorPane,
+    "case .projectTree:",
+    "secondary project sidebar should reuse the existing file preview/detail area"
+)
+assertContains(
+    workspaceInspectorPane,
+    "ProjectFilesPanel(",
+    "secondary project sidebar should render the project file tree in the existing detail area"
+)
+assertContains(
+    workspaceInspectorPane,
+    "NestedWorkspaceSplitView(",
+    "secondary project sidebar width changes should be handled by the nested workspace split, not by clipping the whole outer inspector"
+)
+assertContains(
+    workspaceInspectorPane,
+    "secondaryWidth: visualDetailWidth",
+    "nested workspace split should receive the local secondary column width"
+)
+assertNotContains(
+    workspaceInspectorPane,
+    "@Environment(\\.rightInspectorSidebarWidthCoordinator)",
+    "secondary project sidebar should not drive its animation by directly changing the outer inspector split width"
+)
+assertNotContains(
+    workspaceInspectorPane,
+    "sidebarWidthCoordinator.animateSidebarWidth(totalWidth)",
+    "secondary project sidebar collapse should not clip the whole outer inspector while the nested column is shrinking"
+)
+assertContains(
+    workspaceInspectorPane,
+    "private func requestWorkspaceDetail(_ nextMode: WorkspaceDetailMode",
+    "secondary project sidebar clicks should issue a detail-column animation request instead of directly committing the business mode"
+)
+assertContains(
+    workspaceInspectorPane,
+    "targetDetailMode = nextMode",
+    "secondary project sidebar should record the latest requested mode before animation so stale completions cannot win"
+)
+assertContains(
+    workspaceInspectorPane,
+    "@State private var previewReturnMode: WorkspaceDetailMode = .none",
+    "file previews opened from the secondary project tree should remember that closing returns to the tree"
+)
+assertContains(
+    workspaceInspectorPane,
+    "private func closeWorkspacePreview()",
+    "file preview close should choose between returning to project tree and closing the detail column"
+)
+assertContains(
+    workspaceInspectorPane,
+    "requestWorkspaceDetail(returnMode)",
+    "file preview close should return to the secondary project tree when the file was opened from that tree"
+)
+assertContains(
+    workspaceInspectorPane,
+    "detailMode = nextMode\n            completion?()",
+    "secondary project sidebar should commit the business mode only after the width animation finishes"
+)
+assertNotContains(
+    workspaceInspectorPane,
+    "detailMode = .projectTree\n            retainedDetailMode = .projectTree",
+    "secondary project sidebar should not commit project-tree business state before the width animation starts"
+)
+assertContains(
+    workspaceInspectorPane,
+    "@State private var detailAnimationGeneration = 0",
+    "secondary project sidebar should tag local width animations so stale completions cannot overwrite current state"
+)
+assertContains(
+    workspaceInspectorPane,
+    "guard detailAnimationGeneration == animationID else { return }",
+    "secondary project sidebar should ignore stale local animation completions"
+)
+assertContains(
+    workspaceInspectorPane,
+    "withAnimation(.easeInOut(duration: RightInspectorSplitMetrics.animationDuration))",
+    "secondary project sidebar should animate its local clipped detail width"
+)
+assertContains(
+    projectFilesPanel,
+    "TextField(\"Filter files...\", text: $searchText)",
+    "project tree search should move inside the secondary project files panel"
+)
+assertContains(
+    openWorkspaceInFinderIcon,
+    "StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)",
+    "Open/Finder vector icon should use a thinner custom stroke"
+)
+assertNotContains(
+    workspaceOutputsPaneHeader,
+    "Image(systemName: \"magnifyingglass\")",
+    "right workspace header should no longer use the search button as a top-level control"
+)
+assertContains(
+    dashboard,
     "private func workspaceSidebarPane(width: CGFloat) -> some View",
     "right Outputs header and content should live in one AppKit split pane"
 )
-let workspaceSidebarPane = slice(dashboard, from: "private func workspaceSidebarPane(width: CGFloat) -> some View", to: "    private func workspaceExpandedSidebar")
+let workspaceSidebarPane = slice(dashboard, from: "private func workspaceSidebarPane(width: CGFloat) -> some View", to: "    private func toggleWorkspaceSidebar")
 assertContains(
     workspaceSidebarPane,
-    "WorkspaceOutputsPaneHeader(",
-    "right split pane should own the Outputs header row"
+    "WorkspaceInspectorPane(",
+    "right split pane should delegate local Outputs/project-file state to a child inspector pane"
 )
 assertContains(
-    workspaceSidebarPane,
-    "workspaceExpandedSidebar(width: width)",
-    "right split pane should own the Outputs file content"
+    workspaceInspectorPane,
+    "WorkspaceOutputsPaneHeader(",
+    "workspace inspector pane should own the Outputs header row"
+)
+assertContains(
+    workspaceInspectorPane,
+    "WorkspaceFilePanel(",
+    "workspace inspector pane should own the Outputs file content"
 )
 
 assertNotContains(

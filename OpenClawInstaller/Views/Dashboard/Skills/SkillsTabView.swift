@@ -53,11 +53,12 @@ struct SkillDetailPresentationItem: Identifiable {
 
 struct SkillsTabView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject var viewModel: DashboardViewModel
-    let onOpenSkillDetail: (SkillDetailPresentationItem) -> Void
+    @StateObject private var model: SkillsTabModel
     @State private var searchText = ""
     @State private var displayMode: SkillDisplayMode = .recommend
     @State private var showManualInstallSheet = false
+    @State private var selectedSkillDetailItem: SkillDetailPresentationItem?
+    @State private var skillPendingRemoval: SkillInfo?
 
     private enum SkillDisplayMode: String, CaseIterable {
         case recommend = "Recommend"
@@ -66,15 +67,15 @@ struct SkillsTabView: View {
     }
 
     private var installedSkillsByName: [String: SkillInfo] {
-        SkillNameIndex.firstByName(viewModel.skills) { $0.name }
+        SkillNameIndex.firstByName(model.skills) { $0.name }
     }
 
     private var catalogItemsByName: [String: SkillCatalogItem] {
-        SkillNameIndex.firstByName(viewModel.skillCatalog) { $0.name }
+        SkillNameIndex.firstByName(model.skillCatalog) { $0.name }
     }
 
     private var filteredCatalogItems: [SkillCatalogItem] {
-        viewModel.skillCatalog.filter { item in
+        model.skillCatalog.filter { item in
             matchesSearch(
                 name: item.displayName,
                 description: item.description,
@@ -92,7 +93,7 @@ struct SkillsTabView: View {
     }
 
     private var filteredInstalledSkills: [SkillInfo] {
-        viewModel.skills.filter { skill in
+        model.skills.filter { skill in
             let catalogItem = catalogItemsByName[skill.name]
             return matchesSearch(
                 name: catalogItem?.displayName ?? skill.name,
@@ -108,11 +109,17 @@ struct SkillsTabView: View {
     }
 
     init(
-        viewModel: DashboardViewModel,
-        onOpenSkillDetail: @escaping (SkillDetailPresentationItem) -> Void = { _ in }
+        openclawService: OpenClawService,
+        notifySuccess: @escaping (String) -> Void = { _ in },
+        notifyError: @escaping (String) -> Void = { _ in }
     ) {
-        self.viewModel = viewModel
-        self.onOpenSkillDetail = onOpenSkillDetail
+        _model = StateObject(
+            wrappedValue: SkillsTabModel(
+                openclawService: openclawService,
+                notifySuccess: notifySuccess,
+                notifyError: notifyError
+            )
+        )
     }
 
     var body: some View {
@@ -135,10 +142,25 @@ struct SkillsTabView: View {
                 manualInstallOverlay
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
+
+            if let selectedSkillDetailItem {
+                skillDetailOverlay(for: selectedSkillDetailItem)
+            }
         }
         .background(Color(NSColor.windowBackgroundColor))
         .task {
-            await viewModel.loadSkillMarket()
+            await model.loadSkillMarket()
+        }
+        .animation(.spring(response: 0.24, dampingFraction: 0.9), value: selectedSkillDetailItem?.id)
+        .alert(item: $skillPendingRemoval) { skill in
+            Alert(
+                title: Text("Remove Skill"),
+                message: Text("Remove \"\(skill.name)\" from installed skills?"),
+                primaryButton: .destructive(Text("Remove")) {
+                    Task { await model.removeSkill(skill) }
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 
@@ -154,8 +176,8 @@ struct SkillsTabView: View {
 
             Spacer()
 
-            if !viewModel.skillCatalog.isEmpty || !viewModel.skills.isEmpty {
-                Text("\(viewModel.skills.count) installed")
+            if !model.skillCatalog.isEmpty || !model.skills.isEmpty {
+                Text("\(model.skills.count) installed")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -180,9 +202,9 @@ struct SkillsTabView: View {
             .help("Install skill from GitHub repository")
 
             Button {
-                Task { await viewModel.loadSkillMarket(forceSync: true) }
+                Task { await model.loadSkillMarket(forceSync: true) }
             } label: {
-                if viewModel.isLoadingSkillCatalog {
+                if model.isLoadingSkillCatalog {
                     Text("...")
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 30, height: 30)
@@ -193,7 +215,7 @@ struct SkillsTabView: View {
                 }
             }
             .buttonStyle(.plain)
-            .disabled(viewModel.isLoadingSkillCatalog)
+            .disabled(model.isLoadingSkillCatalog)
             .help("Refresh skills")
         }
     }
@@ -222,9 +244,9 @@ struct SkillsTabView: View {
 
     @ViewBuilder
     private var recommendedSkillsContent: some View {
-        if viewModel.isLoadingSkillCatalog && viewModel.skillCatalog.isEmpty {
+        if model.isLoadingSkillCatalog && model.skillCatalog.isEmpty {
             LoadingStateView(text: "Loading skill catalog...")
-        } else if let error = viewModel.skillCatalogError, viewModel.skillCatalog.isEmpty {
+        } else if let error = model.skillCatalogError, model.skillCatalog.isEmpty {
             EmptySkillStateView(
                 systemImage: "exclamationmark.triangle",
                 title: "Could not load skill catalog",
@@ -233,7 +255,7 @@ struct SkillsTabView: View {
         } else if filteredRecommendedCatalogItems.isEmpty {
             EmptySkillStateView(
                 systemImage: "bolt",
-                title: viewModel.skillCatalog.isEmpty ? "No recommended skills" : "No matching recommended skills",
+                title: model.skillCatalog.isEmpty ? "No recommended skills" : "No matching recommended skills",
                 detail: nil
             )
         } else {
@@ -246,9 +268,9 @@ struct SkillsTabView: View {
 
     @ViewBuilder
     private var allSkillsContent: some View {
-        if viewModel.isLoadingSkillCatalog && viewModel.skillCatalog.isEmpty {
+        if model.isLoadingSkillCatalog && model.skillCatalog.isEmpty {
             LoadingStateView(text: "Loading skill catalog...")
-        } else if let error = viewModel.skillCatalogError, viewModel.skillCatalog.isEmpty {
+        } else if let error = model.skillCatalogError, model.skillCatalog.isEmpty {
             EmptySkillStateView(
                 systemImage: "exclamationmark.triangle",
                 title: "Could not load skill catalog",
@@ -257,7 +279,7 @@ struct SkillsTabView: View {
         } else if filteredCatalogItems.isEmpty && filteredCustomInstalledSkills.isEmpty {
             EmptySkillStateView(
                 systemImage: "bolt.slash",
-                title: viewModel.skillCatalog.isEmpty ? "No skills found" : "No matching skills",
+                title: model.skillCatalog.isEmpty ? "No skills found" : "No matching skills",
                 detail: nil
             )
         } else {
@@ -275,14 +297,14 @@ struct SkillsTabView: View {
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    guard !viewModel.isInstallingManualSkill else { return }
+                    guard !model.isInstallingManualSkill else { return }
                     withAnimation(.easeInOut(duration: 0.16)) {
                         showManualInstallSheet = false
                     }
                 }
 
             ManualSkillInstallSheet(
-                isInstalling: viewModel.isInstallingManualSkill,
+                isInstalling: model.isInstallingManualSkill,
                 onCancel: {
                     withAnimation(.easeInOut(duration: 0.16)) {
                         showManualInstallSheet = false
@@ -290,7 +312,7 @@ struct SkillsTabView: View {
                 },
                 onInstall: { repository in
                     Task {
-                        let didInstall = await viewModel.installManualSkill(repository: repository)
+                        let didInstall = await model.installManualSkill(repository: repository)
                         if didInstall {
                             withAnimation(.easeInOut(duration: 0.16)) {
                                 showManualInstallSheet = false
@@ -319,12 +341,12 @@ struct SkillsTabView: View {
                     CatalogSkillListRow(
                         item: item,
                         installedSkill: installedSkillsByName[item.name],
-                        isInstalling: viewModel.installingCatalogSkillName == item.name,
+                        isInstalling: model.installingCatalogSkillName == item.name,
                         onInstall: {
-                            Task { await viewModel.installCatalogSkill(item) }
+                            Task { await model.installCatalogSkill(item) }
                         },
                         onOpen: {
-                            onOpenSkillDetail(SkillDetailPresentationItem.fromCatalog(item))
+                            presentSkillDetail(SkillDetailPresentationItem.fromCatalog(item))
                         }
                     )
 
@@ -339,7 +361,7 @@ struct SkillsTabView: View {
                         skill: skill,
                         catalogItem: nil,
                         onOpen: {
-                            onOpenSkillDetail(
+                            presentSkillDetail(
                                 SkillDetailPresentationItem.fromInstalled(
                                     skill,
                                     catalogItem: nil
@@ -366,12 +388,12 @@ struct SkillsTabView: View {
                     CatalogSkillListRow(
                         item: item,
                         installedSkill: installedSkillsByName[item.name],
-                        isInstalling: viewModel.installingCatalogSkillName == item.name,
+                        isInstalling: model.installingCatalogSkillName == item.name,
                         onInstall: {
-                            Task { await viewModel.installCatalogSkill(item) }
+                            Task { await model.installCatalogSkill(item) }
                         },
                         onOpen: {
-                            onOpenSkillDetail(SkillDetailPresentationItem.fromCatalog(item))
+                            presentSkillDetail(SkillDetailPresentationItem.fromCatalog(item))
                         }
                     )
 
@@ -386,12 +408,12 @@ struct SkillsTabView: View {
 
     @ViewBuilder
     private var installedSkillsContent: some View {
-        if viewModel.isLoadingSkills && viewModel.skills.isEmpty {
+        if model.isLoadingSkills && model.skills.isEmpty {
             LoadingStateView(text: "Loading installed skills...")
         } else if filteredInstalledSkills.isEmpty {
             EmptySkillStateView(
                 systemImage: "checkmark.circle",
-                title: viewModel.skills.isEmpty ? "No installed skills" : "No matching installed skills",
+                title: model.skills.isEmpty ? "No installed skills" : "No matching installed skills",
                 detail: nil
             )
         } else {
@@ -404,7 +426,7 @@ struct SkillsTabView: View {
                             skill: skill,
                             catalogItem: catalogItemsByName[skill.name],
                             onOpen: {
-                                onOpenSkillDetail(
+                                presentSkillDetail(
                                     SkillDetailPresentationItem.fromInstalled(
                                         skill,
                                         catalogItem: catalogItemsByName[skill.name]
@@ -431,6 +453,67 @@ struct SkillsTabView: View {
             .joined(separator: " ")
             .lowercased()
         return haystack.contains(query)
+    }
+
+    private func presentSkillDetail(_ item: SkillDetailPresentationItem) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
+            selectedSkillDetailItem = item
+        }
+    }
+
+    private func dismissSkillCatalogDetail() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+            selectedSkillDetailItem = nil
+        }
+    }
+
+    private func skillDetailOverlay(for item: SkillDetailPresentationItem) -> some View {
+        let installedSkill = installedSkillsByName[item.name]
+        let isDark = colorScheme == .dark
+
+        return GeometryReader { _ in
+            ZStack {
+                Color.black
+                    .opacity(0.001)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        dismissSkillCatalogDetail()
+                    }
+
+                SkillCatalogDetailSheet(
+                    item: item,
+                    installedSkill: installedSkill,
+                    isInstalling: model.installingCatalogSkillName == item.name,
+                    isRemoving: model.removingSkillName == item.name,
+                    canRemove: installedSkill.map(SkillsTabModel.canRemoveSkill) ?? false,
+                    onInstall: {
+                        if let catalogItem = item.catalogItem {
+                            Task { await model.installCatalogSkill(catalogItem) }
+                        }
+                    },
+                    onRemove: {
+                        if let skill = installedSkill {
+                            skillPendingRemoval = skill
+                        }
+                    },
+                    onClose: dismissSkillCatalogDetail
+                )
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .shadow(color: Color.black.opacity(isDark ? 0.45 : 0.18), radius: 28, x: 0, y: 18)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(isDark ? 0.16 : 0.08), lineWidth: 1)
+                )
+                .padding(28)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+        .transition(.asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.965, anchor: .center)),
+            removal: .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
+        ))
     }
 }
 
@@ -1024,18 +1107,7 @@ private extension String {
 
 #Preview {
     SkillsTabView(
-        viewModel: DashboardViewModel(
-            openclawService: OpenClawService(
-                commandExecutor: CommandExecutor(
-                    permissionManager: PermissionManager()
-                )
-            ),
-            settings: AppSettingsManager(),
-            systemEnvironment: SystemEnvironment(
-                commandExecutor: CommandExecutor(
-                    permissionManager: PermissionManager()
-                )
-            ),
+        openclawService: OpenClawService(
             commandExecutor: CommandExecutor(
                 permissionManager: PermissionManager()
             )
