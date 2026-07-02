@@ -236,7 +236,7 @@ struct NativeSelectableMarkdownView: NSViewRepresentable {
         textView.backgroundColor = .clear
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
@@ -250,8 +250,8 @@ struct NativeSelectableMarkdownView: NSViewRepresentable {
 
     func updateNSView(_ textView: IntrinsicHeightTextView, context: Context) {
         let width = max(textView.bounds.width, 1)
-        if abs(context.coordinator.lastWidth - width) > 0.5 {
-            textView.updateContainerWidth(width)
+        if abs(context.coordinator.lastWidth - width) > IntrinsicHeightTextView.layoutEpsilon {
+            _ = textView.updateContainerWidth(width)
             context.coordinator.lastWidth = width
         }
         if context.coordinator.lastContent != content
@@ -283,16 +283,21 @@ struct NativeSelectableMarkdownView: NSViewRepresentable {
     }
 
     private func apply(_ markdown: String, parsesMarkdown: Bool, to textView: IntrinsicHeightTextView) {
-        textView.textStorage?.setAttributedString(Self.attributedString(
+        let rendered = Self.attributedString(
             from: markdown,
             parsesMarkdown: parsesMarkdown,
             fontSize: fontSize,
             lineSpacing: lineSpacing,
             paragraphSpacing: paragraphSpacing
-        ))
+        )
+        if let textStorage = textView.textStorage {
+            textStorage.beginEditing()
+            textStorage.setAttributedString(rendered)
+            textStorage.endEditing()
+        }
         textView.font = NSFont.systemFont(ofSize: fontSize)
         textView.textColor = .labelColor
-        textView.invalidateMeasuredHeight()
+        textView.refreshMeasuredHeightAfterContentChange()
     }
 
     private static func attributedString(
@@ -302,25 +307,27 @@ struct NativeSelectableMarkdownView: NSViewRepresentable {
         lineSpacing: CGFloat,
         paragraphSpacing: CGFloat
     ) -> NSAttributedString {
-        let attributed: AttributedString
+        let mutable: NSMutableAttributedString
         if parsesMarkdown {
-            attributed = (try? AttributedString(
+            let attributed = (try? AttributedString(
                 markdown: markdown,
                 options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
             )) ?? AttributedString(markdown)
+            mutable = NSMutableAttributedString(attributed)
         } else {
-            attributed = AttributedString(markdown)
+            mutable = NSMutableAttributedString(string: markdown)
         }
-        let mutable = NSMutableAttributedString(attributed)
         let fullRange = NSRange(location: 0, length: mutable.length)
-        mutable.addAttributes(
-            [
-                .font: NSFont.systemFont(ofSize: fontSize),
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraphStyle(lineSpacing: lineSpacing, paragraphSpacing: paragraphSpacing)
-            ],
-            range: fullRange
-        )
+        if fullRange.length > 0 {
+            mutable.addAttributes(
+                [
+                    .font: NSFont.systemFont(ofSize: fontSize),
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: paragraphStyle(lineSpacing: lineSpacing, paragraphSpacing: paragraphSpacing)
+                ],
+                range: fullRange
+            )
+        }
         return mutable
     }
 
@@ -359,6 +366,8 @@ struct NativeSelectableMarkdownView: NSViewRepresentable {
     }
 
     final class IntrinsicHeightTextView: NSTextView {
+        static let layoutEpsilon: CGFloat = 0.5
+
         private var cachedIntrinsicHeight: CGFloat?
         private var lastMeasuredWidth: CGFloat = 0
         private var lastAppliedFrameWidth: CGFloat = 0
@@ -367,44 +376,85 @@ struct NativeSelectableMarkdownView: NSViewRepresentable {
         override var acceptsFirstResponder: Bool { true }
 
         override var intrinsicContentSize: NSSize {
-            guard let layoutManager = layoutManager,
-                  let textContainer = textContainer else {
+            guard let textContainer = textContainer else {
                 return NSSize(width: NSView.noIntrinsicMetric, height: 22)
             }
             let width = max(textContainer.containerSize.width, 1)
+            guard width > 1 else {
+                return NSSize(width: NSView.noIntrinsicMetric, height: max(22, cachedIntrinsicHeight ?? 22))
+            }
             if let cachedIntrinsicHeight,
-               abs(lastMeasuredWidth - width) <= 0.5 {
+               abs(lastMeasuredWidth - width) <= Self.layoutEpsilon {
                 return NSSize(width: NSView.noIntrinsicMetric, height: max(22, cachedIntrinsicHeight))
             }
-            layoutManager.ensureLayout(for: textContainer)
-            let height = ceil(layoutManager.usedRect(for: textContainer).height)
+            let height = measureHeight(for: textContainer)
             cachedIntrinsicHeight = height
             lastMeasuredWidth = width
             return NSSize(width: NSView.noIntrinsicMetric, height: max(22, height))
         }
 
-        func updateContainerWidth(_ width: CGFloat) {
+        @discardableResult
+        func updateContainerWidth(_ width: CGFloat) -> Bool {
             let normalizedWidth = max(width, 1)
             let currentWidth = textContainer?.containerSize.width ?? 0
-            guard abs(currentWidth - normalizedWidth) > 0.5 else { return }
+            guard abs(currentWidth - normalizedWidth) > Self.layoutEpsilon else { return false }
             textContainer?.containerSize = NSSize(
                 width: normalizedWidth,
                 height: CGFloat.greatestFiniteMagnitude
             )
-            invalidateMeasuredHeight()
+            return refreshMeasuredHeight()
         }
 
-        func invalidateMeasuredHeight() {
-            cachedIntrinsicHeight = nil
-            invalidateIntrinsicContentSize()
+        func refreshMeasuredHeightAfterContentChange() {
+            _ = refreshMeasuredHeight()
+        }
+
+        @discardableResult
+        private func refreshMeasuredHeight() -> Bool {
+            guard let textContainer else {
+                let shouldInvalidate = cachedIntrinsicHeight != nil
+                cachedIntrinsicHeight = nil
+                if shouldInvalidate {
+                    invalidateIntrinsicContentSize()
+                }
+                return shouldInvalidate
+            }
+
+            let width = max(textContainer.containerSize.width, 1)
+            guard width > 1 else {
+                let shouldInvalidate = cachedIntrinsicHeight != nil
+                cachedIntrinsicHeight = nil
+                lastMeasuredWidth = width
+                if shouldInvalidate {
+                    invalidateIntrinsicContentSize()
+                }
+                return shouldInvalidate
+            }
+
+            let previousHeight = cachedIntrinsicHeight
+            let measuredHeight = measureHeight(for: textContainer)
+            cachedIntrinsicHeight = measuredHeight
+            lastMeasuredWidth = width
+
+            let heightChanged = previousHeight.map { abs($0 - measuredHeight) > Self.layoutEpsilon } ?? true
+            if heightChanged {
+                invalidateIntrinsicContentSize()
+                return true
+            }
+            return false
+        }
+
+        private func measureHeight(for textContainer: NSTextContainer) -> CGFloat {
+            layoutManager?.ensureLayout(for: textContainer)
+            return ceil(layoutManager?.usedRect(for: textContainer).height ?? 22)
         }
 
         override func setFrameSize(_ newSize: NSSize) {
             super.setFrameSize(newSize)
             let width = max(newSize.width, 1)
-            guard abs(lastAppliedFrameWidth - width) > 0.5 else { return }
+            guard abs(lastAppliedFrameWidth - width) > Self.layoutEpsilon else { return }
             lastAppliedFrameWidth = width
-            updateContainerWidth(width)
+            _ = updateContainerWidth(width)
         }
 
         override func mouseDown(with event: NSEvent) {

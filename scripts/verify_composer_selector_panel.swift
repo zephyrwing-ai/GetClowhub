@@ -93,6 +93,16 @@ assertContains(
     "ComposerModelPanel(",
     "composer selector overlay must use a model-only panel"
 )
+assertContains(
+    dashboard,
+    "currentModel: viewModel.activeComposerModel",
+    "composer selector overlay must use the app-level active composer model"
+)
+assertContains(
+    dashboard,
+    "onSelectModel: viewModel.selectComposerModel",
+    "composer selector overlay must not write agent model settings"
+)
 assertNotContains(
     dashboard,
     "ComposerAgentModelSelector",
@@ -107,6 +117,16 @@ assertNotContains(
     selectorButton,
     "AgentAvatarImage(",
     "composer selector button must not show or depend on agent selection"
+)
+assertContains(
+    selectorButton,
+    "viewModel.activeComposerModel",
+    "composer selector button must render the active composer model"
+)
+assertNotContains(
+    selectorButton,
+    "currentAgent?.model",
+    "composer selector button must not read the selected agent model"
 )
 assertNotContains(
     selectorPanel,
@@ -162,6 +182,16 @@ assertContains(
     selectorPanel,
     "effectiveSelectedModel",
     "composer model panel must select the effective model when current model inherits the default"
+)
+assertNotContains(
+    selectorPanel,
+    "resetToDefault",
+    "composer model panel must not reset the composer model to an empty selection"
+)
+assertNotContains(
+    selectorPanel,
+    #"Image(systemName: "arrow.counterclockwise")"#,
+    "composer model panel must not show a reset icon"
 )
 assertContains(
     selectorPanel,

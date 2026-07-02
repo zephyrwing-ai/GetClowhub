@@ -42,12 +42,12 @@ require(
     "composer model rows must show the default model as selected when the agent inherits it"
 )
 require(
-    panel.contains("currentModel.isEmpty") && panel.contains("resetToDefault"),
-    "composer model panel must keep a compact reset-to-default action for explicitly selected models"
+    !panel.contains("resetToDefault") && !panel.contains(#"Image(systemName: "arrow.counterclockwise")"#),
+    "composer model panel must not expose reset-to-empty/default controls"
 )
 require(
-    panel.contains(#"Image(systemName: "arrow.counterclockwise")"#),
-    "reset-to-default action should be an icon button instead of another model row"
+    !panel.contains(#".help("Use Default")"#),
+    "composer model panel must not expose Use Default affordances"
 )
 require(
     !panel.contains("providerSubtitle("),

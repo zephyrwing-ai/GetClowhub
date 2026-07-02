@@ -3180,10 +3180,10 @@ struct ChatView: View {
 
                     ComposerModelPanel(
                         modelGroups: viewModel.availableModelGroups,
-                        currentModel: composerCurrentModel,
+                        currentModel: viewModel.activeComposerModel,
                         defaultModel: viewModel.modelOverview.defaultModel,
                         isOpen: $showComposerSelector,
-                        onSelectModel: viewModel.updateAgentModel(model:)
+                        onSelectModel: viewModel.selectComposerModel
                     )
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.trailing, trailingOffset)
@@ -3195,10 +3195,6 @@ struct ChatView: View {
                 .animation(.easeInOut(duration: 0.18), value: showComposerSelector)
             }
         }
-    }
-
-    private var composerCurrentModel: String {
-        viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }?.model ?? ""
     }
 
     private var chatContent: some View {
@@ -4133,12 +4129,8 @@ struct ComposerModelSelector: View {
     @ObservedObject var viewModel: DashboardViewModel
     @Binding var isOpen: Bool
 
-    private var currentAgent: AgentOption? {
-        viewModel.availableAgents.first { $0.id == viewModel.selectedAgentId }
-    }
-
     private var modelLabel: String {
-        let raw = currentAgent?.model ?? ""
+        let raw = viewModel.activeComposerModel
         let resolved = raw.isEmpty ? viewModel.modelOverview.defaultModel : raw
         let cleaned = stripProviderPrefix(resolved)
         return cleaned.isEmpty || cleaned == "-" ? "Model" : cleaned
@@ -4191,10 +4183,6 @@ private struct ComposerModelPanel: View {
         currentModel.isEmpty ? defaultModel : currentModel
     }
 
-    private var canResetToDefault: Bool {
-        !currentModel.isEmpty
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -4202,19 +4190,6 @@ private struct ComposerModelPanel: View {
                     .font(.system(size: 14, weight: .regular))
                     .foregroundColor(.secondary)
                 Spacer()
-                if canResetToDefault {
-                    Button {
-                        resetToDefault()
-                    } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.secondary)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Use Default")
-                }
             }
             .padding(.horizontal, 18)
             .padding(.top, 16)
@@ -4222,13 +4197,14 @@ private struct ComposerModelPanel: View {
 
             ScrollView(showsIndicators: true) {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    if !currentModel.isEmpty
-                        && !allModelIds.contains(currentModel) {
+                    if !effectiveSelectedModel.isEmpty
+                        && effectiveSelectedModel != "-"
+                        && !allModelIds.contains(effectiveSelectedModel) {
                         Button {
-                            selectModel(currentModel)
+                            selectModel(effectiveSelectedModel)
                         } label: {
                             selectorRow(
-                                title: stripProviderPrefix(currentModel),
+                                title: stripProviderPrefix(effectiveSelectedModel),
                                 subtitle: nil,
                                 selected: true,
                                 showsDisclosure: false
@@ -4333,13 +4309,6 @@ private struct ComposerModelPanel: View {
     private func selectModel(_ model: String) {
         withAnimation(.easeInOut(duration: 0.16)) {
             onSelectModel(model)
-            isOpen = false
-        }
-    }
-
-    private func resetToDefault() {
-        withAnimation(.easeInOut(duration: 0.16)) {
-            onSelectModel("")
             isOpen = false
         }
     }

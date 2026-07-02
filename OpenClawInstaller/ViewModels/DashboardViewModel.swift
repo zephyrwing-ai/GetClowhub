@@ -753,6 +753,7 @@ class DashboardViewModel: ObservableObject {
     // Models
     @Published var models: [ModelInfo] = []
     @Published var modelOverview: ModelOverview = ModelOverview()
+    @Published var activeComposerModel: String = ""
 
     /// Gateway `Main` lane concurrency cap — the number of agent runs the
     /// backend will execute in parallel before the rest start queueing.
@@ -3127,10 +3128,12 @@ class DashboardViewModel: ObservableObject {
                     batchId: batch.id,
                     chunkIndex: chunkIndex
                 )
+                let composerModelOverride = activeComposerModel.trimmingCharacters(in: .whitespacesAndNewlines)
                 let chunkResult = await runLocalImageReviewChunk(
                     sessionKey: sessionKey,
                     prompt: prompt,
-                    msgId: msgId
+                    msgId: msgId,
+                    modelOverride: composerModelOverride
                 )
                 let result = LocalImageReviewChunkResult(
                     chunkIndex: chunkIndex,
@@ -3185,7 +3188,8 @@ class DashboardViewModel: ObservableObject {
     private func runLocalImageReviewChunk(
         sessionKey: String,
         prompt: String,
-        msgId: UUID
+        msgId: UUID,
+        modelOverride: String
     ) async -> (status: String, text: String) {
         let subscriberId = msgId.uuidString
         let eventStream = gatewayClient.subscribeToEvents(subscriberId: subscriberId)
@@ -3195,6 +3199,12 @@ class DashboardViewModel: ObservableObject {
             gatewayClient.unsubscribe(subscriberId: subscriberId)
             activeChatRuns.removeValue(forKey: msgId)
             taskSessionKeyOverride.removeValue(forKey: msgId)
+        }
+
+        if !modelOverride.isEmpty {
+            guard await gatewayClient.patchSessionModel(sessionKey: sessionKey, model: modelOverride) else {
+                return ("failed", "Failed to apply the selected model.")
+            }
         }
 
         guard let runId = await gatewayClient.chatSend(sessionKey: sessionKey, message: prompt, attachments: nil) else {
@@ -3513,14 +3523,29 @@ class DashboardViewModel: ObservableObject {
         let baseMessage = text
             + ProjectSessionContextBuilder.message(for: currentProject)
             + processed.manifestText
+        let composerModelOverride = activeComposerModel.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Subscribe to events BEFORE sending to avoid race condition
         let subscriberId = msgId.uuidString
         let eventStream = gatewayClient.subscribeToEvents(subscriberId: subscriberId)
 
+        if !composerModelOverride.isEmpty {
+            let patched = await gatewayClient.patchSessionModel(sessionKey: sessionKey, model: composerModelOverride)
+            guard patched else {
+                gatewayClient.unsubscribe(subscriberId: subscriberId)
+                let errorMsg = String(localized: "Failed to apply the selected model. Please try again.", bundle: LanguageManager.shared.localizedBundle)
+                updateMessage(msgId: msgId, content: errorMsg, status: .completed, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
+                foregroundTaskIds.remove(msgId)
+                taskAgentMap.removeValue(forKey: msgId)
+                taskSessionMap.removeValue(forKey: msgId)
+                recomputeIsSendingMessage()
+                return
+            }
+        }
+
         // Send the message
         let chatSendStart = ContinuousClock.now
-        chatLog.info("phase=chat_send_start agent=\(currentAgentId, privacy: .public) session=\(currentSessionId.uuidString, privacy: .public) sessionKey=\(sessionKey, privacy: .public) message_len=\(baseMessage.count, privacy: .public) attachment_count=\(attachments.count, privacy: .public) inline_attachment_count=\(processed.inlineAttachments.count, privacy: .public)")
+        chatLog.info("phase=chat_send_start agent=\(currentAgentId, privacy: .public) session=\(currentSessionId.uuidString, privacy: .public) sessionKey=\(sessionKey, privacy: .public) model_override=\(composerModelOverride.isEmpty ? "default" : composerModelOverride, privacy: .public) message_len=\(baseMessage.count, privacy: .public) attachment_count=\(attachments.count, privacy: .public) inline_attachment_count=\(processed.inlineAttachments.count, privacy: .public)")
         let runId = await gatewayClient.chatSend(
             sessionKey: sessionKey,
             message: baseMessage,
@@ -5266,6 +5291,7 @@ class DashboardViewModel: ObservableObject {
             "openclaw models image-fallbacks list 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'"
         )
         modelOverview = Self.parseModelStatus(output: await statusOutput)
+        ensureActiveComposerModel()
         models = Self.parseModelList(output: await listOutput)
             .sorted { a, b in
                 // Image-capable models first
@@ -5628,6 +5654,7 @@ class DashboardViewModel: ObservableObject {
         availableModelsForSettings = flattenModelGroups(availableModelGroups).isEmpty
             ? activeProviderModels
             : flattenModelGroups(availableModelGroups)
+        ensureActiveComposerModel()
     }
 
     private func localProviderModelGroups() -> [ProviderModelGroup] {
@@ -5721,6 +5748,26 @@ class DashboardViewModel: ObservableObject {
         availableModelGroups = groups
         let flattenedGroups = flattenModelGroups(groups)
         availableModelsForSettings = flattenedGroups.isEmpty ? localModelOptionsForActiveProvider() : flattenedGroups
+        ensureActiveComposerModel()
+    }
+
+    private func ensureActiveComposerModel() {
+        guard activeComposerModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let defaultModel = modelOverview.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !defaultModel.isEmpty, defaultModel != "-" {
+            activeComposerModel = defaultModel
+            return
+        }
+
+        if let firstModel = flattenModelGroups(availableModelGroups).first?.id {
+            activeComposerModel = firstModel
+            return
+        }
+
+        if let firstModel = availableModelsForSettings.first?.id {
+            activeComposerModel = firstModel
+        }
     }
 
     private func modelOptions(from models: [PresetModel], providerKey: String) -> [ModelOption] {
@@ -5828,6 +5875,11 @@ class DashboardViewModel: ObservableObject {
         // Update local detail
         selectedAgentDetail?.model = model
         loadAvailableAgents()
+    }
+
+    /// Update the composer's app-level model selection without changing agent defaults.
+    func selectComposerModel(_ model: String) {
+        activeComposerModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Binding for editing a persona file in the settings panel.

@@ -228,6 +228,61 @@ class GatewayClient: ObservableObject {
         return result
     }
 
+    /// Apply a session-only model override through `sessions.patch`.
+    /// This updates gateway session state without changing agent defaults in openclaw.json.
+    func patchSessionModel(sessionKey: String, model: String) async -> Bool {
+        guard let ws = webSocketTask else { return false }
+
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else { return false }
+
+        let requestId = UUID().uuidString
+        let payload: [String: Any] = [
+            "type": "req",
+            "id": requestId,
+            "method": "sessions.patch",
+            "params": [
+                "key": sessionKey,
+                "model": trimmedModel
+            ] as [String: Any]
+        ]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let jsonString = String(data: data, encoding: .utf8) else {
+            return false
+        }
+
+        let result: Bool = await withCheckedContinuation { continuation in
+            responseLock.lock()
+            pendingResponses[requestId] = continuation
+            responseLock.unlock()
+
+            ws.send(.string(jsonString)) { [weak self] error in
+                if error != nil {
+                    self?.responseLock.lock()
+                    if let cont = self?.pendingResponses.removeValue(forKey: requestId) {
+                        self?.responseLock.unlock()
+                        cont.resume(returning: false)
+                    } else {
+                        self?.responseLock.unlock()
+                    }
+                }
+            }
+
+            DispatchQueue.global().asyncAfter(deadline: .now() + 10) { [weak self] in
+                self?.responseLock.lock()
+                if let cont = self?.pendingResponses.removeValue(forKey: requestId) {
+                    self?.responseLock.unlock()
+                    cont.resume(returning: false)
+                } else {
+                    self?.responseLock.unlock()
+                }
+            }
+        }
+
+        return result
+    }
+
     /// Send a chat message via `chat.send`. Returns the runId on success, nil on failure.
     func chatSend(sessionKey: String, message: String, attachments: [[String: Any]]? = nil) async -> String? {
         guard let ws = webSocketTask else { return nil }
