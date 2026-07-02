@@ -43,7 +43,7 @@ struct SettingsShortcutPanelButton: View {
             HStack(spacing: 10) {
                 Image(systemName: "gearshape")
                     .frame(width: 18, height: 18)
-                Text("Settings")
+                Text(I18n.t("Settings"))
                     .lineLimit(1)
                 Spacer()
             }
@@ -337,7 +337,7 @@ private struct SettingsShortcutMenu: View {
             VStack(alignment: .leading, spacing: 12) {
                 accountHeader
 
-                SettingsShortcutActionRow(title: "Profile", systemImage: "person.crop.circle") {
+                SettingsShortcutActionRow(title: I18n.t("Profile"), systemImage: "person.crop.circle") {
                     onOpenSettingsSection(.profile)
                 }
 
@@ -362,7 +362,7 @@ private struct SettingsShortcutMenu: View {
 
                 Divider()
 
-                SettingsShortcutActionRow(title: "All settings", systemImage: "gearshape") {
+                SettingsShortcutActionRow(title: I18n.t("All settings"), systemImage: "gearshape") {
                     onOpenSettingsSection(.profile)
                 }
 
@@ -376,8 +376,9 @@ private struct SettingsShortcutMenu: View {
                     onDismiss()
                 } label: {
                     SettingsShortcutRowContent(
-                        title: authManager.isLoggedIn ? "Log out" : "Log in",
+                        title: authManager.isLoggedIn ? I18n.t("Log out") : I18n.t("Log in"),
                         systemImage: authManager.isLoggedIn ? "rectangle.portrait.and.arrow.right" : "person.crop.circle.badge.plus",
+                        showsTrailingChevron: false,
                         role: authManager.isLoggedIn ? .destructive : .normal
                     )
                 }
@@ -430,7 +431,7 @@ private struct SettingsShortcutMenu: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(SettingsShortcutColors.primaryText)
                         .lineLimit(1)
-                    Text(authManager.isLoggedIn ? "Signed in" : "Not signed in")
+                    Text(authManager.isLoggedIn ? I18n.t("Signed in") : I18n.t("Not signed in"))
                         .font(.system(size: 11))
                         .foregroundStyle(SettingsShortcutColors.secondaryText)
                 }
@@ -452,7 +453,7 @@ private struct SettingsShortcutMenu: View {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.system(size: 28))
                     .foregroundStyle(SettingsShortcutColors.secondaryText)
-                Text("Local user")
+                Text(I18n.t("Local user"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(SettingsShortcutColors.primaryText)
                 Spacer()
@@ -471,7 +472,7 @@ private struct SettingsShortcutMenu: View {
         if let userId = authManager.userId, !userId.isEmpty {
             return userId
         }
-        return "User"
+        return I18n.t("User")
     }
 
     private func membershipBadgeColor(_ level: MembershipLevel) -> SwiftUI.Color {
@@ -518,6 +519,7 @@ private struct SettingsShortcutRowContent: View {
     let title: String
     let systemImage: String
     var showsChevron = false
+    var showsTrailingChevron = true
     var isExpanded = false
     var role: SettingsShortcutRowRole = .normal
 
@@ -544,7 +546,7 @@ private struct SettingsShortcutRowContent: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(SettingsShortcutColors.tertiaryText)
-                        .opacity(title == "Log out" || title == "Log in" ? 0 : 1)
+                        .opacity(showsTrailingChevron ? 1 : 0)
                 }
         }
         .font(.system(size: 13, weight: .medium))
@@ -576,11 +578,11 @@ private struct DefaultModelShortcutPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Label("Model", systemImage: "cube")
+                Label(I18n.t("Model"), systemImage: "cube")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(SettingsShortcutColors.primaryText)
                 Spacer()
-                Button("Configure") {
+                Button(I18n.t("Configure")) {
                     onOpenProvider()
                 }
                 .font(.system(size: 11))
@@ -589,7 +591,7 @@ private struct DefaultModelShortcutPicker: View {
             }
 
             if viewModel.models.isEmpty {
-                Text("No models loaded")
+                Text(I18n.t("No models loaded"))
                     .font(.system(size: 12))
                     .foregroundStyle(SettingsShortcutColors.secondaryText)
             } else {
@@ -657,7 +659,7 @@ private struct BillingShortcutSummary: View {
 
     var body: some View {
         SettingsShortcutExpandableRow(
-            title: "Billing",
+            title: I18n.t("Billing"),
             systemImage: "creditcard",
             isExpanded: $isExpanded
         ) {
@@ -678,7 +680,7 @@ private struct BillingShortcutSummary: View {
                 }
 
                     if membershipManager.keysBilling.isEmpty {
-                        Text("No billing data yet")
+                        Text(I18n.t("No billing data yet"))
                             .font(.system(size: 11))
                             .foregroundStyle(SettingsShortcutColors.secondaryText)
                     }
@@ -699,7 +701,7 @@ private struct BudgetShortcutSummary: View {
 
     var body: some View {
         SettingsShortcutExpandableRow(
-            title: "Budget",
+            title: I18n.t("Budget"),
             systemImage: "dollarsign.gauge.chart.lefthalf.righthalf",
             isExpanded: $isExpanded
         ) {
@@ -719,12 +721,12 @@ private struct BudgetShortcutSummary: View {
                         ProgressView(value: min(snapshot.tokenPercent, 1))
                     }
                 } else {
-                    Text("No local budget rule")
+                    Text(I18n.t("No local budget rule"))
                         .font(.system(size: 11))
                         .foregroundStyle(SettingsShortcutColors.secondaryText)
                 }
 
-                Button("Edit budget rules") {
+                Button(I18n.t("Edit budget rules")) {
                     onOpenBudget()
                 }
                 .font(.system(size: 11))

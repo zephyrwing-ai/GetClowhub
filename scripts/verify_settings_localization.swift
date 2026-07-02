@@ -22,14 +22,19 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
 
 let config = read("OpenClawInstaller/Views/Dashboard/ConfigTabView.swift")
 let localizable = read("OpenClawInstaller/Localizable.xcstrings")
+let settingsI18nZH = read("OpenClawInstaller/Resources/I18n/zh-Hans/settings.json")
 
 require(
     config.contains("@EnvironmentObject var languageManager: LanguageManager"),
     "ConfigTabView should use the existing LanguageManager environment object"
 )
 require(
-    config.contains("localizedString("),
-    "ConfigTabView should centralize settings UI localization through localizedString(_:)"
+    config.contains("I18n.t("),
+    "ConfigTabView should centralize settings UI localization through I18n.t(_:)"
+)
+require(
+    !config.contains("String(localized:"),
+    "ConfigTabView should not read Localizable.xcstrings directly; settings strings should flow through I18n resources"
 )
 
 let forbiddenLiteralPatterns = [
@@ -118,6 +123,12 @@ else {
     exit(1)
 }
 
+let i18nData = Data(settingsI18nZH.utf8)
+guard let settingsI18n = try JSONSerialization.jsonObject(with: i18nData) as? [String: String] else {
+    fputs("FAIL: could not parse unified zh-Hans settings i18n resource\n", stderr)
+    exit(1)
+}
+
 for key in requiredKeys {
     guard let entry = strings[key] as? [String: Any] else {
         fputs("FAIL: missing settings localization key: \(key)\n", stderr)
@@ -134,6 +145,10 @@ for key in requiredKeys {
             fputs("FAIL: \(key) is missing \(localeID) settings localization\n", stderr)
             exit(1)
         }
+    }
+    guard let value = settingsI18n[key], !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        fputs("FAIL: unified settings i18n resource is missing key: \(key)\n", stderr)
+        exit(1)
     }
 }
 

@@ -32,7 +32,7 @@ struct MarketplaceDetailView: View {
                 .padding(.bottom, 18)
 
             if !display.vibe.isEmpty {
-                Text(String(localized: "Vibe", bundle: languageManager.localizedBundle))
+                Text(I18n.t("agents.detail.vibe"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 8)
@@ -108,7 +108,7 @@ struct MarketplaceDetailView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .disabled(isInstalling)
-                .help(String(localized: "Close", bundle: languageManager.localizedBundle))
+                .help(I18n.t("catalog.action.close"))
             }
         }
     }
@@ -117,19 +117,19 @@ struct MarketplaceDetailView: View {
 
     private var installButton: some View {
         CatalogActionButton(
-            title: String(localized: "Recruit", bundle: languageManager.localizedBundle),
-            loadingTitle: String(localized: "Recruiting...", bundle: languageManager.localizedBundle),
-            completedTitle: String(localized: "Recruited", bundle: languageManager.localizedBundle),
+            title: I18n.t("agents.action.recruit"),
+            loadingTitle: I18n.t("agents.action.recruiting"),
+            completedTitle: I18n.t("agents.action.recruited"),
             systemImage: "arrow.down.circle",
             state: recruitButtonState,
             width: 100,
             action: installAgent
         )
-        .alert(String(localized: "Recruit Failed", bundle: languageManager.localizedBundle), isPresented: Binding<Bool>(
+        .alert(I18n.t("agents.alert.recruitFailed"), isPresented: Binding<Bool>(
             get: { installError != nil },
             set: { if !$0 { installError = nil } }
         )) {
-            Button(String(localized: "OK", bundle: languageManager.localizedBundle), role: .cancel) {}
+            Button(I18n.t("agents.alert.ok"), role: .cancel) {}
         } message: {
             Text(installError ?? "")
         }
@@ -155,7 +155,7 @@ struct MarketplaceDetailView: View {
                 }
             } label: {
                 HStack {
-                    Text(String(localized: "Persona Content", bundle: languageManager.localizedBundle))
+                    Text(I18n.t("agents.detail.personaContent"))
                         .font(.headline)
                         .foregroundColor(.primary)
                     Image(systemName: showContent ? "chevron.up" : "chevron.down")
@@ -166,7 +166,7 @@ struct MarketplaceDetailView: View {
 
             if showContent {
                 ScrollView {
-                    Markdown(agent.content)
+                    Markdown(display.content)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 34)
@@ -252,9 +252,10 @@ struct MarketplaceDetailView: View {
             let fm = FileManager.default
             try? fm.createDirectory(atPath: workspace, withIntermediateDirectories: true)
 
-            let identityContent = MarketplaceContentConverter.identityMarkdown(for: agent)
-            let soulContent = MarketplaceContentConverter.soulMarkdown(for: agent)
-            let agentsContent = MarketplaceContentConverter.agentsMarkdown(for: agent)
+            let localeID = languageManager.currentLocale.identifier
+            let identityContent = MarketplaceContentConverter.identityMarkdown(for: agent, localeID: localeID)
+            let soulContent = MarketplaceContentConverter.soulMarkdown(for: agent, localeID: localeID)
+            let agentsContent = MarketplaceContentConverter.agentsMarkdown(for: agent, localeID: localeID)
             let memoryContent = MarketplaceContentConverter.memoryMarkdown()
 
             try? identityContent.write(toFile: (workspace as NSString).appendingPathComponent("IDENTITY.md"),

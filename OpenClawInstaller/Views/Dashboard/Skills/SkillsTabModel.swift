@@ -78,7 +78,7 @@ final class SkillsTabModel: ObservableObject {
             )
             if syncOutput?.contains("__OPENCLAW_SKILL_SYNC_OK__") != true {
                 let detail = syncOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
-                skillCatalogError = detail?.isEmpty == false ? detail : "Failed to refresh skills"
+                skillCatalogError = detail?.isEmpty == false ? detail : I18n.t("skills.error.refreshFailed")
                 await loadSkills()
                 isLoadingSkillCatalog = false
                 return
@@ -101,7 +101,7 @@ final class SkillsTabModel: ObservableObject {
         isLoadingSkillCatalog = false
 
         if forceSync && skillCatalogError == nil {
-            notifySuccess("Skills updated successfully")
+            notifySuccess(I18n.t("skills.toast.updated"))
         }
     }
 
@@ -119,10 +119,10 @@ final class SkillsTabModel: ObservableObject {
         if output?.contains("__OPENCLAW_SKILL_INSTALL_OK__") == true {
             DashboardViewModel.markTrustedSkill(item.name)
             await loadSkills()
-            notifySuccess("Installed skill \(item.name)")
+            notifySuccess(I18n.format("skills.toast.installed", item.name))
         } else {
             let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines)
-            notifyError("Failed to install \(item.name): \(trimmed?.isEmpty == false ? trimmed! : "unknown error")")
+            notifyError(I18n.format("skills.toast.installFailed", item.name, trimmed?.isEmpty == false ? trimmed! : I18n.t("common.error.unknown")))
         }
     }
 
@@ -147,11 +147,11 @@ final class SkillsTabModel: ObservableObject {
 
         if output?.contains("__OPENCLAW_MANUAL_SKILL_INSTALL_OK__") == true {
             await loadSkills()
-            notifySuccess("Installed skill from repository")
+            notifySuccess(I18n.t("skills.toast.manualInstalled"))
             return true
         } else {
             let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines)
-            notifyError("Failed to install skill: \(trimmed?.isEmpty == false ? trimmed! : "unknown error")")
+            notifyError(I18n.format("skills.toast.manualInstallFailed", trimmed?.isEmpty == false ? trimmed! : I18n.t("common.error.unknown")))
             return false
         }
     }
@@ -162,7 +162,7 @@ final class SkillsTabModel: ObservableObject {
 
     func removeSkill(_ skill: SkillInfo) async {
         guard Self.canRemoveSkill(skill) else {
-            notifyError("Built-in skills cannot be removed")
+            notifyError(I18n.t("skills.error.builtInRemove"))
             return
         }
 
@@ -178,10 +178,10 @@ final class SkillsTabModel: ObservableObject {
         if output?.contains("__OPENCLAW_SKILL_REMOVE_OK__") == true {
             DashboardViewModel.unmarkTrustedSkill(skill.name)
             await loadSkills()
-            notifySuccess("Removed skill \(skill.name)")
+            notifySuccess(I18n.format("skills.toast.removed", skill.name))
         } else {
             let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines)
-            notifyError("Failed to remove \(skill.name): \(trimmed?.isEmpty == false ? trimmed! : "unknown error")")
+            notifyError(I18n.format("skills.toast.removeFailed", skill.name, trimmed?.isEmpty == false ? trimmed! : I18n.t("common.error.unknown")))
         }
     }
 

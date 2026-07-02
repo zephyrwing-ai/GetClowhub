@@ -25,6 +25,11 @@ struct AppSettings: Equatable {
     }
 }
 
+struct ConfiguredProviderModelSource {
+    let providerKey: String
+    let models: [PresetModel]
+}
+
 @MainActor
 class AppSettingsManager: ObservableObject {
     @Published var settings: AppSettings
@@ -127,11 +132,52 @@ class AppSettingsManager: ObservableObject {
                     newSettings.configuredModels = modelArray.compactMap { Self.parseModelDict($0) }
                 }
             }
+
+            if newSettings.activeServiceSource == "getclawhub",
+               let getclawhubProvider = providers["getclawhub"] as? [String: Any] {
+                if let baseUrl = getclawhubProvider["baseUrl"] as? String {
+                    newSettings.modelBaseUrl = baseUrl
+                }
+                if let apiKey = getclawhubProvider["apiKey"] as? String {
+                    newSettings.modelApiKey = apiKey
+                }
+                if let api = getclawhubProvider["api"] as? String {
+                    newSettings.providerApi = api
+                }
+                if let modelArray = getclawhubProvider["models"] as? [[String: Any]] {
+                    newSettings.configuredModels = modelArray.compactMap { Self.parseModelDict($0) }
+                }
+            }
         }
 
         // Only publish if changed, to avoid unnecessary SwiftUI re-renders
         if newSettings != settings {
             settings = newSettings
+        }
+    }
+
+    func loadConfiguredProviderModelSources() -> [ConfiguredProviderModelSource] {
+        guard let dict = readConfigDict(),
+              let modelsNode = dict["models"] as? [String: Any],
+              let providers = modelsNode["providers"] as? [String: Any] else {
+            return []
+        }
+
+        let appState = Self.readAppStateDict(legacyConfig: dict)
+        let customProviderSnapshots = appState?[Self.customProviderSnapshotsKey] as? [String: Any] ?? [:]
+        var mergedProviders = providers
+        for (key, value) in customProviderSnapshots where key != "getclawhub" {
+            mergedProviders[key] = value
+        }
+
+        return mergedProviders.keys.sorted().compactMap { key in
+            guard let provider = mergedProviders[key] as? [String: Any],
+                  let modelArray = provider["models"] as? [[String: Any]] else {
+                return nil
+            }
+            let parsedModels = modelArray.compactMap { Self.parseModelDict($0) }
+            guard !parsedModels.isEmpty else { return nil }
+            return ConfiguredProviderModelSource(providerKey: key, models: parsedModels)
         }
     }
 

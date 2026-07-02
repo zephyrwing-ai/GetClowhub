@@ -34,25 +34,16 @@ struct MarketplaceAgentDisplay: Hashable {
     let vibe: String
     let specialty: String?
     let whenToUse: String?
+    let content: String
 }
 
 // MARK: - MarketplaceCatalog
-
-private struct MarketplaceAgentLocalization: Codable {
-    let name: String?
-    let division: String?
-    let description: String?
-    let vibe: String?
-    let specialty: String?
-    let whenToUse: String?
-}
 
 class MarketplaceCatalog {
     static let shared = MarketplaceCatalog()
 
     let agents: [MarketplaceAgent]
     let divisions: [String]
-    private let localizations: [String: [String: MarketplaceAgentLocalization]]
 
     private init() {
         guard let url = Bundle.main.url(forResource: "marketplace_agents", withExtension: "json"),
@@ -61,77 +52,29 @@ class MarketplaceCatalog {
             NSLog("[MarketplaceCatalog] Failed to load marketplace_agents.json")
             self.agents = []
             self.divisions = []
-            self.localizations = [:]
             return
         }
         self.agents = decoded
         self.divisions = Array(Set(decoded.map { $0.division })).sorted()
-        self.localizations = Self.loadLocalizations()
         NSLog("[MarketplaceCatalog] Loaded %d agents in %d divisions", decoded.count, self.divisions.count)
     }
 
-    private static func loadLocalizations() -> [String: [String: MarketplaceAgentLocalization]] {
-        guard let url = Bundle.main.url(forResource: "marketplace_agents.i18n", withExtension: "json") else {
-            NSLog("[MarketplaceCatalog] marketplace_agents.i18n.json not bundled; using English marketplace display text")
-            return [:]
-        }
-        do {
-            let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode([String: [String: MarketplaceAgentLocalization]].self, from: data)
-        } catch {
-            NSLog("[MarketplaceCatalog] Failed to load marketplace_agents.i18n.json: %@", error.localizedDescription)
-            return [:]
-        }
-    }
-
     func localizedDisplay(for agent: MarketplaceAgent, localeID: String) -> MarketplaceAgentDisplay {
-        let localization = localization(for: agent.id, localeID: localeID)
+        let localization = I18n.agentDisplay(for: agent, localeID: localeID)
         return MarketplaceAgentDisplay(
-            name: localization?.name ?? agent.name,
-            division: localization?.division ?? agent.division,
-            description: localization?.description ?? agent.description,
-            vibe: localization?.vibe ?? agent.vibe,
-            specialty: localization?.specialty ?? agent.specialty,
-            whenToUse: localization?.whenToUse ?? agent.whenToUse
+            name: localization.name,
+            division: localization.division,
+            description: localization.description,
+            vibe: localization.vibe,
+            specialty: localization.specialty,
+            whenToUse: localization.whenToUse,
+            content: localization.content
         )
     }
 
     func localizedDivisionName(_ division: String, localeID: String) -> String {
         guard let agent = agents.first(where: { $0.division == division }) else { return division }
         return localizedDisplay(for: agent, localeID: localeID).division
-    }
-
-    private func localization(for agentID: String, localeID: String) -> MarketplaceAgentLocalization? {
-        guard let agentLocalizations = localizations[agentID] else { return nil }
-        for candidate in localeCandidates(for: localeID) {
-            if let localization = agentLocalizations[candidate] {
-                return localization
-            }
-        }
-        return nil
-    }
-
-    private func localeCandidates(for localeID: String) -> [String] {
-        let normalized = localeID.replacingOccurrences(of: "_", with: "-")
-        let parts = normalized.split(separator: "-").map(String.init)
-        guard let language = parts.first, !language.isEmpty else { return ["en"] }
-
-        var candidates: [String] = [normalized]
-        if parts.count >= 2 {
-            candidates.append("\(parts[0])-\(parts[1])")
-        }
-        if language == "zh" {
-            let tags = Set(parts.dropFirst().map { $0.lowercased() })
-            candidates.append(tags.contains("hant") || tags.contains("tw") || tags.contains("hk") || tags.contains("mo") ? "zh-Hant" : "zh-Hans")
-        }
-        if language == "pt" {
-            candidates.append("pt-BR")
-        }
-        candidates.append(language)
-        candidates.append("en")
-
-        var seen = Set<String>()
-        return candidates.filter { seen.insert($0).inserted }
     }
 
     func search(query: String, division: String? = nil, localeID: String = "en") -> [MarketplaceAgent] {
@@ -221,18 +164,19 @@ struct MarketplaceContentConverter {
     }
 
     /// IDENTITY.md — structured identity + specialty and description after ---
-    static func identityMarkdown(for agent: MarketplaceAgent) -> String {
-        var afterSeparator = agent.description
-        if let specialty = agent.specialty, !specialty.isEmpty {
-            afterSeparator = "**Specialty:** \(specialty)\n\n\(agent.description)"
+    static func identityMarkdown(for agent: MarketplaceAgent, localeID: String = "en") -> String {
+        let display = agent.localizedDisplay(localeID: localeID)
+        var afterSeparator = display.description
+        if let specialty = display.specialty, !specialty.isEmpty {
+            afterSeparator = "**Specialty:** \(specialty)\n\n\(display.description)"
         }
         return """
         # IDENTITY.md - Who Am I?
 
-        - **Name:** \(agent.name)
-        - **Creature:** \(agent.division) Specialist
-        - **Vibe:** \(agent.vibe)
-        - **Division:** \(agent.division)
+        - **Name:** \(display.name)
+        - **Creature:** \(display.division) Specialist
+        - **Vibe:** \(display.vibe)
+        - **Division:** \(display.division)
 
         ---
 
@@ -241,14 +185,16 @@ struct MarketplaceContentConverter {
     }
 
     /// SOUL.md — persona, tone, boundaries (extracted from content)
-    static func soulMarkdown(for agent: MarketplaceAgent) -> String {
-        let (soul, _) = splitContent(agent.content)
-        return soul.isEmpty ? agent.content : soul
+    static func soulMarkdown(for agent: MarketplaceAgent, localeID: String = "en") -> String {
+        let display = agent.localizedDisplay(localeID: localeID)
+        let (soul, _) = splitContent(display.content)
+        return soul.isEmpty ? display.content : soul
     }
 
     /// AGENTS.md — mission, deliverables, workflow (extracted from content) + structured metadata
-    static func agentsMarkdown(for agent: MarketplaceAgent) -> String {
-        let (_, agentsContent) = splitContent(agent.content)
+    static func agentsMarkdown(for agent: MarketplaceAgent, localeID: String = "en") -> String {
+        let display = agent.localizedDisplay(localeID: localeID)
+        let (_, agentsContent) = splitContent(display.content)
 
         var parts: [String] = []
 
@@ -257,10 +203,10 @@ struct MarketplaceContentConverter {
         }
 
         // Append structured metadata from README
-        if let whenToUse = agent.whenToUse, !whenToUse.isEmpty {
+        if let whenToUse = display.whenToUse, !whenToUse.isEmpty {
             parts.append("## When to Use\n\n\(whenToUse)")
         }
-        if let specialty = agent.specialty, !specialty.isEmpty {
+        if let specialty = display.specialty, !specialty.isEmpty {
             parts.append("## Specialty\n\n\(specialty)")
         }
 

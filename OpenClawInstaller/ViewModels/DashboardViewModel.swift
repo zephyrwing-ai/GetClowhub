@@ -155,6 +155,7 @@ class DashboardViewModel: ObservableObject {
             editedProviderApi = preset.api
             editedConfiguredModels = preset.models
         }
+        refreshAvailableModelsForCurrentProvider()
 
         // Forward nested ObservableObject changes so SwiftUI views re-render
         // (@Published on reference types only fires when the reference is replaced,
@@ -831,11 +832,11 @@ class DashboardViewModel: ObservableObject {
             case .market: return "storefront"
             case .tasksLogs: return "clock.badge"
             case .config: return "gearshape"
-            case .skills: return "bolt.fill"
+            case .skills: return AppSystemSymbol.skills
             case .models: return "cube.fill"
             case .outputs: return "tray.full.fill"
             case .channels: return "bubble.left.and.bubble.right.fill"
-            case .plugins: return "puzzlepiece.fill"
+            case .plugins: return "powerplug.portrait"
             case .cron: return "clock.badge"
             case .logs: return "doc.text.magnifyingglass"
             }
@@ -913,6 +914,7 @@ class DashboardViewModel: ObservableObject {
             editedProviderApi = preset.api
             editedConfiguredModels = preset.models
         }
+        refreshAvailableModelsForCurrentProvider()
     }
 
     /// Reload from disk and sync fields.
@@ -1604,9 +1606,12 @@ class DashboardViewModel: ObservableObject {
     // chatMessagesByAgent stays the live source of truth for the chat view;
     // we mirror its changes (debounced) into the active ChatSession on disk.
     let chatSessionStore = ChatSessionStore()
-    /// Per-agent metadata of every session, sorted (pinned first, then newest).
+    /// Per-agent metadata of every session, sorted newest-first.
     /// Filtered to exclude archived sessions; archived ones live in the store.
     @Published var sessionsByAgent: [String: [ChatSessionMetadata]] = [:]
+    /// Global derived list for pinned sessions. The sessions still retain their
+    /// original agent/project ownership; this is only a sidebar presentation.
+    @Published var pinnedSessions: [ChatSessionMetadata] = []
     @Published var projectBindingsByAgent: [String: [AgentProjectBinding]] = [:]
     @Published var projectSessionsByAgent: [String: [ProjectSessionGroup]] = [:]
     @Published var generalSessionsByAgent: [String: [ChatSessionMetadata]] = [:]
@@ -1620,8 +1625,8 @@ class DashboardViewModel: ObservableObject {
     /// should not be persisted unless the user actually types into them.
     private var pendingSessionMetadataByAgent: [String: ChatSessionMetadata] = [:]
 
-    /// Refresh `sessionsByAgent` from the store's index. Pinned-first then
-    /// newest-first within each agent. Archived sessions are excluded so the
+    /// Refresh `sessionsByAgent` from the store's index. Newest-first within
+    /// each derived display group. Archived sessions are excluded so the
     /// sidebar list stays clean; the underlying file remains on disk.
     func rebuildSessionsMirror() {
         let persistedSessionIds = Set(chatSessionStore.index.map(\.id))
@@ -1637,13 +1642,23 @@ class DashboardViewModel: ObservableObject {
             grouped[pending.agentId, default: []].append(pending)
         }
         for key in grouped.keys {
-            grouped[key]?.sort { lhs, rhs in
-                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return lhs.updatedAt > rhs.updatedAt
-            }
+            grouped[key] = Self.orderedSessionMetadata(grouped[key] ?? [])
         }
         sessionsByAgent = grouped
+        pinnedSessions = Self.orderedSessionMetadata(grouped.values.flatMap { $0 }.filter(\.isPinned))
         rebuildProjectSessionGroups(from: grouped)
+    }
+
+    private static func orderedSessionMetadata(_ sessions: [ChatSessionMetadata]) -> [ChatSessionMetadata] {
+        sessions.sorted { lhs, rhs in
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt > rhs.createdAt
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
     }
 
     private func rebuildProjectSessionGroups(from grouped: [String: [ChatSessionMetadata]]) {
@@ -1651,12 +1666,13 @@ class DashboardViewModel: ObservableObject {
         var generalGroups: [String: [ChatSessionMetadata]] = [:]
 
         for (agentId, sessions) in grouped {
-            let general = sessions.filter { $0.projectId == nil }
+            let unpinnedSessions = Self.orderedSessionMetadata(sessions.filter { !$0.isPinned })
+            let general = unpinnedSessions.filter { $0.projectId == nil }
             if !general.isEmpty {
                 generalGroups[agentId] = general
             }
 
-            let projectSessions = Dictionary(grouping: sessions.filter { $0.projectId != nil }) {
+            let projectSessions = Dictionary(grouping: unpinnedSessions.filter { $0.projectId != nil }) {
                 $0.projectId ?? ""
             }
             var groups: [ProjectSessionGroup] = []
@@ -2276,7 +2292,7 @@ class DashboardViewModel: ObservableObject {
     /// the active session, automatically promote the next-newest session, or
     /// mint an empty one if none remain — never leave the chat view broken.
     func deleteSession(_ sessionId: UUID) {
-        let agentId = pendingSessionMetadataByAgent.first(where: { $0.value.id == sessionId })?.key ?? selectedAgentId
+        let agentId = sessionMetadata(for: sessionId)?.agentId ?? selectedAgentId
         let wasActive = selectedSessionIdByAgent[agentId] == sessionId
         // Cancel any in-flight task tied to this session BEFORE we drop the
         // file — without this, the run keeps streaming on the gateway with
@@ -2300,12 +2316,11 @@ class DashboardViewModel: ObservableObject {
         recomputeIsSendingMessage()
     }
 
-    /// Toggle pinned state. Pinned sessions float to the top of the sidebar
-    /// list regardless of recency.
+    /// Toggle pinned state. Pinning is a presentation change, so it should not
+    /// bump `updatedAt` or affect the session's original recency position.
     func togglePinSession(_ sessionId: UUID) {
         guard var session = chatSessionStore.loadSession(id: sessionId) else { return }
         session.isPinned.toggle()
-        session.updatedAt = Date()
         chatSessionStore.saveSession(session)
         rebuildSessionsMirror()
     }
@@ -2315,7 +2330,7 @@ class DashboardViewModel: ObservableObject {
     /// same as delete — we don't want to leave the user staring at a row
     /// that was just hidden.
     func archiveSession(_ sessionId: UUID) {
-        let agentId = selectedAgentId
+        let agentId = sessionMetadata(for: sessionId)?.agentId ?? selectedAgentId
         let wasActive = selectedSessionIdByAgent[agentId] == sessionId
         guard var session = chatSessionStore.loadSession(id: sessionId) else { return }
         session.isArchived = true
@@ -2679,6 +2694,7 @@ class DashboardViewModel: ObservableObject {
     // Agent Settings Panel state
     @Published var agentSettingsOpen: Bool = false
     @Published var selectedAgentDetail: SubAgentInfo?
+    @Published var availableModelGroups: [ProviderModelGroup] = []
     @Published var availableModelsForSettings: [ModelOption] = []
 
     /// Internal agents managed by the app, hidden from user-facing lists.
@@ -3503,6 +3519,8 @@ class DashboardViewModel: ObservableObject {
         let eventStream = gatewayClient.subscribeToEvents(subscriberId: subscriberId)
 
         // Send the message
+        let chatSendStart = ContinuousClock.now
+        chatLog.info("phase=chat_send_start agent=\(currentAgentId, privacy: .public) session=\(currentSessionId.uuidString, privacy: .public) sessionKey=\(sessionKey, privacy: .public) message_len=\(baseMessage.count, privacy: .public) attachment_count=\(attachments.count, privacy: .public) inline_attachment_count=\(processed.inlineAttachments.count, privacy: .public)")
         let runId = await gatewayClient.chatSend(
             sessionKey: sessionKey,
             message: baseMessage,
@@ -3510,6 +3528,7 @@ class DashboardViewModel: ObservableObject {
         )
 
         guard let runId = runId else {
+            chatLog.warning("phase=chat_send_failed agent=\(currentAgentId, privacy: .public) session=\(currentSessionId.uuidString, privacy: .public) elapsed_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public)")
             let errorMsg = String(localized: "Failed to send message. Please try again.", bundle: LanguageManager.shared.localizedBundle)
             updateMessage(msgId: msgId, content: errorMsg, status: .completed, agentId: currentAgentId, agentEmoji: currentAgentEmoji)
             gatewayClient.unsubscribe(subscriberId: subscriberId)
@@ -3519,6 +3538,9 @@ class DashboardViewModel: ObservableObject {
             recomputeIsSendingMessage()
             return
         }
+
+        let chatSendAckAt = ContinuousClock.now
+        chatLog.info("phase=chat_send_ack runId=\(runId, privacy: .public) agent=\(currentAgentId, privacy: .public) session=\(currentSessionId.uuidString, privacy: .public) elapsed_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public)")
 
         if !attachments.isEmpty {
             showSuccessMessage("Attachments sent as a selective manifest. Large files and folders will not be read wholesale.")
@@ -3624,11 +3646,26 @@ class DashboardViewModel: ObservableObject {
         // Throttle message updates to prevent CPU 100% during fast streaming
         var lastUpdateTime = Date()
         let updateThrottleInterval: TimeInterval = 0.1  // Update at most every 100ms
+        var didLogFirstEvent = false
+        var didLogFirstDelta = false
+        var didLogFirstActivity = false
+
+        func logFirstGatewayEventIfNeeded(kind: String, eventRunId: String, eventSessionKey: String?) {
+            guard !didLogFirstEvent else { return }
+            didLogFirstEvent = true
+            chatLog.info("phase=chat_first_event kind=\(kind, privacy: .public) runId=\(eventRunId, privacy: .public) sessionKey=\(eventSessionKey ?? "nil", privacy: .public) elapsed_from_send_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public) elapsed_after_ack_ms=\(Self.elapsedMillisecondsText(since: chatSendAckAt), privacy: .public)")
+        }
+
         streamLoop: for await event in eventStream {
 
             switch event {
             case .activity(let eventRunId, _, let event):
                 guard eventRunId == runId else { continue }
+                logFirstGatewayEventIfNeeded(kind: "activity", eventRunId: eventRunId, eventSessionKey: nil)
+                if !didLogFirstActivity {
+                    didLogFirstActivity = true
+                    chatLog.info("phase=chat_first_activity runId=\(eventRunId, privacy: .public) kind=\(event.kind.rawValue, privacy: .public) elapsed_from_send_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public) elapsed_after_ack_ms=\(Self.elapsedMillisecondsText(since: chatSendAckAt), privacy: .public)")
+                }
                 guard seenActivityEventKeys.insert(event.dedupeKey).inserted else { continue }
                 let progressText = Self.uncommittedWorkingProgressText(
                     accumulatedText: accumulatedText,
@@ -3644,12 +3681,17 @@ class DashboardViewModel: ObservableObject {
                     updateMessage(msgId: msgId, content: "", status: current.taskStatus, agentId: currentAgentId, agentEmoji: currentAgentEmoji, activityEvents: accumulatedActivityEvents)
                 }
 
-            case .delta(let eventRunId, _, let text):
+            case .delta(let eventRunId, let eventSessionKey, let text):
                 guard eventRunId == runId else { continue }
+                logFirstGatewayEventIfNeeded(kind: "delta", eventRunId: eventRunId, eventSessionKey: eventSessionKey)
                 // Skip empty deltas (e.g. tool_use blocks with no text content)
                 guard !text.isEmpty else {
                     chatLog.debug("chat delta: EMPTY text skipped, runId=\(eventRunId)")
                     continue
+                }
+                if !didLogFirstDelta {
+                    didLogFirstDelta = true
+                    chatLog.info("phase=chat_first_delta runId=\(eventRunId, privacy: .public) sessionKey=\(eventSessionKey, privacy: .public) text_len=\(text.count, privacy: .public) elapsed_from_send_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public) elapsed_after_ack_ms=\(Self.elapsedMillisecondsText(since: chatSendAckAt), privacy: .public)")
                 }
                 chatLog.debug("chat delta: runId=\(eventRunId), textLen=\(text.count)")
                 // Gateway sends full accumulated text in each delta, so use replacement
@@ -3679,6 +3721,8 @@ class DashboardViewModel: ObservableObject {
 
             case .final_(let eventRunId, let eventSessionKey, let text):
                 guard eventRunId == runId else { continue }
+                logFirstGatewayEventIfNeeded(kind: "final", eventRunId: eventRunId, eventSessionKey: eventSessionKey)
+                chatLog.info("phase=chat_final runId=\(eventRunId, privacy: .public) sessionKey=\(eventSessionKey, privacy: .public) text_len=\(text.count, privacy: .public) accumulated_len=\(accumulatedText.count, privacy: .public) saw_delta=\(didLogFirstDelta, privacy: .public) elapsed_from_send_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public) elapsed_after_ack_ms=\(Self.elapsedMillisecondsText(since: chatSendAckAt), privacy: .public)")
                 chatLog.info("chat final: runId=\(eventRunId), textLen=\(text.count), accumulatedLen=\(accumulatedText.count)")
                 var finalText = Self.visibleAssistantText(
                     from: text.isEmpty ? accumulatedText : text,
@@ -3732,6 +3776,8 @@ class DashboardViewModel: ObservableObject {
 
             case .aborted(let eventRunId, _):
                 guard eventRunId == runId else { continue }
+                logFirstGatewayEventIfNeeded(kind: "aborted", eventRunId: eventRunId, eventSessionKey: nil)
+                chatLog.info("phase=chat_aborted runId=\(eventRunId, privacy: .public) elapsed_from_send_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public) elapsed_after_ack_ms=\(Self.elapsedMillisecondsText(since: chatSendAckAt), privacy: .public)")
                 receivedTerminalEvent = true
                 if let current = findMessage(byId: msgId),
                    current.taskStatus != .cancelled {
@@ -3741,6 +3787,8 @@ class DashboardViewModel: ObservableObject {
 
             case .error(let eventRunId, _, let message):
                 guard eventRunId == runId else { continue }
+                logFirstGatewayEventIfNeeded(kind: "error", eventRunId: eventRunId, eventSessionKey: nil)
+                chatLog.warning("phase=chat_error runId=\(eventRunId, privacy: .public) message_len=\(message.count, privacy: .public) elapsed_from_send_ms=\(Self.elapsedMillisecondsText(since: chatSendStart), privacy: .public) elapsed_after_ack_ms=\(Self.elapsedMillisecondsText(since: chatSendAckAt), privacy: .public)")
                 receivedTerminalEvent = true
                 let errorContent = "⚠️ " + message
                 // Ensure UI update happens on MainActor
@@ -5567,12 +5615,78 @@ class DashboardViewModel: ObservableObject {
 
     /// Load available models for the settings panel.
     func loadModelsForSettings() async {
+        let localGroups = localProviderModelGroups()
+        let localModels = localModelOptionsForActiveProvider()
         let output = await openclawService.runCommand(
             "openclaw models list --json 2>&1",
             timeout: 30
         )
         let models = SubAgentsViewModel.parseModelList(output: output)
-        availableModelsForSettings = modelsForActiveProvider(from: models)
+        let scopedModels = modelsForActiveProvider(from: models)
+        availableModelGroups = mergeModelGroups(base: localGroups, overlay: models)
+        let activeProviderModels = mergeModelOptions(base: localModels, overlay: scopedModels)
+        availableModelsForSettings = flattenModelGroups(availableModelGroups).isEmpty
+            ? activeProviderModels
+            : flattenModelGroups(availableModelGroups)
+    }
+
+    private func localProviderModelGroups() -> [ProviderModelGroup] {
+        let configuredSources = settings.loadConfiguredProviderModelSources()
+        let currentProviderKey = activeModelProviderKey()
+        var getclawhubModels = configuredSources.first(where: { $0.providerKey == "getclawhub" })?.models ?? []
+        getclawhubModels = filterAllowedGetClawHubModels(getclawhubModels)
+
+        if getclawhubModels.isEmpty {
+            getclawhubModels = allowedGetClawHubPresetModels()
+        }
+
+        var groups: [ProviderModelGroup] = []
+        if !getclawhubModels.isEmpty {
+            groups.append(ProviderModelGroup(
+                providerKey: "getclawhub",
+                displayName: "GetClawHub",
+                models: modelOptions(from: getclawhubModels, providerKey: "getclawhub")
+            ))
+        }
+
+        var customModels: [ModelOption] = []
+        for source in configuredSources where source.providerKey != "getclawhub" {
+            let sourceModels = source.providerKey == currentProviderKey && !editedConfiguredModels.isEmpty
+                ? editedConfiguredModels
+                : source.models
+            customModels.append(contentsOf: modelOptions(from: sourceModels, providerKey: source.providerKey))
+        }
+
+        if currentProviderKey != "getclawhub",
+           !configuredSources.contains(where: { $0.providerKey == currentProviderKey }),
+           !editedConfiguredModels.isEmpty {
+            customModels.append(contentsOf: modelOptions(from: editedConfiguredModels, providerKey: currentProviderKey))
+        }
+
+        let dedupedCustomModels = dedupeModelOptions(customModels)
+        if !dedupedCustomModels.isEmpty {
+            groups.append(ProviderModelGroup(
+                providerKey: "custom",
+                displayName: "Custom",
+                models: dedupedCustomModels
+            ))
+        }
+
+        return groups
+    }
+
+    private func localModelOptionsForActiveProvider() -> [ModelOption] {
+        let providerKey = activeModelProviderKey()
+        var models = editedConfiguredModels
+
+        if activeModelProviderKey() == "getclawhub", models.isEmpty {
+            models = presetManager.findProvider(byKey: "getclawhub")?.models ?? []
+        }
+
+        return models.map { model in
+            let modelId = model.id.hasPrefix("\(providerKey)/") ? model.id : "\(providerKey)/\(model.id)"
+            return ModelOption(id: modelId, name: model.name.isEmpty ? model.id : model.name, tags: [])
+        }
     }
 
     private func activeModelProviderKey() -> String {
@@ -5603,11 +5717,84 @@ class DashboardViewModel: ObservableObject {
     }
 
     private func refreshAvailableModelsForCurrentProvider() {
-        let providerKey = activeModelProviderKey()
-        availableModelsForSettings = editedConfiguredModels.map { model in
+        let groups = localProviderModelGroups()
+        availableModelGroups = groups
+        let flattenedGroups = flattenModelGroups(groups)
+        availableModelsForSettings = flattenedGroups.isEmpty ? localModelOptionsForActiveProvider() : flattenedGroups
+    }
+
+    private func modelOptions(from models: [PresetModel], providerKey: String) -> [ModelOption] {
+        models.map { model in
             let modelId = model.id.hasPrefix("\(providerKey)/") ? model.id : "\(providerKey)/\(model.id)"
             return ModelOption(id: modelId, name: model.name.isEmpty ? model.id : model.name, tags: [])
         }
+    }
+
+    private func mergeModelGroups(base: [ProviderModelGroup], overlay: [ModelOption]) -> [ProviderModelGroup] {
+        let overlayByProvider = Dictionary(grouping: overlay) { providerKey(for: $0.id) ?? "" }
+        return base.map { group in
+            let providerKeys = Set(group.models.compactMap { providerKey(for: $0.id) })
+            let matchingOverlay = overlayByProvider
+                .filter { providerKeys.contains($0.key) }
+                .flatMap(\.value)
+            return ProviderModelGroup(
+                providerKey: group.providerKey,
+                displayName: group.displayName,
+                models: mergeModelOptions(base: group.models, overlay: matchingOverlay)
+            )
+        }
+    }
+
+    private func mergeModelOptions(base: [ModelOption], overlay: [ModelOption]) -> [ModelOption] {
+        guard !overlay.isEmpty else { return dedupeModelOptions(base) }
+
+        let overlayById = Dictionary(uniqueKeysWithValues: overlay.map { ($0.id, $0) })
+        var result = base.map { baseModel in
+            guard let overlayModel = overlayById[baseModel.id] else { return baseModel }
+            return ModelOption(
+                id: baseModel.id,
+                name: overlayModel.name.isEmpty ? baseModel.name : overlayModel.name,
+                tags: overlayModel.tags.isEmpty ? baseModel.tags : overlayModel.tags
+            )
+        }
+        let baseIds = Set(base.map(\.id))
+        result.append(contentsOf: overlay.filter { !baseIds.contains($0.id) })
+        return dedupeModelOptions(result)
+    }
+
+    private func dedupeModelOptions(_ models: [ModelOption]) -> [ModelOption] {
+        var seen = Set<String>()
+        var result: [ModelOption] = []
+        for model in models where !seen.contains(model.id) {
+            seen.insert(model.id)
+            result.append(model)
+        }
+        return result
+    }
+
+    private func flattenModelGroups(_ groups: [ProviderModelGroup]) -> [ModelOption] {
+        dedupeModelOptions(groups.flatMap(\.models))
+    }
+
+    private func providerKey(for modelId: String) -> String? {
+        guard let slash = modelId.firstIndex(of: "/") else { return nil }
+        let provider = String(modelId[..<slash])
+        return provider.isEmpty ? nil : provider
+    }
+
+    private func allowedGetClawHubPresetModels() -> [PresetModel] {
+        let allPresetModels = presetManager.findProvider(byKey: "getclawhub")?.models ?? []
+        return filterAllowedGetClawHubModels(allPresetModels)
+    }
+
+    private func filterAllowedGetClawHubModels(_ models: [PresetModel]) -> [PresetModel] {
+        #if REQUIRE_LOGIN
+        if let allowedModels = membershipManager?.membership?.models, !allowedModels.isEmpty {
+            let allowedLowercased = Set(allowedModels.map { $0.lowercased() })
+            return models.filter { allowedLowercased.contains($0.id.lowercased()) }
+        }
+        #endif
+        return models
     }
 
     /// Save a persona file for the selected agent.
@@ -6043,6 +6230,14 @@ struct SkillInfo: Identifiable {
     let status: SkillStatus
     let description: String
     let source: String
+}
+
+struct ProviderModelGroup: Identifiable {
+    let providerKey: String
+    let displayName: String
+    let models: [ModelOption]
+
+    var id: String { providerKey }
 }
 
 struct SkillDetailInfo: Identifiable {

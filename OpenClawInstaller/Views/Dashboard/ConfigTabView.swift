@@ -2,16 +2,12 @@ import SwiftUI
 
 @MainActor
 private func localizedString(_ key: String) -> String {
-    localizedString(key, bundle: LanguageManager.shared.localizedBundle)
-}
-
-private func localizedString(_ key: String, bundle: Bundle) -> String {
-    String(localized: String.LocalizationValue(key), bundle: bundle)
+    I18n.t(key, fallback: key)
 }
 
 @MainActor
 private func localizedFormat(_ key: String, _ arguments: CVarArg...) -> String {
-    String(format: localizedString(key), arguments: arguments)
+    String(format: I18n.t(key, fallback: key), arguments: arguments)
 }
 
 enum SettingsPageSection: String, CaseIterable, Identifiable {
@@ -214,25 +210,12 @@ private struct SettingsSectionSidebar: View {
                             .padding(.horizontal, 14)
 
                         ForEach(group.1) { section in
-                            Button {
+                            SettingsSectionRow(
+                                section: section,
+                                isSelected: selectedSection == section
+                            ) {
                                 selectedSection = section
-                            } label: {
-                                HStack(spacing: 9) {
-                                    Image(systemName: section.systemImage)
-                                        .frame(width: 16)
-                                    Text(section.localizedTitle())
-                                    Spacer()
-                                }
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.primary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(selectedSection == section ? Color.primary.opacity(0.10) : Color.clear)
-                                )
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -242,6 +225,34 @@ private struct SettingsSectionSidebar: View {
             Spacer()
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.42))
+    }
+}
+
+private struct SettingsSectionRow: View {
+    let section: SettingsPageSection
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: section.systemImage)
+                    .frame(width: 16)
+                Text(section.localizedTitle())
+                Spacer()
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.primary.opacity(0.10) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -491,8 +502,8 @@ private struct AppearancePreview: View {
                         .foregroundColor(textColor)
                 }
 
-                previewSidebarRow(icon: "bolt.fill", title: localizedString("Skills"), active: true)
-                previewSidebarRow(icon: "puzzlepiece.fill", title: localizedString("Plugins"), active: false)
+                previewSidebarRow(icon: AppSystemSymbol.skills, title: localizedString("Skills"), active: true)
+                previewSidebarRow(icon: "powerplug.portrait", title: localizedString("Plugins"), active: false)
                 previewSidebarRow(icon: "gearshape", title: localizedString("Settings"), active: false)
 
                 Spacer(minLength: 0)

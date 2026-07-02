@@ -48,8 +48,8 @@ assertNotContains(
 )
 assertContains(
     agentSidebarRow,
-    "AgentAvatarImage(size: DashboardSidebarMetrics.agentAvatarSize)",
-    "agent sidebar rows must use the shared SVG avatar metric"
+    "AgentAvatarImage(size: DashboardSidebarMetrics.agentAvatarSize, isExpanded: expandedAgentIds.contains(agent.id))",
+    "agent sidebar rows must use the shared SVG avatar metric and expanded-state icon"
 )
 assertContains(
     sidebarCollapsibleRow,
@@ -258,7 +258,7 @@ assertContains(
 )
 assertContains(
     sessionsSectionContent,
-    ".fill(sessionRowHighlightColor(isActive: isVisibleAgent && activeId == meta.id, isHovering: isSessionHovering))",
+    ".fill(sessionRowHighlightColor(isActive: isSessionActive, isHovering: isSessionHovering))",
     "session rows should use the dedicated advanced-gray hover and active highlight color"
 )
 assertContains(
@@ -343,9 +343,19 @@ assertNotContains(
     "session rows must not show the default chat bubble icon"
 )
 assertNotContains(
+    slice(sessionRow, from: "HStack(spacing: 0) {", to: "HStack(spacing: 2)"),
+    "pin",
+    "session rows must not show a leading pin icon before the title"
+)
+assertContains(
     sessionRow,
-    "pin.fill",
-    "session rows must not show a leading pin icon"
+    #"Image(systemName: meta.isPinned ? "pin.fill" : "pin")"#,
+    "session row hover actions should include a pin/unpin icon"
+)
+assertNotContains(
+    sessionRow,
+    "meta.isPinned ? .accentColor : .secondary",
+    "pinned session action should use pin.fill for state instead of turning blue"
 )
 assertContains(
     sessionRow,
@@ -361,6 +371,11 @@ assertContains(
     sessionRow,
     ".frame(width: DashboardSidebarMetrics.sessionRowActionSize, height: DashboardSidebarMetrics.sessionRowActionSize)",
     "session row hover action should share the stable row action metric"
+)
+assertContains(
+    sessionRow,
+    ".frame(width: DashboardSidebarMetrics.sessionRowActionAreaWidth, alignment: .trailing)",
+    "session row hover actions should reserve fixed trailing layout space"
 )
 assertContains(
     sessionRow,

@@ -88,6 +88,8 @@
 		FC838E8912A04DD484067D79 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECE40F8EAC7C41D4B7C85C46 /* AuthManager.swift */; };
 		GW01AB01C2D3E4F5A6B70001 /* GatewayClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = GW01AB02C2D3E4F5A6B70002 /* GatewayClient.swift */; };
 		GWCTX0000000000000001 /* GatewayWorkspaceContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = GWCTX0000000000000002 /* GatewayWorkspaceContext.swift */; };
+		I18NSVC00000000000001 /* I18nService.swift in Sources */ = {isa = PBXBuildFile; fileRef = I18NSVC00000000000002 /* I18nService.swift */; };
+		I18NRES00000000000001 /* I18n in Resources */ = {isa = PBXBuildFile; fileRef = I18NRES00000000000002 /* I18n */; };
 		IRBS0001C2D3E4F5A6B70001 /* ImageReviewBatchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = IRBS0002C2D3E4F5A6B70002 /* ImageReviewBatchStore.swift */; };
 		MB01AC01D3E4F5A6B7C80001 /* MembershipManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = MB01AC02D3E4F5A6B7C80002 /* MembershipManager.swift */; };
 		MBUILD001000000000000000 /* DesignSystemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DESIGNMGR000000000000000 /* DesignSystemManager.swift */; };
@@ -120,6 +122,7 @@
 		STP000000000000000000001 /* SessionTitleUserMessagesPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = STP000000000000000000002 /* SessionTitleUserMessagesPopover.swift */; };
 		USCH0000000000000001 /* UnifiedSearchField.swift in Sources */ = {isa = PBXBuildFile; fileRef = USCH0000000000000002 /* UnifiedSearchField.swift */; };
 		WFIC0000000000000001 /* WorkspaceFolderIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = WFIC0000000000000002 /* WorkspaceFolderIcon.swift */; };
+		WIPANE000000000000001 /* WorkspaceInspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = WIPANE000000000000002 /* WorkspaceInspectorPane.swift */; };
 		WSH000000000000000000001 /* WorkStatusHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = WSH000000000000000000002 /* WorkStatusHeader.swift */; };
 		WYQ78GRPE6YHXSKIQXOTVMP7 /* BillingTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = IPTFGQUADKOEPTYYGNMJ5M1V /* BillingTabView.swift */; };
 /* End PBXBuildFile section */
@@ -206,6 +209,8 @@
 		F4A5B6C7D8E94C3A4B5C6D7E /* HelpAssistantWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpAssistantWindow.swift; sourceTree = "<group>"; };
 		GW01AB02C2D3E4F5A6B70002 /* GatewayClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewayClient.swift; sourceTree = "<group>"; };
 		GWCTX0000000000000002 /* GatewayWorkspaceContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewayWorkspaceContext.swift; sourceTree = "<group>"; };
+		I18NSVC00000000000002 /* I18nService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = I18nService.swift; sourceTree = "<group>"; };
+		I18NRES00000000000002 /* I18n */ = {isa = PBXFileReference; lastKnownFileType = folder; path = I18n; sourceTree = "<group>"; };
 		IPTFGQUADKOEPTYYGNMJ5M1V /* BillingTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingTabView.swift; sourceTree = "<group>"; };
 		IRBS0002C2D3E4F5A6B70002 /* ImageReviewBatchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageReviewBatchStore.swift; sourceTree = "<group>"; };
 		MB01AC02D3E4F5A6B7C80002 /* MembershipManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipManager.swift; sourceTree = "<group>"; };
@@ -238,6 +243,7 @@
 		STP000000000000000000002 /* SessionTitleUserMessagesPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTitleUserMessagesPopover.swift; sourceTree = "<group>"; };
 		USCH0000000000000002 /* UnifiedSearchField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedSearchField.swift; sourceTree = "<group>"; };
 		WFIC0000000000000002 /* WorkspaceFolderIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFolderIcon.swift; sourceTree = "<group>"; };
+		WIPANE000000000000002 /* WorkspaceInspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceInspectorPane.swift; sourceTree = "<group>"; };
 		WSH000000000000000000002 /* WorkStatusHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkStatusHeader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -315,6 +321,7 @@
 				PMFS0002C2D3E4F5A6B70002 /* ProviderModelFetchService.swift */,
 				356410292F5802970045A6F7 /* DiagnosticService.swift */,
 				GW01AB02C2D3E4F5A6B70002 /* GatewayClient.swift */,
+				I18NSVC00000000000002 /* I18nService.swift */,
 				IRBS0002C2D3E4F5A6B70002 /* ImageReviewBatchStore.swift */,
 				PWGRP000000000000000 /* ProjectWorkspace */,
 				DI01AB02C2D3E4F5A6B70002 /* DeviceIdentity.swift */,
@@ -454,6 +461,7 @@
 			isa = PBXGroup;
 			children = (
 				C011AB08A1B2C3D4E5F60008 /* commander-persona.md */,
+				I18NRES00000000000002 /* I18n */,
 				MP01AD05E4F5A6B7C8D90005 /* marketplace_agents.json */,
 				MP01AD07E4F5A6B7C8D90007 /* marketplace_agents.i18n.json */,
 				COREUPGRADE000000000006 /* openclaw-core-version.json */,
@@ -514,6 +522,7 @@
 			isa = PBXGroup;
 			children = (
 				RI01AB02C2D3E4F5A6B70002 /* RightInspectorSplitView.swift */,
+				WIPANE000000000000002 /* WorkspaceInspectorPane.swift */,
 			);
 			path = Inspector;
 			sourceTree = "<group>";
@@ -599,6 +608,7 @@
 			files = (
 				3564106D2F5802970045A6F7 /* Assets.xcassets in Resources */,
 				3564107B2F5802970045A6F7 /* Localizable.xcstrings in Resources */,
+				I18NRES00000000000001 /* I18n in Resources */,
 				COREUPGRADE000000000005 /* openclaw-core-version.json in Resources */,
 				356410712F5802970045A6F7 /* providers_preset.json in Resources */,
 				MP01AD06E4F5A6B7C8D90006 /* marketplace_agents.json in Resources */,
@@ -671,6 +681,7 @@
 				STP000000000000000000001 /* SessionTitleUserMessagesPopover.swift in Sources */,
 				WSH000000000000000000001 /* WorkStatusHeader.swift in Sources */,
 				RI01AB01C2D3E4F5A6B70001 /* RightInspectorSplitView.swift in Sources */,
+				WIPANE000000000000001 /* WorkspaceInspectorPane.swift in Sources */,
 				A0B1C2D3E4F5061728394052 /* OutputsSidebarLayoutMetrics.swift in Sources */,
 				3564105A2F5802970045A6F7 /* CompletionView.swift in Sources */,
 				3564105B2F5802970045A6F7 /* LogsTabView.swift in Sources */,
@@ -725,6 +736,7 @@
 				C011AB03A1B2C3D4E5F60003 /* CollabViewModel.swift in Sources */,
 				C011AB05A1B2C3D4E5F60005 /* CollabWindow.swift in Sources */,
 				GW01AB01C2D3E4F5A6B70001 /* GatewayClient.swift in Sources */,
+				I18NSVC00000000000001 /* I18nService.swift in Sources */,
 				IRBS0001C2D3E4F5A6B70001 /* ImageReviewBatchStore.swift in Sources */,
 				APWS0001D1E2F3A4B5C60001 /* ProjectWorkspace.swift in Sources */,
 				PWCTX0000000000000001 /* ProjectWorkspaceContext.swift in Sources */,

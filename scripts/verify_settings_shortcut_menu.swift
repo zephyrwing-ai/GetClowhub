@@ -105,7 +105,8 @@ require(
     "Sidebar bottom bar should expose one Settings button that opens the arrowless shortcut panel."
 )
 require(
-    settingsPanel.contains(#"Text("Settings")"#) &&
+    sidebarBottomBar.contains("SettingsShortcutPanelButton(") &&
+        !sidebarBottomBar.contains("SettingsSectionRow(") &&
         !sidebarBottomBar.contains("sparkleUpdater.checkForUpdates") &&
         !sidebarBottomBar.contains("appAppearance = isDark ?"),
     "Sidebar bottom bar should contain only the Settings shortcut, not update or theme controls."

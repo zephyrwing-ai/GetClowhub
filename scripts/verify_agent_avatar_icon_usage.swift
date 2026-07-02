@@ -37,9 +37,12 @@ let marketplaceOverview = read("OpenClawInstaller/Views/Dashboard/MarketplaceOve
 let marketplaceDetail = read("OpenClawInstaller/Views/Dashboard/MarketplaceDetailView.swift")
 let marketplaceAgent = read("OpenClawInstaller/Models/MarketplaceAgent.swift")
 let avatarContents = read("OpenClawInstaller/Assets.xcassets/AgentAvatar.imageset/Contents.json")
+let expandedAvatarContents = read("OpenClawInstaller/Assets.xcassets/AgentAvatarExpanded.imageset/Contents.json")
 let avatarView = read("OpenClawInstaller/Views/Shared/AgentAvatarImage.swift")
 let agentDaySVG = read("OpenClawInstaller/Assets.xcassets/AgentAvatar.imageset/agent-day.svg")
 let agentNightSVG = read("OpenClawInstaller/Assets.xcassets/AgentAvatar.imageset/agent-night.svg")
+let agentExpandedDaySVG = read("OpenClawInstaller/Assets.xcassets/AgentAvatarExpanded.imageset/agent-expanded-day.svg")
+let agentExpandedNightSVG = read("OpenClawInstaller/Assets.xcassets/AgentAvatarExpanded.imageset/agent-expanded-night.svg")
 
 let collapsedPanel = slice(dashboard, from: "private var collapsedBody: some View", to: "private var edgeChevronHandle: some View")
 let agentCard = slice(dashboard, from: "private var agentCard: some View", to: "} label: {")
@@ -57,8 +60,18 @@ let marketplaceDetailHeader = slice(marketplaceDetail, from: "private var header
 
 assertContains(
     avatarView,
-    #"Image("AgentAvatar")"#,
-    "shared agent avatar must render the unified AgentAvatar asset"
+    "var isExpanded: Bool = false",
+    "shared agent avatar should default to the collapsed state"
+)
+assertContains(
+    avatarView,
+    #""AgentAvatar""#,
+    "shared agent avatar must keep the unified collapsed AgentAvatar asset"
+)
+assertContains(
+    avatarView,
+    #"Image(isExpanded ? "AgentAvatarExpanded" : "AgentAvatar")"#,
+    "shared agent avatar should switch to the expanded asset only when requested"
 )
 assertNotContains(
     avatarView,
@@ -77,69 +90,59 @@ assertContains(
 )
 assertContains(
     agentDaySVG,
-    #"stroke-width="1.8""#,
+    #"stroke-width="1.35""#,
     "light agent SVG stroke must stay crisp after shrinking in AgentsMarket rows"
 )
 assertContains(
     agentNightSVG,
-    #"stroke-width="1.8""#,
+    #"stroke-width="1.35""#,
     "dark agent SVG stroke must stay crisp after shrinking in AgentsMarket rows"
 )
 assertContains(
     agentDaySVG,
-    ##"fill="#F9F9F7""##,
-    "light agent SVG must use a soft light-mode avatar fill"
+    ##"fill="#FFFFFF""##,
+    "light agent SVG must use a crisp light-mode avatar fill"
 )
 assertContains(
     agentNightSVG,
-    ##"fill="#222522""##,
+    ##"fill="#20221F""##,
     "dark agent SVG must use a quiet dark-mode avatar fill"
 )
 for path in [
-    #"M12 12 L6.0 6.8"#,
-    #"M12 12 L18.1 6.7"#,
-    #"M12 12 L12 20.1"#
+    #"M3.9 11.65H6.1"#,
+    #"M11.75 11.7C11.95 11.45 12.05 11.45 12.25 11.7"#,
+    #"M17.9 11.65H20.1"#
 ] {
     assertContains(
         agentDaySVG,
         path,
-        "light agent SVG must use center-to-edge orchestration lines"
+        "light agent SVG must use the minimal glasses mark"
     )
     assertContains(
         agentNightSVG,
         path,
-        "dark agent SVG must use center-to-edge orchestration lines"
+        "dark agent SVG must use the minimal glasses mark"
     )
 }
 assertContains(
     agentDaySVG,
-    #"r="2.35""#,
-    "light agent SVG must include a single filled center node"
+    #"cx="9" cy="12" r="2.75""#,
+    "light agent SVG must include the left glasses lens"
 )
 assertContains(
     agentNightSVG,
-    #"r="2.35""#,
-    "dark agent SVG must include a single filled center node"
+    #"cx="15" cy="12" r="2.75""#,
+    "dark agent SVG must include the right glasses lens"
 )
 assertNotContains(
     agentDaySVG,
-    #"r="6""#,
-    "light agent SVG must no longer use the old middle concentric ring"
+    #"r="0.62""#,
+    "collapsed light agent SVG must not include expanded eye dots"
 )
 assertNotContains(
     agentNightSVG,
-    #"r="6""#,
-    "dark agent SVG must no longer use the old middle concentric ring"
-)
-assertNotContains(
-    agentDaySVG,
-    #"r="3""#,
-    "light agent SVG must no longer use the old inner concentric ring"
-)
-assertNotContains(
-    agentNightSVG,
-    #"r="3""#,
-    "dark agent SVG must no longer use the old inner concentric ring"
+    #"r="0.62""#,
+    "collapsed dark agent SVG must not include expanded eye dots"
 )
 assertNotContains(
     agentDaySVG,
@@ -162,10 +165,37 @@ assertContains(
     "AgentAvatar asset must include the dark-mode SVG"
 )
 assertContains(
+    expandedAvatarContents,
+    #"agent-expanded-day.svg"#,
+    "AgentAvatarExpanded asset must include the light-mode expanded SVG"
+)
+assertContains(
+    expandedAvatarContents,
+    #"agent-expanded-night.svg"#,
+    "AgentAvatarExpanded asset must include the dark-mode expanded SVG"
+)
+assertContains(
     avatarContents,
     #""appearance" : "luminosity""#,
     "AgentAvatar asset must use luminosity appearance variants"
 )
+assertContains(
+    expandedAvatarContents,
+    #""appearance" : "luminosity""#,
+    "AgentAvatarExpanded asset must use luminosity appearance variants"
+)
+for expandedSVG in [agentExpandedDaySVG, agentExpandedNightSVG] {
+    assertContains(
+        expandedSVG,
+        #"cx="9" cy="12" r="0.62""#,
+        "expanded agent avatar must add the left eye dot"
+    )
+    assertContains(
+        expandedSVG,
+        #"cx="15" cy="12" r="0.62""#,
+        "expanded agent avatar must add the right eye dot"
+    )
+}
 assertNotContains(
     avatarContents,
     #"agent-avatar-concentric-circles.svg"#,
@@ -188,8 +218,8 @@ assertContains(
 )
 assertContains(
     agentSidebarRow,
-    "AgentAvatarImage(size: DashboardSidebarMetrics.agentAvatarSize)",
-    "agent sidebar rows must use the shared SVG avatar metric"
+    "AgentAvatarImage(size: DashboardSidebarMetrics.agentAvatarSize, isExpanded: expandedAgentIds.contains(agent.id))",
+    "agent sidebar rows must pass expanded state into the shared avatar"
 )
 assertContains(
     agentSidebarRow,

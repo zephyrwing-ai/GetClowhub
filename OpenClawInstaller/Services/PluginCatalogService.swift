@@ -152,6 +152,7 @@ enum PluginCatalogService {
         let capabilities = openClawManifest?.capabilities ?? []
         let keywords = openClawManifest?.keywords ?? packageManifest?.keywords ?? []
         let relativePath = relativePath(from: rootURL, to: pluginURL)
+        let systemIconName = (openClawManifest?.systemIcon)?.nilIfBlank
         let iconURL = preferredIconURL(in: pluginURL, iconPath: openClawManifest?.icon)
         let hasExtensions = packageManifest?.openclaw?.extensions.isEmpty == false
         let isInstallable = hasExtensions && FileManager.default.fileExists(atPath: openClawManifestURL.path)
@@ -169,6 +170,7 @@ enum PluginCatalogService {
             keywords: keywords,
             relativePath: relativePath,
             source: source,
+            systemIconName: systemIconName,
             iconURL: iconURL,
             repositoryURL: (openClawManifest?.repositoryURL)?.nilIfBlank,
             homepageURL: (openClawManifest?.homepageURL)?.nilIfBlank,
@@ -497,6 +499,7 @@ private struct OpenClawPluginManifest: Decodable {
     let category: String?
     let capabilities: [String]
     let keywords: [String]
+    let systemIcon: String?
     let icon: String?
     let homepageURL: String?
     let repositoryURL: String?
@@ -514,6 +517,7 @@ private struct OpenClawPluginManifest: Decodable {
         case category
         case capabilities
         case keywords
+        case systemIcon
         case icon
         case homepageURL
         case repositoryURL
@@ -533,6 +537,7 @@ private struct OpenClawPluginManifest: Decodable {
         category = try container.decodeIfPresent(String.self, forKey: .category)
         capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
         keywords = try container.decodeIfPresent([String].self, forKey: .keywords) ?? []
+        systemIcon = try container.decodeIfPresent(String.self, forKey: .systemIcon)
         icon = try container.decodeIfPresent(String.self, forKey: .icon)
         homepageURL = try container.decodeIfPresent(String.self, forKey: .homepageURL)
         repositoryURL = try container.decodeIfPresent(String.self, forKey: .repositoryURL)

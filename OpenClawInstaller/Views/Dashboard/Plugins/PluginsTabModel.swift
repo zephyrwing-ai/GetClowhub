@@ -78,8 +78,9 @@ final class PluginsTabModel: ObservableObject {
 
     func installCatalogPlugin(_ item: PluginCatalogItem) async {
         guard installingCatalogPluginName == nil else { return }
+        let display = I18n.pluginDisplay(for: item)
         guard item.isOpenClawInstallable else {
-            notifyError("\(item.displayName) is not installable by OpenClaw.")
+            notifyError(I18n.format("plugins.toast.notInstallable", display.displayName))
             return
         }
 
@@ -93,10 +94,10 @@ final class PluginsTabModel: ObservableObject {
 
         if output?.contains("__OPENCLAW_PLUGIN_INSTALL_OK__") == true {
             await loadPlugins()
-            notifySuccess("Installed plugin \(item.displayName)")
+            notifySuccess(I18n.format("plugins.toast.installed", display.displayName))
         } else {
             let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines)
-            notifyError("Failed to install \(item.displayName): \(trimmed?.isEmpty == false ? trimmed! : "unknown error")")
+            notifyError(I18n.format("plugins.toast.installFailed", display.displayName, trimmed?.isEmpty == false ? trimmed! : I18n.t("common.error.unknown")))
         }
     }
 
@@ -104,9 +105,9 @@ final class PluginsTabModel: ObservableObject {
         isPerformingAction = true
         let output = await openclawService.runCommand("openclaw plugins enable \(plugin.pluginId) 2>&1")
         if let output = output, output.lowercased().contains("error") {
-            notifyError("Failed to enable \(plugin.channel): \(output)")
+            notifyError(I18n.format("plugins.toast.enableFailed", plugin.channel, output))
         } else {
-            notifySuccess("\(plugin.channel) enabled")
+            notifySuccess(I18n.format("plugins.toast.enabled", plugin.channel))
         }
         await loadPlugins()
         isPerformingAction = false
@@ -116,9 +117,9 @@ final class PluginsTabModel: ObservableObject {
         isPerformingAction = true
         let output = await openclawService.runCommand("openclaw plugins disable \(plugin.pluginId) 2>&1")
         if let output = output, output.lowercased().contains("error") {
-            notifyError("Failed to disable \(plugin.channel): \(output)")
+            notifyError(I18n.format("plugins.toast.disableFailed", plugin.channel, output))
         } else {
-            notifySuccess("\(plugin.channel) disabled")
+            notifySuccess(I18n.format("plugins.toast.disabled", plugin.channel))
         }
         await loadPlugins()
         isPerformingAction = false
@@ -134,9 +135,9 @@ final class PluginsTabModel: ObservableObject {
         cmd += " 2>&1"
         let output = await openclawService.runCommand(cmd, timeout: 120)
         if let output = output, output.lowercased().contains("error") {
-            notifyError("Failed to install plugin: \(output)")
+            notifyError(I18n.format("plugins.toast.customInstallFailed", output))
         } else {
-            notifySuccess("Plugin installed successfully")
+            notifySuccess(I18n.t("plugins.toast.customInstalled"))
         }
         await loadPlugins()
         isPerformingAction = false
@@ -148,9 +149,9 @@ final class PluginsTabModel: ObservableObject {
             "npx -y @tencent-weixin/openclaw-weixin-cli@latest install 2>&1", timeout: 120
         )
         if let output = output, output.lowercased().contains("error") {
-            notifyError("Failed to install Weixin plugin: \(output)")
+            notifyError(I18n.format("plugins.toast.weixinInstallFailed", output))
         } else {
-            notifySuccess("Weixin plugin installed successfully")
+            notifySuccess(I18n.t("plugins.toast.weixinInstalled"))
         }
         await loadPlugins()
         isPerformingAction = false
@@ -158,7 +159,7 @@ final class PluginsTabModel: ObservableObject {
 
     func uninstallPlugin(_ plugin: PluginInfo) async {
         guard plugin.origin == .global else {
-            notifyError("Built-in plugins cannot be uninstalled. Use Disable instead.")
+            notifyError(I18n.t("plugins.toast.builtInUninstall"))
             return
         }
         isPerformingAction = true
@@ -169,7 +170,7 @@ final class PluginsTabModel: ObservableObject {
         )
         guard output?.contains("__OPENCLAW_PLUGIN_UNINSTALL_OK__") == true else {
             let detail = output?.trimmingCharacters(in: .whitespacesAndNewlines)
-            notifyError("Failed to uninstall \(plugin.channel): \(detail?.isEmpty == false ? detail! : "unknown error")")
+            notifyError(I18n.format("plugins.toast.uninstallFailed", plugin.channel, detail?.isEmpty == false ? detail! : I18n.t("common.error.unknown")))
             await loadPlugins()
             return
         }
@@ -179,9 +180,9 @@ final class PluginsTabModel: ObservableObject {
                 pluginID: plugin.pluginId,
                 source: plugin.source
             )
-            notifySuccess("\(plugin.channel) uninstalled")
+            notifySuccess(I18n.format("plugins.toast.uninstalled", plugin.channel))
         } catch {
-            notifyError("Failed to remove \(plugin.channel) files: \(error.localizedDescription)")
+            notifyError(I18n.format("plugins.toast.removeFilesFailed", plugin.channel, error.localizedDescription))
         }
 
         await loadPlugins()
@@ -193,9 +194,9 @@ final class PluginsTabModel: ObservableObject {
             "openclaw plugins update \(plugin.pluginId) 2>&1", timeout: 120
         )
         if let output = output, output.lowercased().contains("error") {
-            notifyError("Failed to update \(plugin.channel): \(output)")
+            notifyError(I18n.format("plugins.toast.updateFailed", plugin.channel, output))
         } else {
-            notifySuccess("\(plugin.channel) updated")
+            notifySuccess(I18n.format("plugins.toast.updated", plugin.channel))
         }
         await loadPlugins()
         isPerformingAction = false
@@ -207,9 +208,9 @@ final class PluginsTabModel: ObservableObject {
             "openclaw plugins update --all 2>&1", timeout: 120
         )
         if let output = output, output.lowercased().contains("error") {
-            notifyError("Failed to update plugins: \(output)")
+            notifyError(I18n.format("plugins.toast.updateAllFailed", output))
         } else {
-            notifySuccess("All plugins updated")
+            notifySuccess(I18n.t("plugins.toast.allUpdated"))
         }
         await loadPlugins()
         isPerformingAction = false

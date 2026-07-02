@@ -49,6 +49,7 @@ func sliceFrom(_ haystack: String, from start: String) -> String {
 
 let dashboard = read("OpenClawInstaller/Views/Dashboard/DashboardView.swift")
 let rightInspectorSplit = read("OpenClawInstaller/Views/Dashboard/Inspector/RightInspectorSplitView.swift")
+let workspaceInspector = read("OpenClawInstaller/Views/Dashboard/Inspector/WorkspaceInspectorPane.swift")
 let project = read("OpenClawInstaller.xcodeproj/project.pbxproj")
 let dashboardView = slice(dashboard, from: "struct DashboardView: View", to: "// MARK: - Sidebar")
 let rightInspectorContentUpdateID = slice(
@@ -772,11 +773,25 @@ assertNotContains(
     "conversation header should not occupy vertical space inside the main content pane"
 )
 
-let workspaceFilePanel = slice(dashboard, from: "private struct WorkspaceFilePanel: View", to: "    private var outputsEmptyState: some View")
-let workspaceOutputsPaneHeader = slice(dashboard, from: "private struct WorkspaceOutputsPaneHeader: View", to: "private struct RightOutputsTitlebarAccessory")
-let workspaceInspectorPane = slice(dashboard, from: "private struct WorkspaceInspectorPane: View", to: "private struct RightOutputsTitlebarAccessory")
-let projectFilesPanel = slice(dashboard, from: "private struct ProjectFilesPanel: View", to: "private struct FileEditorPanel")
-let openWorkspaceInFinderIcon = slice(dashboard, from: "private struct OpenWorkspaceInFinderIcon: View", to: "private struct SecondaryProjectSidebarIcon: View")
+let workspaceFilePanel = slice(workspaceInspector, from: "private struct WorkspaceFilePanel: View", to: "    private var outputsEmptyState: some View")
+let workspaceOutputsPaneHeader = slice(workspaceInspector, from: "private struct WorkspaceOutputsPaneHeader: View", to: "struct WorkspaceInspectorPane: View")
+let workspaceInspectorPane = slice(workspaceInspector, from: "struct WorkspaceInspectorPane: View", to: "private struct WorkspaceFilePanel: View")
+let projectFilesPanel = slice(workspaceInspector, from: "private struct ProjectFilesPanel: View", to: "private struct CommitTextField")
+let openWorkspaceInFinderIcon = slice(workspaceInspector, from: "private struct OpenWorkspaceInFinderIcon: View", to: "private struct SecondaryProjectSidebarIcon: View")
+for extractedType in [
+    "struct WorkspaceInspectorPane: View",
+    "struct WorkspaceFilePanel: View",
+    "struct ProjectFilesPanel: View",
+    "struct FileEditorPanel: View",
+    "struct CodeEditorView: NSViewRepresentable",
+    "struct QuickLookPreview: NSViewRepresentable"
+] {
+    assertNotContains(
+        dashboard,
+        extractedType,
+        "right inspector implementation types should live under Views/Dashboard/Inspector instead of DashboardView.swift"
+    )
+}
 assertContains(
     workspaceFilePanel,
     "let root: WorkspaceSidebarRoot",
@@ -823,22 +838,22 @@ assertContains(
     "Open/Finder should ensure the current agent workspace exists before asking Finder to open it"
 )
 assertContains(
-    dashboard,
+    workspaceInspector,
     "private struct SecondaryProjectSidebarIcon: View",
     "secondary project sidebar button should use the layered rounded-rectangle vector icon shown in the design reference"
 )
 assertContains(
-    dashboard,
+    workspaceInspector,
     "private struct SecondaryProjectSidebarBackShape: Shape",
     "secondary project sidebar icon should draw the exposed rear rounded-rectangle outline as vector"
 )
 assertContains(
-    dashboard,
+    workspaceInspector,
     "private struct SecondaryProjectSidebarFrontShape: Shape",
     "secondary project sidebar icon should draw the front rounded-rectangle card as vector"
 )
 assertContains(
-    dashboard,
+    workspaceInspector,
     "private struct OpenWorkspaceInFinderIcon: View",
     "Open/Finder button should use the uploaded reference as a custom thin-stroke vector icon"
 )
@@ -853,7 +868,7 @@ assertContains(
     "right workspace header should render the secondary project sidebar icon in the old search button position"
 )
 assertContains(
-    dashboard,
+    workspaceInspector,
     "private struct WorkspaceHeaderIconButton<Icon: View>: View",
     "right workspace header icon buttons should share a full-frame hit target wrapper"
 )
@@ -863,7 +878,7 @@ assertContains(
     "right workspace header should wrap icon-only buttons so transparent vector interiors remain clickable"
 )
 assertContains(
-    dashboard,
+    workspaceInspector,
     ".contentShape(Rectangle())",
     "right workspace header icon buttons should make the full icon frame hit-testable"
 )
@@ -899,7 +914,7 @@ assertNotContains(
     "secondary project sidebar close behavior should not depend only on the committed target mode"
 )
 assertContains(
-    dashboard,
+    workspaceInspector,
     "private enum WorkspaceDetailMode: Equatable",
     "right inspector detail area should switch between file preview and project tree modes"
 )

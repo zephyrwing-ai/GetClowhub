@@ -125,8 +125,8 @@ assertNotContains(
 )
 assertContains(
     selectorPanel,
-    "let models: [ModelOption]",
-    "composer model panel must receive model data as an explicit input"
+    "let modelGroups: [ProviderModelGroup]",
+    "composer model panel must receive grouped model data as an explicit input"
 )
 assertContains(
     selectorPanel,
@@ -140,8 +140,28 @@ assertNotContains(
 )
 assertContains(
     selectorPanel,
-    "ForEach(models)",
-    "composer model panel must render the injected model list directly"
+    "ForEach(modelGroups)",
+    "composer model panel must render the injected provider groups directly"
+)
+assertContains(
+    selectorPanel,
+    "group.displayName",
+    "composer model panel must render provider group headers"
+)
+assertNotContains(
+    selectorPanel,
+    "Default (",
+    "composer model panel must not show a Default row"
+)
+assertNotContains(
+    selectorPanel,
+    #"subtitle: "Inherit""#,
+    "composer model panel must not expose inherit text in the model list"
+)
+assertContains(
+    selectorPanel,
+    "effectiveSelectedModel",
+    "composer model panel must select the effective model when current model inherits the default"
 )
 assertContains(
     selectorPanel,

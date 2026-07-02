@@ -12,38 +12,42 @@ struct SkillDetailPresentationItem: Identifiable {
     let catalogItem: SkillCatalogItem?
     let iconURL: URL?
 
+    @MainActor
     static func fromCatalog(_ item: SkillCatalogItem) -> SkillDetailPresentationItem {
-        SkillDetailPresentationItem(
+        let display = I18n.skillDisplay(for: item)
+        return SkillDetailPresentationItem(
             id: "catalog-\(item.id)",
             name: item.name,
-            displayName: item.displayName,
-            description: item.description,
-            documentationMarkdown: item.documentationMarkdown,
-            sourceTitle: item.isRecommended ? "Recommend" : "Catalog",
+            displayName: display.displayName,
+            description: display.description,
+            documentationMarkdown: display.content,
+            sourceTitle: item.isRecommended ? I18n.t("catalog.section.recommend") : I18n.t("catalog.section.catalog"),
             catalogItem: item,
             iconURL: item.iconURL
         )
     }
 
+    @MainActor
     static func fromInstalled(_ skill: SkillInfo, catalogItem: SkillCatalogItem?) -> SkillDetailPresentationItem {
         let sourceTitle: String
         if catalogItem?.isRecommended == true {
-            sourceTitle = "Recommend"
+            sourceTitle = I18n.t("catalog.section.recommend")
         } else if catalogItem != nil {
-            sourceTitle = "Catalog"
+            sourceTitle = I18n.t("catalog.section.catalog")
         } else {
-            sourceTitle = "Custom"
+            sourceTitle = I18n.t("catalog.section.custom")
         }
-        let description = catalogItem?.description.nilIfBlank
+        let localizedCatalog = catalogItem.map { I18n.skillDisplay(for: $0) }
+        let description = localizedCatalog?.description.nilIfBlank
             ?? skill.description.nilIfBlank
-            ?? "Installed skill"
+            ?? I18n.t("skills.fallback.installedSkill")
 
         return SkillDetailPresentationItem(
             id: "installed-\(skill.name)",
             name: skill.name,
-            displayName: catalogItem?.displayName ?? skill.name,
+            displayName: localizedCatalog?.displayName ?? skill.name,
             description: description,
-            documentationMarkdown: catalogItem?.documentationMarkdown.nilIfBlank ?? description,
+            documentationMarkdown: localizedCatalog?.content.nilIfBlank ?? description,
             sourceTitle: sourceTitle,
             catalogItem: catalogItem,
             iconURL: catalogItem?.iconURL
@@ -52,6 +56,7 @@ struct SkillDetailPresentationItem: Identifiable {
 }
 
 struct SkillsTabView: View {
+    @EnvironmentObject private var languageManager: LanguageManager
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var model: SkillsTabModel
     @State private var searchText = ""
@@ -64,6 +69,15 @@ struct SkillsTabView: View {
         case recommend = "Recommend"
         case all = "All"
         case installed = "Installed"
+
+        @MainActor
+        var localizedTitle: String {
+            switch self {
+            case .recommend: return I18n.t("catalog.section.recommend")
+            case .all: return I18n.t("catalog.section.all")
+            case .installed: return I18n.t("catalog.section.installed")
+            }
+        }
     }
 
     private var installedSkillsByName: [String: SkillInfo] {
@@ -76,10 +90,12 @@ struct SkillsTabView: View {
 
     private var filteredCatalogItems: [SkillCatalogItem] {
         model.skillCatalog.filter { item in
-            matchesSearch(
-                name: item.displayName,
-                description: item.description,
-                metadata: [item.name, item.isRecommended ? "recommended" : "", item.tags.joined(separator: " ")]
+            let display = I18n.skillDisplay(for: item)
+            return matchesSearch(
+                fields: I18n.localizedSearchFields(
+                    [display.displayName, display.description, display.content],
+                    originals: [item.displayName, item.description, item.documentationMarkdown, item.name, item.isRecommended ? "recommended" : "", item.tags.joined(separator: " ")]
+                )
             )
         }
     }
@@ -95,15 +111,24 @@ struct SkillsTabView: View {
     private var filteredInstalledSkills: [SkillInfo] {
         model.skills.filter { skill in
             let catalogItem = catalogItemsByName[skill.name]
+            let display = catalogItem.map { I18n.skillDisplay(for: $0) }
             return matchesSearch(
-                name: catalogItem?.displayName ?? skill.name,
-                description: catalogItem?.description ?? skill.description,
-                metadata: [
-                    skill.name,
-                    skill.source,
-                    catalogItem?.isRecommended == true ? "recommended" : "",
-                    catalogItem?.tags.joined(separator: " ") ?? ""
-                ]
+                fields: I18n.localizedSearchFields(
+                    [
+                        display?.displayName ?? skill.name,
+                        display?.description ?? skill.description,
+                        display?.content ?? ""
+                    ],
+                    originals: [
+                        catalogItem?.displayName ?? skill.name,
+                        catalogItem?.description ?? skill.description,
+                        catalogItem?.documentationMarkdown ?? "",
+                        skill.name,
+                        skill.source,
+                        catalogItem?.isRecommended == true ? "recommended" : "",
+                        catalogItem?.tags.joined(separator: " ") ?? ""
+                    ]
+                )
             )
         }
     }
@@ -154,9 +179,9 @@ struct SkillsTabView: View {
         .animation(.spring(response: 0.24, dampingFraction: 0.9), value: selectedSkillDetailItem?.id)
         .alert(item: $skillPendingRemoval) { skill in
             Alert(
-                title: Text("Remove Skill"),
-                message: Text("Remove \"\(skill.name)\" from installed skills?"),
-                primaryButton: .destructive(Text("Remove")) {
+                title: Text(I18n.t("skills.alert.removeTitle")),
+                message: Text(I18n.format("skills.alert.removeMessage", skill.name)),
+                primaryButton: .destructive(Text(I18n.t("catalog.action.remove", fallback: "Remove"))) {
                     Task { await model.removeSkill(skill) }
                 },
                 secondaryButton: .cancel()
@@ -167,9 +192,9 @@ struct SkillsTabView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Skills")
+                Text(I18n.t("skills.title"))
                     .font(.system(size: 24, weight: .semibold))
-                Text("Extend GetClowHub with task-specific skills")
+                Text(I18n.t("skills.subtitle"))
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -177,7 +202,7 @@ struct SkillsTabView: View {
             Spacer()
 
             if !model.skillCatalog.isEmpty || !model.skills.isEmpty {
-                Text("\(model.skills.count) installed")
+                Text(I18n.format("catalog.count.installed", Int64(model.skills.count)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -186,7 +211,7 @@ struct SkillsTabView: View {
 
     private var searchAndActions: some View {
         HStack(spacing: 10) {
-            UnifiedSearchField(placeholder: "Search skills", text: $searchText)
+            UnifiedSearchField(placeholder: I18n.t("skills.search.placeholder"), text: $searchText)
 
             Button {
                 withAnimation(.easeInOut(duration: 0.16)) {
@@ -199,7 +224,7 @@ struct SkillsTabView: View {
                     .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
-            .help("Install skill from GitHub repository")
+            .help(I18n.t("skills.help.installFromRepository"))
 
             Button {
                 Task { await model.loadSkillMarket(forceSync: true) }
@@ -216,14 +241,14 @@ struct SkillsTabView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isLoadingSkillCatalog)
-            .help("Refresh skills")
+            .help(I18n.t("skills.help.refresh"))
         }
     }
 
     private var modePicker: some View {
         Picker("", selection: $displayMode) {
             ForEach(SkillDisplayMode.allCases, id: \.self) { mode in
-                Text(mode.rawValue).tag(mode)
+                Text(mode.localizedTitle).tag(mode)
             }
         }
         .pickerStyle(.segmented)
@@ -245,22 +270,22 @@ struct SkillsTabView: View {
     @ViewBuilder
     private var recommendedSkillsContent: some View {
         if model.isLoadingSkillCatalog && model.skillCatalog.isEmpty {
-            LoadingStateView(text: "Loading skill catalog...")
+            LoadingStateView(text: I18n.t("skills.loading.catalog"))
         } else if let error = model.skillCatalogError, model.skillCatalog.isEmpty {
             EmptySkillStateView(
                 systemImage: "exclamationmark.triangle",
-                title: "Could not load skill catalog",
+                title: I18n.t("skills.empty.catalogLoadFailed"),
                 detail: error
             )
         } else if filteredRecommendedCatalogItems.isEmpty {
             EmptySkillStateView(
                 systemImage: "bolt",
-                title: model.skillCatalog.isEmpty ? "No recommended skills" : "No matching recommended skills",
+                title: model.skillCatalog.isEmpty ? I18n.t("skills.empty.noRecommended") : I18n.t("skills.empty.noMatchingRecommended"),
                 detail: nil
             )
         } else {
             catalogSkillSection(
-                title: "Recommend",
+                title: I18n.t("catalog.section.recommend"),
                 items: filteredRecommendedCatalogItems
             )
         }
@@ -269,17 +294,17 @@ struct SkillsTabView: View {
     @ViewBuilder
     private var allSkillsContent: some View {
         if model.isLoadingSkillCatalog && model.skillCatalog.isEmpty {
-            LoadingStateView(text: "Loading skill catalog...")
+            LoadingStateView(text: I18n.t("skills.loading.catalog"))
         } else if let error = model.skillCatalogError, model.skillCatalog.isEmpty {
             EmptySkillStateView(
                 systemImage: "exclamationmark.triangle",
-                title: "Could not load skill catalog",
+                title: I18n.t("skills.empty.catalogLoadFailed"),
                 detail: error
             )
         } else if filteredCatalogItems.isEmpty && filteredCustomInstalledSkills.isEmpty {
             EmptySkillStateView(
                 systemImage: "bolt.slash",
-                title: model.skillCatalog.isEmpty ? "No skills found" : "No matching skills",
+                title: model.skillCatalog.isEmpty ? I18n.t("skills.empty.noSkills") : I18n.t("skills.empty.noMatchingSkills"),
                 detail: nil
             )
         } else {
@@ -334,7 +359,7 @@ struct SkillsTabView: View {
 
     private func allSkillSection(catalogItems: [SkillCatalogItem], customSkills: [SkillInfo]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            SkillSectionHeader(title: "All", count: catalogItems.count + customSkills.count)
+            SkillSectionHeader(title: I18n.t("catalog.section.all"), count: catalogItems.count + customSkills.count)
 
             LazyVStack(spacing: 0) {
                 ForEach(Array(catalogItems.enumerated()), id: \.element.id) { index, item in
@@ -409,16 +434,16 @@ struct SkillsTabView: View {
     @ViewBuilder
     private var installedSkillsContent: some View {
         if model.isLoadingSkills && model.skills.isEmpty {
-            LoadingStateView(text: "Loading installed skills...")
+            LoadingStateView(text: I18n.t("skills.loading.installed"))
         } else if filteredInstalledSkills.isEmpty {
             EmptySkillStateView(
                 systemImage: "checkmark.circle",
-                title: model.skills.isEmpty ? "No installed skills" : "No matching installed skills",
+                title: model.skills.isEmpty ? I18n.t("skills.empty.noInstalled") : I18n.t("skills.empty.noMatchingInstalled"),
                 detail: nil
             )
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                SkillSectionHeader(title: "Installed", count: filteredInstalledSkills.count)
+                SkillSectionHeader(title: I18n.t("catalog.section.installed"), count: filteredInstalledSkills.count)
 
                 LazyVStack(spacing: 0) {
                     ForEach(Array(filteredInstalledSkills.enumerated()), id: \.offset) { index, skill in
@@ -445,11 +470,11 @@ struct SkillsTabView: View {
         }
     }
 
-    private func matchesSearch(name: String, description: String, metadata: [String]) -> Bool {
+    private func matchesSearch(fields: [String]) -> Bool {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return true }
 
-        let haystack = ([name, description] + metadata)
+        let haystack = fields
             .joined(separator: " ")
             .lowercased()
         return haystack.contains(query)
@@ -531,16 +556,16 @@ private struct ManualSkillInstallSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Install Skill")
+                Text(I18n.t("skills.manual.title"))
                     .font(.system(size: 21, weight: .semibold))
 
-                Text("Install a GitHub skill repository globally.")
+                Text(I18n.t("skills.manual.subtitle"))
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Repository")
+                Text(I18n.t("skills.manual.repository"))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
 
@@ -567,7 +592,7 @@ private struct ManualSkillInstallSheet: View {
                 Spacer()
 
                 Button(action: onCancel) {
-                    Text("Cancel")
+                    Text(I18n.t("catalog.action.cancel"))
                         .frame(width: 92, height: 30)
                 }
                 .buttonStyle(SkillPillButtonStyle(tone: .neutral, isDisabled: isInstalling))
@@ -576,7 +601,7 @@ private struct ManualSkillInstallSheet: View {
                 Button {
                     onInstall(repository)
                 } label: {
-                    Text(isInstalling ? "Installing..." : "Install")
+                    Text(isInstalling ? I18n.t("catalog.action.installing") : I18n.t("catalog.action.install"))
                         .frame(width: 104, height: 30)
                 }
                 .buttonStyle(SkillPillButtonStyle(tone: .install, isDisabled: !canInstall))
@@ -637,16 +662,18 @@ private struct CatalogSkillListRow: View {
     let onOpen: () -> Void
 
     var body: some View {
+        let display = I18n.skillDisplay(for: item)
+
         HStack(spacing: 14) {
             SkillCatalogIcon(iconURL: item.iconURL, size: 32)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.displayName)
+                Text(display.displayName)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                Text(item.description)
+                Text(display.description)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -659,7 +686,7 @@ private struct CatalogSkillListRow: View {
             } else {
                 Button(action: onInstall) {
                     if isInstalling {
-                        Text("Installing...")
+                        Text(I18n.t("catalog.action.installing"))
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .frame(width: 74, height: 28)
@@ -680,7 +707,7 @@ private struct CatalogSkillListRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isInstalling)
-                .help("Install")
+                .help(I18n.t("catalog.action.install"))
             }
         }
         .padding(.horizontal, 8)
@@ -711,16 +738,22 @@ private struct InstalledSkillListRow: View {
     let onOpen: () -> Void
 
     var body: some View {
+        let display = catalogItem.map { I18n.skillDisplay(for: $0) }
+        let title = display?.displayName ?? skill.name
+        let description = display?.description.nilIfBlank
+            ?? skill.description.nilIfBlank
+            ?? I18n.t("skills.fallback.installedSkill")
+
         HStack(spacing: 14) {
             SkillCatalogIcon(iconURL: catalogItem?.iconURL, size: 32)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(catalogItem?.displayName ?? skill.name)
+                Text(title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                Text(catalogItem?.description.nilIfBlank ?? skill.description.nilIfBlank ?? "Installed skill")
+                Text(description)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -759,13 +792,13 @@ private struct InstalledStatusMark: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.primary)
                 .frame(width: 28, height: 28)
-                .help("Ready")
+                .help(I18n.t("catalog.status.ready"))
         } else {
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.orange)
                 .frame(width: 28, height: 28)
-                .help("Missing requirements")
+                .help(I18n.t("catalog.status.missing"))
         }
     }
 }
@@ -786,9 +819,10 @@ private struct SkillCatalogIcon: View {
                     .resizable()
                     .scaledToFit()
             } else {
-                Image("SkillAvatarUnifiedDark")
-                    .resizable()
-                    .scaledToFit()
+                Image(systemName: AppSystemSymbol.skills)
+                    .font(.system(size: size * 0.58, weight: .medium))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(.primary)
             }
         }
         .frame(width: size, height: size)
@@ -891,9 +925,9 @@ struct SkillCatalogDetailSheet: View {
 
                     HStack(spacing: 8) {
                         SkillDetailChip(title: item.sourceTitle)
-                        SkillDetailChip(title: installedSkill == nil ? "Not installed" : "Installed")
+                        SkillDetailChip(title: installedSkill == nil ? I18n.t("catalog.status.notInstalled") : I18n.t("catalog.status.installed"))
                         if let installedSkill {
-                            SkillDetailChip(title: installedSkill.status == .ready ? "Ready" : "Missing")
+                            SkillDetailChip(title: installedSkill.status == .ready ? I18n.t("catalog.status.ready") : I18n.t("catalog.status.missing"))
                         }
                     }
                 }
@@ -910,7 +944,7 @@ struct SkillCatalogDetailSheet: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Close")
+                    .help(I18n.t("catalog.action.close"))
                 }
             }
             .padding(.bottom, 16)
@@ -923,7 +957,7 @@ struct SkillCatalogDetailSheet: View {
                 .textSelection(.enabled)
                 .padding(.bottom, 20)
 
-            Text("Description")
+            Text(I18n.t("catalog.detail.description"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 8)
@@ -979,10 +1013,10 @@ struct SkillCatalogDetailSheet: View {
         if installedSkill == nil {
             Button(action: onInstall) {
                 if isInstalling {
-                    Text("Installing...")
+                    Text(I18n.t("catalog.action.installing"))
                         .frame(width: 92, height: 30)
                 } else {
-                    Text("Install")
+                    Text(I18n.t("catalog.action.install"))
                         .frame(width: 92, height: 30)
                 }
             }
@@ -991,17 +1025,17 @@ struct SkillCatalogDetailSheet: View {
         } else if canRemove {
             Button(role: .destructive, action: onRemove) {
                 if isRemoving {
-                    Text("Removing...")
+                    Text(I18n.t("catalog.action.removing"))
                         .frame(width: 92, height: 30)
                 } else {
-                    Text("Uninstall")
+                    Text(I18n.t("catalog.action.uninstall"))
                         .frame(width: 92, height: 30)
                 }
             }
             .buttonStyle(SkillPillButtonStyle(tone: .destructive, isDisabled: isRemoving))
             .disabled(isRemoving)
         } else {
-            Text("Installed")
+            Text(I18n.t("catalog.status.installed"))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)

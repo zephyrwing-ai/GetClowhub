@@ -1390,9 +1390,12 @@ class CollabViewModel: ObservableObject {
         let fm = FileManager.default
         try? fm.createDirectory(atPath: workspace, withIntermediateDirectories: true)
 
-        let identityContent = MarketplaceContentConverter.identityMarkdown(for: agent)
-        let soulContent = MarketplaceContentConverter.soulMarkdown(for: agent)
-        let agentsContent = MarketplaceContentConverter.agentsMarkdown(for: agent)
+        let localeID = await MainActor.run {
+            LanguageManager.shared.currentLocale.identifier
+        }
+        let identityContent = MarketplaceContentConverter.identityMarkdown(for: agent, localeID: localeID)
+        let soulContent = MarketplaceContentConverter.soulMarkdown(for: agent, localeID: localeID)
+        let agentsContent = MarketplaceContentConverter.agentsMarkdown(for: agent, localeID: localeID)
         let memoryContent = MarketplaceContentConverter.memoryMarkdown()
 
         try? identityContent.write(toFile: (workspace as NSString).appendingPathComponent("IDENTITY.md"),

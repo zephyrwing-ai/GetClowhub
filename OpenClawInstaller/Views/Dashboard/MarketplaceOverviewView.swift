@@ -59,7 +59,7 @@ struct MarketplaceOverviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             UnifiedSearchField(
-                placeholder: String(localized: "Search agents...", bundle: languageManager.localizedBundle),
+                placeholder: I18n.t("agents.search.placeholder"),
                 text: $searchText
             )
 
@@ -70,7 +70,7 @@ struct MarketplaceOverviewView: View {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 36))
                             .foregroundColor(.secondary)
-                        Text(String(localized: "No matching agents", bundle: languageManager.localizedBundle))
+                        Text(I18n.t("agents.empty.noMatching"))
                             .font(.headline)
                             .foregroundColor(.secondary)
                     }

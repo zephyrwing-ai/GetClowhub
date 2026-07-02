@@ -592,6 +592,7 @@
       }
     },
     "%@ plugin is already installed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1259,9 +1260,6 @@
           }
         }
       }
-    },
-    "%lld installed" : {
-
     },
     "%lld lines" : {
 
@@ -6974,9 +6972,6 @@
     "Are you sure you want to remove the cron job '%@'? This action cannot be undone." : {
 
     },
-    "Are you sure you want to uninstall '%@'?" : {
-
-    },
     "Ask a question..." : {
 
     },
@@ -10813,6 +10808,7 @@
       }
     },
     "Browse" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -17229,9 +17225,6 @@
         }
       }
     },
-    "Could not load skill catalog" : {
-
-    },
     "Create" : {
       "localizations" : {
         "ar" : {
@@ -19884,6 +19877,7 @@
 
     },
     "Disabled" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -20769,6 +20763,7 @@
 
     },
     "e.g. @openclaw/discord" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -22746,9 +22741,6 @@
     "Enable word wrap" : {
 
     },
-    "Enter a plugin URL, GitHub repository, archive URL, or remote package spec" : {
-
-    },
     "Enter a token for gateway access" : {
       "localizations" : {
         "ar" : {
@@ -24712,9 +24704,6 @@
           }
         }
       }
-    },
-    "Extend GetClowHub with task-specific skills" : {
-
     },
     "Extra" : {
       "extractionState" : "stale",
@@ -28834,9 +28823,6 @@
     "https://api.example.com/v1" : {
 
     },
-    "https://github.com/owner/repo" : {
-
-    },
     "Hub" : {
 
     },
@@ -29598,6 +29584,7 @@
       }
     },
     "Install" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29739,16 +29726,8 @@
         }
       }
     },
-    "Install a GitHub skill repository globally." : {
-
-    },
-    "Install curated OpenClaw plugins from the GetClowHub catalog" : {
-
-    },
-    "Install custom plugin" : {
-
-    },
     "Install Method" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -29891,6 +29870,7 @@
       }
     },
     "Install Plugin" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -30033,6 +30013,7 @@
       }
     },
     "Install Skill" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -30173,9 +30154,6 @@
           }
         }
       }
-    },
-    "Install skill from GitHub repository" : {
-
     },
     "Installation Complete!" : {
       "localizations" : {
@@ -32704,6 +32682,7 @@
       }
     },
     "Loaded" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -33625,9 +33604,6 @@
           }
         }
       }
-    },
-    "Loading skill catalog..." : {
-
     },
     "Loading skills..." : {
       "extractionState" : "stale",
@@ -40088,6 +40064,7 @@
 
     },
     "No plugins found" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -40558,6 +40535,7 @@
       }
     },
     "No skills found" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -45233,6 +45211,7 @@
 
     },
     "Package Name" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -46128,6 +46107,7 @@
       }
     },
     "Persona Content" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -46748,6 +46728,7 @@
       }
     },
     "Plugin File" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -47030,9 +47011,6 @@
           }
         }
       }
-    },
-    "Plugin Link" : {
-
     },
     "Plugins" : {
       "localizations" : {
@@ -47845,6 +47823,7 @@
       }
     },
     "Quick Select" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -49184,6 +49163,7 @@
       }
     },
     "Recruit Failed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -49326,6 +49306,7 @@
       }
     },
     "Recruited" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -49468,6 +49449,7 @@
       }
     },
     "Recruiting..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -49624,12 +49606,6 @@
           }
         }
       }
-    },
-    "Refresh plugins" : {
-
-    },
-    "Refresh skills" : {
-
     },
     "Refreshing..." : {
 
@@ -50062,9 +50038,6 @@
         }
       }
     },
-    "Remove \"%@\" from installed skills?" : {
-
-    },
     "Remove Agent" : {
 
     },
@@ -50367,9 +50340,6 @@
     "Remove from Agent" : {
 
     },
-    "Remove Skill" : {
-
-    },
     "Remove the budget rule for \"%@\"?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -50379,9 +50349,6 @@
           }
         }
       }
-    },
-    "Removing..." : {
-
     },
     "Rename" : {
       "localizations" : {
@@ -50744,9 +50711,6 @@
           }
         }
       }
-    },
-    "Repository" : {
-
     },
     "Requirements" : {
       "extractionState" : "stale",
@@ -52891,9 +52855,6 @@
         }
       }
     },
-    "Search plugins" : {
-
-    },
     "Search results" : {
       "localizations" : {
         "zh-Hans" : {
@@ -52909,9 +52870,6 @@
           }
         }
       }
-    },
-    "Search skills" : {
-
     },
     "Search skills..." : {
       "extractionState" : "stale",
@@ -53497,6 +53455,7 @@
       }
     },
     "Select a plugin file..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -57598,6 +57557,7 @@
 
     },
     "Supported: .ts .js .zip .tgz .tar.gz" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -61612,9 +61572,6 @@
         }
       }
     },
-    "Unavailable" : {
-
-    },
     "Understanding requirements..." : {
       "localizations" : {
         "ar" : {
@@ -62077,9 +62034,6 @@
         }
       }
     },
-    "Uninstall Plugin" : {
-
-    },
     "Uninstalling..." : {
       "localizations" : {
         "ar" : {
@@ -62254,6 +62208,7 @@
       }
     },
     "Update" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -62411,9 +62366,6 @@
           }
         }
       }
-    },
-    "Update installed plugins" : {
-
     },
     "Update to v%@" : {
       "localizations" : {
@@ -63076,6 +63028,7 @@
       }
     },
     "Vibe" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {

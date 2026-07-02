@@ -1,5 +1,9 @@
 import SwiftUI
 
+enum AppSystemSymbol {
+    static let skills = "wand.and.sparkles"
+}
+
 enum AppAppearanceMode: String, CaseIterable, Identifiable {
     case system
     case light

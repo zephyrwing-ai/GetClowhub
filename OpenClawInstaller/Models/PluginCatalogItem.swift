@@ -14,6 +14,16 @@ enum PluginCatalogSource: String, Codable, Hashable, Identifiable {
             return "Recommend"
         }
     }
+
+    @MainActor
+    var localizedTitle: String {
+        switch self {
+        case .all:
+            return I18n.t("catalog.section.builtIn")
+        case .recommend:
+            return I18n.t("catalog.section.recommend")
+        }
+    }
 }
 
 struct PluginCatalogItem: Identifiable, Hashable {
@@ -29,6 +39,7 @@ struct PluginCatalogItem: Identifiable, Hashable {
     let keywords: [String]
     let relativePath: String
     let source: PluginCatalogSource
+    let systemIconName: String?
     let iconURL: URL?
     let repositoryURL: String?
     let homepageURL: String?

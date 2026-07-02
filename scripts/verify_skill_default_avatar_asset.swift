@@ -1,25 +1,30 @@
 import Foundation
 
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-let assetSet = root
-    .appendingPathComponent("OpenClawInstaller")
-    .appendingPathComponent("Assets.xcassets")
-    .appendingPathComponent("SkillAvatarUnifiedDark.imageset")
-let lightImage = assetSet.appendingPathComponent("skill-day.svg")
-let darkImage = assetSet.appendingPathComponent("skill-night.svg")
-let contents = assetSet.appendingPathComponent("Contents.json")
-let agentAssetSet = root
-    .appendingPathComponent("OpenClawInstaller")
-    .appendingPathComponent("Assets.xcassets")
-    .appendingPathComponent("AgentAvatar.imageset")
-let agentLightImage = agentAssetSet.appendingPathComponent("agent-day.svg")
-let agentDarkImage = agentAssetSet.appendingPathComponent("agent-night.svg")
 let skillsView = root
     .appendingPathComponent("OpenClawInstaller")
     .appendingPathComponent("Views")
     .appendingPathComponent("Dashboard")
     .appendingPathComponent("Skills")
     .appendingPathComponent("SkillsTabView.swift")
+let dashboardView = root
+    .appendingPathComponent("OpenClawInstaller")
+    .appendingPathComponent("Views")
+    .appendingPathComponent("Dashboard")
+    .appendingPathComponent("DashboardView.swift")
+let dashboardViewModel = root
+    .appendingPathComponent("OpenClawInstaller")
+    .appendingPathComponent("ViewModels")
+    .appendingPathComponent("DashboardViewModel.swift")
+let configView = root
+    .appendingPathComponent("OpenClawInstaller")
+    .appendingPathComponent("Views")
+    .appendingPathComponent("Dashboard")
+    .appendingPathComponent("ConfigTabView.swift")
+let appAppearance = root
+    .appendingPathComponent("OpenClawInstaller")
+    .appendingPathComponent("Models")
+    .appendingPathComponent("AppAppearance.swift")
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
@@ -28,54 +33,20 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
-expect(FileManager.default.fileExists(atPath: lightImage.path), "SkillAvatarUnifiedDark light SVG asset is missing")
-expect(FileManager.default.fileExists(atPath: darkImage.path), "SkillAvatarUnifiedDark dark SVG asset is missing")
-
-let contentsText = (try? String(contentsOf: contents, encoding: .utf8)) ?? ""
-expect(contentsText.contains("skill-day.svg"), "asset catalog does not reference skill-day.svg")
-expect(contentsText.contains("skill-night.svg"), "asset catalog does not reference skill-night.svg")
-expect(contentsText.contains(#""appearance" : "luminosity""#), "asset catalog does not use luminosity appearance variants")
-expect(!contentsText.contains("skill-avatar-unified-dark.png"), "asset catalog still references the replaced PNG")
-
-let lightSVG = (try? String(contentsOf: lightImage, encoding: .utf8)) ?? ""
-let darkSVG = (try? String(contentsOf: darkImage, encoding: .utf8)) ?? ""
-let agentLightSVG = (try? String(contentsOf: agentLightImage, encoding: .utf8)) ?? ""
-let agentDarkSVG = (try? String(contentsOf: agentDarkImage, encoding: .utf8)) ?? ""
-expect(lightSVG.contains(#"viewBox="0 0 24 24""#), "skill light SVG should use the compact 24x24 viewBox")
-expect(darkSVG.contains(#"viewBox="0 0 24 24""#), "skill dark SVG should use the compact 24x24 viewBox")
-expect(lightSVG.contains(#"stroke-width="1.5""#), "skill light SVG should use the approved module stroke")
-expect(darkSVG.contains(#"stroke-width="1.5""#), "skill dark SVG should use the approved module stroke")
-expect(lightSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "skill light SVG must use the rounded module container")
-expect(darkSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "skill dark SVG must use the rounded module container")
-expect(lightSVG.contains(#"d="M12 8.4v7.2""#), "skill light SVG must include the vertical capability connector")
-expect(darkSVG.contains(#"d="M12 8.4v7.2""#), "skill dark SVG must include the vertical capability connector")
-expect(lightSVG.contains(#"d="M8.4 12h7.2""#), "skill light SVG must include the horizontal capability connector")
-expect(darkSVG.contains(#"d="M8.4 12h7.2""#), "skill dark SVG must include the horizontal capability connector")
-for point in [
-    #"cx="7.1" cy="7.1""#,
-    #"cx="16.9" cy="7.1""#,
-    #"cx="7.1" cy="16.9""#,
-    #"cx="16.9" cy="16.9""#
-] {
-    expect(lightSVG.contains(point), "skill light SVG module node \(point) is missing")
-    expect(darkSVG.contains(point), "skill dark SVG module node \(point) is missing")
-}
-expect(lightSVG.contains(##"cx="12" cy="12" r="1.35" fill="#151515""##), "skill light SVG must include the center capability node")
-expect(darkSVG.contains(##"cx="12" cy="12" r="1.35" fill="#ffffff""##), "skill dark SVG must include the center capability node")
-expect(!lightSVG.contains(#"<circle cx="12" cy="12" r="9""#), "skill light SVG must not use the old concentric target icon")
-expect(!darkSVG.contains(#"<circle cx="12" cy="12" r="9""#), "skill dark SVG must not use the old concentric target icon")
-expect(!lightSVG.contains(##"r="11" fill="#151515""##), "skill light SVG must not use a filled black disk")
-expect(!agentLightSVG.contains(##"r="11" fill="#151515""##), "agent light SVG must not use a filled black disk")
-expect(!agentLightSVG.contains(##"r="1" fill="#151515""##), "agent light SVG must not include the skill center dot")
-expect(!agentDarkSVG.contains(##"r="1" fill="#ffffff""##), "agent dark SVG must not include the skill center dot")
-expect(!agentLightSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "agent light SVG must not reuse the skill module container")
-expect(!agentDarkSVG.contains(#"<rect x="6" y="6" width="12" height="12" rx="3.5""#), "agent dark SVG must not reuse the skill module container")
-expect(!lightSVG.contains(#"width="1254""#), "skill light SVG still uses the oversized generated canvas")
-expect(!darkSVG.contains(#"width="1254""#), "skill dark SVG still uses the oversized generated canvas")
-
 let viewText = (try? String(contentsOf: skillsView, encoding: .utf8)) ?? ""
-expect(viewText.contains(#"Image("SkillAvatarUnifiedDark")"#), "SkillsTabView does not use SkillAvatarUnifiedDark as fallback")
+let dashboardText = (try? String(contentsOf: dashboardView, encoding: .utf8)) ?? ""
+let dashboardViewModelText = (try? String(contentsOf: dashboardViewModel, encoding: .utf8)) ?? ""
+let configText = (try? String(contentsOf: configView, encoding: .utf8)) ?? ""
+let appAppearanceText = (try? String(contentsOf: appAppearance, encoding: .utf8)) ?? ""
+expect(appAppearanceText.contains(#"static let skills = "wand.and.sparkles""#), "The shared Skills SF Symbol should be centralized in AppSystemSymbol")
+expect(viewText.contains(#"Image(systemName: AppSystemSymbol.skills)"#), "SkillsTabView should use the shared Skills SF Symbol as the default skill icon")
+expect(!viewText.contains(#"Image(systemName: "puzzlepiece")"#), "SkillsTabView default skill icon should not reuse the Plugins puzzlepiece symbol")
+expect(!viewText.contains(#"Image("SkillAvatarUnifiedDark")"#), "SkillsTabView should not use the SVG asset fallback for default skill icons")
+expect(viewText.contains(".font(.system(size: size * 0.58, weight: .medium))"), "Default skill SF Symbol should be rendered through font metrics for crisp small sizes")
 expect(viewText.contains("isUsingDefaultIcon"), "SkillCatalogIcon should distinguish default icons from custom icons")
 expect(viewText.contains("skillDefaultIconBackground"), "SkillCatalogIcon should give the default icon its own contrast background")
+expect(dashboardText.contains(#"navRow(.skills, title: String(localized: "Skills", bundle: languageManager.localizedBundle), systemImage: AppSystemSymbol.skills)"#), "Main sidebar Skills entry should use the shared Skills SF Symbol")
+expect(dashboardViewModelText.contains(#"case .skills: return AppSystemSymbol.skills"#), "DashboardTab Skills icon should use the shared Skills SF Symbol")
+expect(configText.contains(#"previewSidebarRow(icon: AppSystemSymbol.skills, title: localizedString("Skills"), active: true)"#), "Settings sidebar preview should use the shared Skills SF Symbol")
 
-print("Skill default avatar uses the approved capability module icon")
+print("Skill default avatar uses an SF Symbol fallback")

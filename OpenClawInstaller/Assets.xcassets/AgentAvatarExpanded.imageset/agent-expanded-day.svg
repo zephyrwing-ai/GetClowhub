@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-label="Expanded agent icon for light mode">
+  <rect x="3.4" y="3.4" width="17.2" height="17.2" rx="4.4" fill="#FFFFFF" stroke="#9CA39B" stroke-width="1.65"/>
+  <g fill="none" stroke="#202124" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.9 11.65H6.1"/>
+    <circle cx="9" cy="12" r="2.75"/>
+    <path d="M11.75 11.7C11.95 11.45 12.05 11.45 12.25 11.7"/>
+    <circle cx="15" cy="12" r="2.75"/>
+    <path d="M17.9 11.65H20.1"/>
+  </g>
+  <g fill="#202124">
+    <circle cx="9" cy="12" r="0.62"/>
+    <circle cx="15" cy="12" r="0.62"/>
+  </g>
+</svg>

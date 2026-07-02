@@ -80,8 +80,16 @@ require(
     "dashboard view model must filter model choices to the active provider"
 )
 require(
-    loadModelsForSettings.contains("availableModelsForSettings = modelsForActiveProvider(from: models)"),
+    loadModelsForSettings.contains("let scopedModels = modelsForActiveProvider(from: models)"),
     "composer model choices must be provider-scoped before publishing"
+)
+require(
+    loadModelsForSettings.contains("mergeModelOptions(base: localModels, overlay: scopedModels)"),
+    "composer model choices must keep saved provider models when CLI returns empty or partial active-provider models"
+)
+require(
+    loadModelsForSettings.contains("availableModelsForSettings = flattenModelGroups("),
+    "legacy flat model choices must be projected from provider groups after refresh"
 )
 require(
     !composerSelector.contains("loadModelsForSettings()"),

@@ -12,54 +12,63 @@ struct PluginDetailPresentationItem: Identifiable {
     let sourceTitle: String
     let catalogItem: PluginCatalogItem?
     let installedPlugin: PluginInfo?
+    let systemIconName: String?
     let iconURL: URL?
 
+    @MainActor
     static func fromCatalog(_ item: PluginCatalogItem, installedPlugin: PluginInfo?) -> PluginDetailPresentationItem {
-        PluginDetailPresentationItem(
+        let display = I18n.pluginDisplay(for: item)
+        return PluginDetailPresentationItem(
             id: "catalog-\(item.id)",
             name: item.name,
-            displayName: item.displayName,
-            description: item.description,
-            documentationMarkdown: item.longDescription,
-            sourceTitle: item.source.title,
+            displayName: display.displayName,
+            description: display.description,
+            documentationMarkdown: display.longDescription,
+            sourceTitle: item.source.localizedTitle,
             catalogItem: item,
             installedPlugin: installedPlugin,
+            systemIconName: item.systemIconName,
             iconURL: item.iconURL
         )
     }
 
+    @MainActor
     static func fromInstalled(_ plugin: PluginInfo, catalogItem: PluginCatalogItem?) -> PluginDetailPresentationItem {
         let section = PluginLibrarySection.section(for: plugin, catalogItem: catalogItem)
-        let description = catalogItem?.description.nilIfBlank
-            ?? "Installed OpenClaw plugin"
+        let localizedCatalog = catalogItem.map { I18n.pluginDisplay(for: $0) }
+        let description = localizedCatalog?.description.nilIfBlank
+            ?? I18n.t("plugins.fallback.installedPlugin")
 
         return PluginDetailPresentationItem(
             id: "installed-\(plugin.pluginId)",
             name: catalogItem?.name ?? plugin.pluginId,
-            displayName: catalogItem?.displayName ?? plugin.channel,
+            displayName: localizedCatalog?.displayName ?? plugin.channel,
             description: description,
-            documentationMarkdown: catalogItem?.longDescription.nilIfBlank ?? Self.installedPluginMarkdown(plugin),
-            sourceTitle: section.title,
+            documentationMarkdown: localizedCatalog?.longDescription.nilIfBlank ?? Self.installedPluginMarkdown(plugin),
+            sourceTitle: section.localizedTitle,
             catalogItem: catalogItem,
             installedPlugin: plugin,
+            systemIconName: catalogItem?.systemIconName,
             iconURL: catalogItem?.iconURL
         )
     }
 
+    @MainActor
     private static func installedPluginMarkdown(_ plugin: PluginInfo) -> String {
         """
         **Plugin ID:** `\(plugin.pluginId)`
 
-        **Status:** \(plugin.enabled ? "Loaded" : "Disabled")
+        **Status:** \(plugin.enabled ? I18n.t("catalog.status.loaded") : I18n.t("catalog.status.disabled"))
 
-        **Source:** `\(plugin.source.isEmpty ? "Unknown" : plugin.source)`
+        **Source:** `\(plugin.source.isEmpty ? I18n.t("common.value.unknown") : plugin.source)`
 
-        **Version:** \(plugin.version.isEmpty ? "Unknown" : plugin.version)
+        **Version:** \(plugin.version.isEmpty ? I18n.t("common.value.unknown") : plugin.version)
         """
     }
 }
 
 struct PluginsTabView: View {
+    @EnvironmentObject private var languageManager: LanguageManager
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var model: PluginsTabModel
     @State private var searchText = ""
@@ -71,6 +80,15 @@ struct PluginsTabView: View {
         case recommend = "Recommend"
         case all = "All"
         case installed = "Installed"
+
+        @MainActor
+        var localizedTitle: String {
+            switch self {
+            case .recommend: return I18n.t("catalog.section.recommend")
+            case .all: return I18n.t("catalog.section.all")
+            case .installed: return I18n.t("catalog.section.installed")
+            }
+        }
     }
 
     private struct InstalledSection: Identifiable {
@@ -92,10 +110,12 @@ struct PluginsTabView: View {
 
     private var filteredCatalogItems: [PluginCatalogItem] {
         model.pluginCatalog.filter { item in
-            matchesSearch(
-                name: item.displayName,
-                description: item.description,
-                metadata: [item.name, item.openClawPluginID, item.category] + item.capabilities + item.keywords
+            let display = I18n.pluginDisplay(for: item)
+            return matchesSearch(
+                fields: I18n.localizedSearchFields(
+                    [display.displayName, display.description, display.longDescription, display.category] + display.capabilities,
+                    originals: [item.displayName, item.description, item.longDescription, item.name, item.openClawPluginID, item.category] + item.capabilities + item.keywords
+                )
             )
         }
     }
@@ -111,10 +131,25 @@ struct PluginsTabView: View {
     private func filteredInstalledPlugins(using lookup: PluginLookupIndex) -> [PluginInfo] {
         model.plugins.filter { plugin in
             let catalogItem = lookup.catalogItem(for: plugin)
+            let display = catalogItem.map { I18n.pluginDisplay(for: $0) }
             return matchesSearch(
-                name: catalogItem?.displayName ?? plugin.channel,
-                description: catalogItem?.description ?? plugin.pluginId,
-                metadata: [plugin.pluginId, plugin.source, plugin.version, catalogItem?.category ?? ""]
+                fields: I18n.localizedSearchFields(
+                    [
+                        display?.displayName ?? plugin.channel,
+                        display?.description ?? plugin.pluginId,
+                        display?.longDescription ?? "",
+                        display?.category ?? ""
+                    ],
+                    originals: [
+                        catalogItem?.displayName ?? plugin.channel,
+                        catalogItem?.description ?? plugin.pluginId,
+                        catalogItem?.longDescription ?? "",
+                        plugin.pluginId,
+                        plugin.source,
+                        plugin.version,
+                        catalogItem?.category ?? ""
+                    ]
+                )
             )
         }
     }
@@ -129,7 +164,7 @@ struct PluginsTabView: View {
                 PluginLibrarySection.section(for: $0, catalogItem: lookup.catalogItem(for: $0)) == section
             }
             guard !items.isEmpty else { return nil }
-            return InstalledSection(id: section, title: section.title, items: items)
+            return InstalledSection(id: section, title: section.localizedTitle, items: items)
         }
     }
 
@@ -183,9 +218,9 @@ struct PluginsTabView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Plugins")
+                Text(I18n.t("plugins.title"))
                     .font(.system(size: 24, weight: .semibold))
-                Text("Install curated OpenClaw plugins from the GetClowHub catalog")
+                Text(I18n.t("plugins.subtitle"))
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -193,7 +228,7 @@ struct PluginsTabView: View {
             Spacer()
 
             if !model.pluginCatalog.isEmpty || !model.plugins.isEmpty {
-                Text("\(model.plugins.count) installed")
+                Text(I18n.format("catalog.count.installed", Int64(model.plugins.count)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -202,7 +237,7 @@ struct PluginsTabView: View {
 
     private var searchAndActions: some View {
         HStack(spacing: 10) {
-            UnifiedSearchField(placeholder: "Search plugins", text: $searchText)
+            UnifiedSearchField(placeholder: I18n.t("plugins.search.placeholder"), text: $searchText)
 
             if hasGlobalPlugins {
                 Button {
@@ -214,7 +249,7 @@ struct PluginsTabView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(model.isLoadingPlugins || model.isPerformingAction)
-                .help("Update installed plugins")
+                .help(I18n.t("plugins.help.updateInstalled"))
             }
 
             Button {
@@ -226,7 +261,7 @@ struct PluginsTabView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isPerformingAction)
-            .help("Install custom plugin")
+            .help(I18n.t("plugins.help.installCustom"))
 
             Button {
                 Task { await model.loadPluginMarket(forceSync: true) }
@@ -243,14 +278,14 @@ struct PluginsTabView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isLoadingPluginCatalog || model.isLoadingPlugins)
-            .help("Refresh plugins")
+            .help(I18n.t("plugins.help.refresh"))
         }
     }
 
     private var modePicker: some View {
         Picker("", selection: $displayMode) {
             ForEach(PluginDisplayMode.allCases, id: \.self) { mode in
-                Text(mode.rawValue).tag(mode)
+                Text(mode.localizedTitle).tag(mode)
             }
         }
         .pickerStyle(.segmented)
@@ -277,22 +312,22 @@ struct PluginsTabView: View {
     @ViewBuilder
     private func recommendedPluginsContent(lookup: PluginLookupIndex) -> some View {
         if model.isLoadingPluginCatalog && model.pluginCatalog.isEmpty {
-            PluginLoadingStateView(text: "Loading plugin catalog...")
+            PluginLoadingStateView(text: I18n.t("plugins.loading.catalog"))
         } else if let error = model.pluginCatalogError, model.pluginCatalog.isEmpty {
             EmptyPluginStateView(
                 systemImage: "exclamationmark.triangle",
-                title: "Could not load plugin catalog",
+                title: I18n.t("plugins.empty.catalogLoadFailed"),
                 detail: error
             )
         } else if filteredRecommendedCatalogItems.isEmpty {
             EmptyPluginStateView(
                 systemImage: "puzzlepiece",
-                title: model.pluginCatalog.isEmpty ? "No recommended plugins" : "No matching recommended plugins",
+                title: model.pluginCatalog.isEmpty ? I18n.t("plugins.empty.noRecommended") : I18n.t("plugins.empty.noMatchingRecommended"),
                 detail: nil
             )
         } else {
             catalogSection(
-                title: PluginLibrarySection.recommend.title,
+                title: PluginLibrarySection.recommend.localizedTitle,
                 items: filteredRecommendedCatalogItems,
                 lookup: lookup
             )
@@ -302,26 +337,26 @@ struct PluginsTabView: View {
     @ViewBuilder
     private func allPluginsContent(customPlugins: [PluginInfo], lookup: PluginLookupIndex) -> some View {
         if model.isLoadingPluginCatalog && model.pluginCatalog.isEmpty {
-            PluginLoadingStateView(text: "Loading plugin catalog...")
+            PluginLoadingStateView(text: I18n.t("plugins.loading.catalog"))
         } else if let error = model.pluginCatalogError,
                   model.pluginCatalog.isEmpty,
                   customPlugins.isEmpty {
             EmptyPluginStateView(
                 systemImage: "exclamationmark.triangle",
-                title: "Could not load plugin catalog",
+                title: I18n.t("plugins.empty.catalogLoadFailed"),
                 detail: error
             )
         } else if filteredCatalogItems.isEmpty && customPlugins.isEmpty {
             EmptyPluginStateView(
                 systemImage: "puzzlepiece",
-                title: model.pluginCatalog.isEmpty && model.plugins.isEmpty ? "No plugins found" : "No matching plugins",
+                title: model.pluginCatalog.isEmpty && model.plugins.isEmpty ? I18n.t("plugins.empty.noPlugins") : I18n.t("plugins.empty.noMatchingPlugins"),
                 detail: nil
             )
         } else {
             VStack(alignment: .leading, spacing: 26) {
                 if !filteredRecommendedCatalogItems.isEmpty {
                     catalogSection(
-                        title: PluginLibrarySection.recommend.title,
+                        title: PluginLibrarySection.recommend.localizedTitle,
                         items: filteredRecommendedCatalogItems,
                         lookup: lookup
                     )
@@ -329,7 +364,7 @@ struct PluginsTabView: View {
 
                 if !filteredBuiltInCatalogItems.isEmpty {
                     catalogSection(
-                        title: PluginLibrarySection.builtIn.title,
+                        title: PluginLibrarySection.builtIn.localizedTitle,
                         items: filteredBuiltInCatalogItems,
                         lookup: lookup
                     )
@@ -337,7 +372,7 @@ struct PluginsTabView: View {
 
                 if !customPlugins.isEmpty {
                     installedSection(
-                        title: PluginLibrarySection.custom.title,
+                        title: PluginLibrarySection.custom.localizedTitle,
                         items: customPlugins,
                         lookup: lookup
                     )
@@ -349,11 +384,11 @@ struct PluginsTabView: View {
     @ViewBuilder
     private func installedPluginsContent(sections: [InstalledSection], lookup: PluginLookupIndex) -> some View {
         if model.isLoadingPlugins && model.plugins.isEmpty {
-            PluginLoadingStateView(text: "Loading installed plugins...")
+            PluginLoadingStateView(text: I18n.t("plugins.loading.installed"))
         } else if sections.isEmpty {
             EmptyPluginStateView(
                 systemImage: "checkmark.circle",
-                title: model.plugins.isEmpty ? "No installed plugins" : "No matching installed plugins",
+                title: model.plugins.isEmpty ? I18n.t("plugins.empty.noInstalled") : I18n.t("plugins.empty.noMatchingInstalled"),
                 detail: nil
             )
         } else {
@@ -419,11 +454,11 @@ struct PluginsTabView: View {
         }
     }
 
-    private func matchesSearch(name: String, description: String, metadata: [String]) -> Bool {
+    private func matchesSearch(fields: [String]) -> Bool {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return true }
 
-        let haystack = ([name, description] + metadata)
+        let haystack = fields
             .joined(separator: " ")
             .lowercased()
         return haystack.contains(query)
@@ -593,6 +628,18 @@ private enum PluginLibrarySection: CaseIterable, Identifiable {
         }
     }
 
+    @MainActor
+    var localizedTitle: String {
+        switch self {
+        case .recommend:
+            return I18n.t("catalog.section.recommend")
+        case .builtIn:
+            return I18n.t("catalog.section.builtIn")
+        case .custom:
+            return I18n.t("catalog.section.custom")
+        }
+    }
+
     static func section(for plugin: PluginInfo, catalogItem: PluginCatalogItem?) -> PluginLibrarySection {
         guard let catalogItem else { return .custom }
         return catalogItem.isRecommended ? .recommend : .builtIn
@@ -630,16 +677,18 @@ private struct CatalogPluginListRow: View {
     let onOpen: () -> Void
 
     var body: some View {
+        let display = I18n.pluginDisplay(for: item)
+
         HStack(spacing: 14) {
-            PluginCatalogIcon(iconURL: item.iconURL, size: 32)
+            PluginCatalogIcon(systemIconName: item.systemIconName, iconURL: item.iconURL, size: 32)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.displayName)
+                Text(display.displayName)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                Text(item.description)
+                Text(display.description)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -654,11 +703,11 @@ private struct CatalogPluginListRow: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.orange)
                     .frame(width: 28, height: 28)
-                    .help("Unavailable")
+                    .help(I18n.t("catalog.status.unavailable"))
             } else {
                 Button(action: onInstall) {
                     if isInstalling {
-                        Text("Installing...")
+                        Text(I18n.t("catalog.action.installing"))
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .frame(width: 74, height: 28)
@@ -679,7 +728,7 @@ private struct CatalogPluginListRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isInstalling)
-                .help("Install")
+                .help(I18n.t("catalog.action.install"))
             }
         }
         .padding(.horizontal, 8)
@@ -711,16 +760,18 @@ private struct InstalledPluginListRow: View {
     let onOpen: () -> Void
 
     var body: some View {
+        let display = catalogItem.map { I18n.pluginDisplay(for: $0) }
+
         HStack(spacing: 14) {
-            PluginCatalogIcon(iconURL: catalogItem?.iconURL, size: 32)
+            PluginCatalogIcon(systemIconName: catalogItem?.systemIconName, iconURL: catalogItem?.iconURL, size: 32)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(catalogItem?.displayName ?? plugin.channel)
+                Text(display?.displayName ?? plugin.channel)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                Text(catalogItem?.description.nilIfBlank ?? plugin.pluginId)
+                Text(display?.description.nilIfBlank ?? plugin.pluginId)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -759,29 +810,39 @@ private struct PluginStatusMark: View {
             .font(.system(size: 15, weight: .medium))
             .foregroundStyle(plugin.enabled ? .primary : .secondary)
             .frame(width: 28, height: 28)
-            .help(plugin.enabled ? "Loaded" : "Disabled")
+            .help(plugin.enabled ? I18n.t("catalog.status.loaded") : I18n.t("catalog.status.disabled"))
     }
 }
 
 private struct PluginCatalogIcon: View {
     @Environment(\.colorScheme) private var colorScheme
 
+    private let defaultSystemIconName = "powerplug.portrait"
+
+    let systemIconName: String?
     let iconURL: URL?
     let size: CGFloat
 
     var body: some View {
         let customImage = resolvedCustomImage
-        let isUsingDefaultIcon = customImage == nil
+        let isUsingSystemIcon = systemIconName?.nilIfBlank != nil
+        let isUsingDefaultIcon = !isUsingSystemIcon && customImage == nil
 
         Group {
-            if let image = customImage {
+            if let systemIconName = systemIconName?.nilIfBlank {
+                Image(systemName: systemIconName)
+                    .font(.system(size: size * 0.72, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.primary)
+            } else if let image = customImage {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
             } else {
-                Image("PluginIcon")
-                    .resizable()
-                    .scaledToFit()
+                Image(systemName: defaultSystemIconName)
+                    .font(.system(size: size * 0.72, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.primary)
             }
         }
         .frame(width: size, height: size)
@@ -891,9 +952,9 @@ struct PluginCatalogDetailSheet: View {
 
                     HStack(spacing: 8) {
                         PluginDetailChip(title: item.sourceTitle)
-                        PluginDetailChip(title: installedPlugin == nil ? "Not installed" : "Installed")
+                        PluginDetailChip(title: installedPlugin == nil ? I18n.t("catalog.status.notInstalled") : I18n.t("catalog.status.installed"))
                         if let installedPlugin {
-                            PluginDetailChip(title: installedPlugin.enabled ? "Loaded" : "Disabled")
+                            PluginDetailChip(title: installedPlugin.enabled ? I18n.t("catalog.status.loaded") : I18n.t("catalog.status.disabled"))
                         }
                         if let catalogItem = item.catalogItem, !catalogItem.version.isEmpty {
                             PluginDetailChip(title: "v\(catalogItem.version)")
@@ -913,7 +974,7 @@ struct PluginCatalogDetailSheet: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Close")
+                    .help(I18n.t("catalog.action.close"))
                 }
             }
             .padding(.bottom, 16)
@@ -926,7 +987,7 @@ struct PluginCatalogDetailSheet: View {
                 .textSelection(.enabled)
                 .padding(.bottom, 20)
 
-            Text("Description")
+            Text(I18n.t("catalog.detail.description"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 8)
@@ -948,13 +1009,13 @@ struct PluginCatalogDetailSheet: View {
         }
         .padding(28)
         .frame(width: 640)
-        .alert("Uninstall Plugin", isPresented: $showUninstallConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Uninstall", role: .destructive) {
+        .alert(I18n.t("plugins.alert.uninstallTitle"), isPresented: $showUninstallConfirm) {
+            Button(I18n.t("catalog.action.cancel"), role: .cancel) {}
+            Button(I18n.t("catalog.action.uninstall"), role: .destructive) {
                 onUninstall()
             }
         } message: {
-            Text("Are you sure you want to uninstall '\(installedPlugin?.channel ?? item.displayName)'?")
+            Text(I18n.format("plugins.alert.uninstallMessage", installedPlugin?.channel ?? item.displayName))
         }
     }
 
@@ -990,13 +1051,13 @@ struct PluginCatalogDetailSheet: View {
         if installedPlugin == nil {
             Button(action: onInstall) {
                 if isInstalling {
-                    Text("Installing...")
+                    Text(I18n.t("catalog.action.installing"))
                         .frame(width: 92, height: 30)
                 } else if item.catalogItem?.isOpenClawInstallable == false {
-                    Text("Unavailable")
+                    Text(I18n.t("catalog.status.unavailable"))
                         .frame(width: 92, height: 30)
                 } else {
-                    Text("Install")
+                    Text(I18n.t("catalog.action.install"))
                         .frame(width: 92, height: 30)
                 }
             }
@@ -1005,7 +1066,7 @@ struct PluginCatalogDetailSheet: View {
         } else if let installedPlugin {
             if installedPlugin.origin == .global {
                 Button(action: onUpdate) {
-                    Text("Update")
+                    Text(I18n.t("catalog.action.update"))
                         .frame(width: 76, height: 30)
                 }
                 .buttonStyle(PluginPillButtonStyle(tone: .neutral, isDisabled: isPerformingAction))
@@ -1014,7 +1075,7 @@ struct PluginCatalogDetailSheet: View {
                 Button(role: .destructive) {
                     showUninstallConfirm = true
                 } label: {
-                    Text("Uninstall")
+                    Text(I18n.t("catalog.action.uninstall"))
                         .frame(width: 86, height: 30)
                 }
                 .buttonStyle(PluginPillButtonStyle(tone: .destructive, isDisabled: isPerformingAction))
@@ -1022,7 +1083,7 @@ struct PluginCatalogDetailSheet: View {
             }
 
             Button(action: installedPlugin.enabled ? onDisable : onEnable) {
-                Text(installedPlugin.enabled ? "Disable" : "Enable")
+                Text(installedPlugin.enabled ? I18n.t("catalog.action.disable") : I18n.t("catalog.action.enable"))
                     .frame(width: 82, height: 30)
             }
             .buttonStyle(PluginPillButtonStyle(tone: installedPlugin.enabled ? .neutral : .install, isDisabled: isPerformingAction))
@@ -1134,12 +1195,36 @@ enum InstallMethod: String, CaseIterable {
     case npm = "npm"
     case file = "File"
     case link = "Link"
+
+    @MainActor
+    var localizedTitle: String {
+        switch self {
+        case .npm:
+            return I18n.t("plugins.install.method.npm")
+        case .file:
+            return I18n.t("plugins.install.method.file")
+        case .link:
+            return I18n.t("plugins.install.method.link")
+        }
+    }
 }
 
 enum PluginPreset: String, CaseIterable {
     case custom = "Custom"
     case dingtalk = "DingTalk"
     case weixin = "Weixin"
+
+    @MainActor
+    var localizedTitle: String {
+        switch self {
+        case .custom:
+            return I18n.t("plugins.install.preset.custom")
+        case .dingtalk:
+            return "DingTalk"
+        case .weixin:
+            return "Weixin"
+        }
+    }
 
     var packageName: String? {
         switch self {
@@ -1201,10 +1286,10 @@ struct InstallPluginSheet: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text(String(localized: "Install Plugin", bundle: LanguageManager.shared.localizedBundle))
+                Text(I18n.t("plugins.install.title"))
                     .font(.headline)
                 Spacer()
-                Button(String(localized: "Cancel", bundle: LanguageManager.shared.localizedBundle)) {
+                Button(I18n.t("catalog.action.cancel")) {
                     isPresented = false
                 }
                 .keyboardShortcut(.cancelAction)
@@ -1218,13 +1303,13 @@ struct InstallPluginSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Install method picker
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Install Method", bundle: LanguageManager.shared.localizedBundle))
+                        Text(I18n.t("plugins.install.method"))
                             .font(.subheadline)
                             .fontWeight(.medium)
 
                         Picker("", selection: $installMethod) {
                             ForEach(InstallMethod.allCases, id: \.self) { method in
-                                Text(method.rawValue).tag(method)
+                                Text(method.localizedTitle).tag(method)
                             }
                         }
                         .pickerStyle(.segmented)
@@ -1234,13 +1319,13 @@ struct InstallPluginSheet: View {
                     switch installMethod {
                     case .npm:
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(String(localized: "Quick Select", bundle: LanguageManager.shared.localizedBundle))
+                            Text(I18n.t("plugins.install.quickSelect"))
                                 .font(.subheadline)
                                 .fontWeight(.medium)
 
                             Picker("", selection: $selectedPreset) {
                                 ForEach(PluginPreset.allCases, id: \.self) { preset in
-                                    Text(preset.rawValue).tag(preset)
+                                    Text(preset.localizedTitle).tag(preset)
                                 }
                             }
                             .labelsHidden()
@@ -1252,16 +1337,16 @@ struct InstallPluginSheet: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(String(localized: "Package Name", bundle: LanguageManager.shared.localizedBundle))
+                            Text(I18n.t("plugins.install.packageName"))
                                 .font(.subheadline)
                                 .fontWeight(.medium)
 
-                            TextField(String(localized: "e.g. @openclaw/discord", bundle: LanguageManager.shared.localizedBundle), text: $packageName)
+                            TextField(I18n.t("plugins.install.packagePlaceholder"), text: $packageName)
                                 .textFieldStyle(.roundedBorder)
                                 .disabled(selectedPreset == .weixin)
 
                             if isPresetAlreadyInstalled {
-                                Label(String(localized: "\(selectedPreset.rawValue) plugin is already installed", bundle: LanguageManager.shared.localizedBundle), systemImage: "exclamationmark.triangle.fill")
+                                Label(I18n.format("plugins.install.presetAlreadyInstalled", selectedPreset.localizedTitle), systemImage: "exclamationmark.triangle.fill")
                                     .font(.caption)
                                     .foregroundColor(.orange)
                             }
@@ -1269,35 +1354,35 @@ struct InstallPluginSheet: View {
 
                     case .file:
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(String(localized: "Plugin File", bundle: LanguageManager.shared.localizedBundle))
+                            Text(I18n.t("plugins.install.pluginFile"))
                                 .font(.subheadline)
                                 .fontWeight(.medium)
 
                             HStack {
-                                TextField(String(localized: "Select a plugin file...", bundle: LanguageManager.shared.localizedBundle), text: $filePath)
+                                TextField(I18n.t("plugins.install.filePlaceholder"), text: $filePath)
                                     .textFieldStyle(.roundedBorder)
                                     .disabled(true)
 
-                                Button(String(localized: "Browse", bundle: LanguageManager.shared.localizedBundle)) {
+                                Button(I18n.t("plugins.install.browse")) {
                                     browseFile()
                                 }
                             }
 
-                            Text(String(localized: "Supported: .ts .js .zip .tgz .tar.gz", bundle: LanguageManager.shared.localizedBundle))
+                            Text(I18n.t("plugins.install.supportedFileTypes"))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
 
                     case .link:
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(String(localized: "Plugin Link", bundle: LanguageManager.shared.localizedBundle))
+                            Text(I18n.t("plugins.install.pluginLink"))
                                 .font(.subheadline)
                                 .fontWeight(.medium)
 
-                            TextField(String(localized: "https://github.com/owner/repo", bundle: LanguageManager.shared.localizedBundle), text: $linkSpec)
+                            TextField(I18n.t("plugins.install.linkPlaceholder"), text: $linkSpec)
                                 .textFieldStyle(.roundedBorder)
 
-                            Text(String(localized: "Enter a plugin URL, GitHub repository, archive URL, or remote package spec", bundle: LanguageManager.shared.localizedBundle))
+                            Text(I18n.t("plugins.install.linkHelp"))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -1313,14 +1398,14 @@ struct InstallPluginSheet: View {
                 if isInstalling {
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text(String(localized: "Installing...", bundle: LanguageManager.shared.localizedBundle))
+                    Text(I18n.t("plugins.install.installing"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
 
                 Spacer()
 
-                Button(String(localized: "Install", bundle: LanguageManager.shared.localizedBundle)) {
+                Button(I18n.t("catalog.action.install")) {
                     performInstall()
                 }
                 .buttonStyle(.borderedProminent)

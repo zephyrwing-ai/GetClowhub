@@ -64,6 +64,7 @@ struct VerifyPluginCatalogService {
           "developerName": "GetClowHub",
           "category": "Productivity",
           "capabilities": ["Read", "Write"],
+          "systemIcon": "rectangle.compress.vertical",
           "icon": "./assets/icon.png",
           "configSchema": { "type": "object", "properties": {} }
         }
@@ -130,6 +131,7 @@ struct VerifyPluginCatalogService {
         expect(alpha?.longDescription == "Alpha long", "alpha long description should parse")
         expect(alpha?.openClawPluginID == "alpha", "alpha should use openclaw.plugin.json id")
         expect(alpha?.isOpenClawInstallable == true, "alpha should be installable")
+        expect(alpha?.systemIconName == "rectangle.compress.vertical", "alpha system icon should parse from manifest")
         expect(alpha?.iconURL != nil, "alpha icon should resolve from manifest")
 
         expect(

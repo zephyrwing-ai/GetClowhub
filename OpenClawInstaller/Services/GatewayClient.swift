@@ -60,6 +60,7 @@ class GatewayClient: ObservableObject {
     private var isIntentionalDisconnect = false
     private var pendingResponses: [String: CheckedContinuation<Bool, Never>] = [:]
     private var pendingChatSendResponses: [String: CheckedContinuation<String?, Never>] = [:]
+    private var pendingChatSendStartedAt: [String: ContinuousClock.Instant] = [:]
     private var pendingChatHistoryResponses: [String: CheckedContinuation<String?, Never>] = [:]
     private let responseLock = NSLock()
     private var eventContinuations: [String: AsyncStream<GatewayChatEvent>.Continuation] = [:]
@@ -137,6 +138,14 @@ class GatewayClient: ObservableObject {
         self.port = port
         self.authToken = authToken
         self.credentialsProvider = credentialsProvider
+    }
+
+    private static func elapsedMillisecondsText(since start: ContinuousClock.Instant) -> String {
+        let duration = start.duration(to: ContinuousClock.now)
+        let components = duration.components
+        let milliseconds = Double(components.seconds) * 1_000
+            + Double(components.attoseconds) / 1_000_000_000_000_000
+        return String(format: "%.1f", milliseconds)
     }
 
     // MARK: - Public API
@@ -225,6 +234,7 @@ class GatewayClient: ObservableObject {
 
         let requestId = UUID().uuidString
         let idempotencyKey = UUID().uuidString
+        let chatSendStartedAt = ContinuousClock.now
 
         var params: [String: Any] = [
             "sessionKey": sessionKey,
@@ -260,6 +270,7 @@ class GatewayClient: ObservableObject {
         let runId: String? = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
             responseLock.lock()
             pendingChatSendResponses[requestId] = continuation
+            pendingChatSendStartedAt[requestId] = chatSendStartedAt
             responseLock.unlock()
 
             ws.send(.string(jsonString)) { [weak self] error in
@@ -267,13 +278,14 @@ class GatewayClient: ObservableObject {
                     gwLog.error("chatSend: WebSocket send error: \(error.localizedDescription)")
                     self?.responseLock.lock()
                     if let cont = self?.pendingChatSendResponses.removeValue(forKey: requestId) {
+                        self?.pendingChatSendStartedAt.removeValue(forKey: requestId)
                         self?.responseLock.unlock()
                         cont.resume(returning: nil)
                     } else {
                         self?.responseLock.unlock()
                     }
                 } else {
-                    gwLog.info("chatSend: WebSocket send succeeded")
+                    gwLog.info("phase=chat_send_ws_send request=\(requestId, privacy: .public) bytes=\(jsonString.count, privacy: .public) elapsed_ms=\(Self.elapsedMillisecondsText(since: chatSendStartedAt), privacy: .public)")
                 }
             }
 
@@ -281,7 +293,13 @@ class GatewayClient: ObservableObject {
             DispatchQueue.global().asyncAfter(deadline: .now() + 10) { [weak self] in
                 self?.responseLock.lock()
                 if let cont = self?.pendingChatSendResponses.removeValue(forKey: requestId) {
+                    let startedAt = self?.pendingChatSendStartedAt.removeValue(forKey: requestId)
                     self?.responseLock.unlock()
+                    if let startedAt {
+                        gwLog.warning("phase=chat_send_ack_timeout request=\(requestId, privacy: .public) elapsed_ms=\(Self.elapsedMillisecondsText(since: startedAt), privacy: .public)")
+                    } else {
+                        gwLog.warning("phase=chat_send_ack_timeout request=\(requestId, privacy: .public) elapsed_ms=unknown")
+                    }
                     cont.resume(returning: nil)
                 } else {
                     self?.responseLock.unlock()
@@ -505,15 +523,19 @@ class GatewayClient: ObservableObject {
                 // Check if there is a pending chat.send request (returns runId)
                 responseLock.lock()
                 let chatSendCont = pendingChatSendResponses.removeValue(forKey: id)
+                let chatSendStartedAt = pendingChatSendStartedAt.removeValue(forKey: id)
                 responseLock.unlock()
 
                 if let chatSendCont = chatSendCont {
                     let isError = json["error"] != nil
                     if isError {
-                        gwLog.error("chatSend response ERROR: \(String(describing: json["error"]))")
+                        let elapsedText = chatSendStartedAt.map { Self.elapsedMillisecondsText(since: $0) } ?? "unknown"
+                        gwLog.error("phase=chat_send_ack_error request=\(id, privacy: .public) elapsed_ms=\(elapsedText, privacy: .public) error=\(String(describing: json["error"]), privacy: .public)")
                     }
                     if !isError, let payloadDict = json["payload"] as? [String: Any],
                        let runId = payloadDict["runId"] as? String {
+                        let elapsedText = chatSendStartedAt.map { Self.elapsedMillisecondsText(since: $0) } ?? "unknown"
+                        gwLog.info("phase=chat_send_ack request=\(id, privacy: .public) runId=\(runId, privacy: .public) elapsed_ms=\(elapsedText, privacy: .public)")
                         chatSendCont.resume(returning: runId)
                     } else {
                         chatSendCont.resume(returning: nil)

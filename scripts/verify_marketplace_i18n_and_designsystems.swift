@@ -20,16 +20,16 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
-let i18nPath = "OpenClawInstaller/Resources/marketplace_agents.i18n.json"
-let i18nText = read(i18nPath)
-let i18nData = Data(i18nText.utf8)
+let zhAgentsI18nPath = "OpenClawInstaller/Resources/I18n/zh-Hans/agents.json"
+let zhAgentsI18nText = read(zhAgentsI18nPath)
+let zhAgentsI18nData = Data(zhAgentsI18nText.utf8)
 
 let agentsPath = "OpenClawInstaller/Resources/marketplace_agents.json"
 let agentsText = read(agentsPath)
 let agentsData = Data(agentsText.utf8)
 
-guard let overlay = try JSONSerialization.jsonObject(with: i18nData) as? [String: Any] else {
-    fputs("FAIL: \(i18nPath) must be a JSON object\n", stderr)
+guard let zhAgentsI18n = try JSONSerialization.jsonObject(with: zhAgentsI18nData) as? [String: String] else {
+    fputs("FAIL: \(zhAgentsI18nPath) must be a JSON object of strings\n", stderr)
     exit(1)
 }
 
@@ -38,67 +38,73 @@ guard let agents = try JSONSerialization.jsonObject(with: agentsData) as? [[Stri
     exit(1)
 }
 
-let allowedFields = Set(["name", "division", "description", "vibe", "specialty", "whenToUse"])
-require(!overlay.isEmpty, "marketplace i18n overlay should contain at least one agent translation")
-
-for (agentID, localeValue) in overlay {
-    guard let locales = localeValue as? [String: Any], !locales.isEmpty else {
-        fputs("FAIL: \(agentID) should map to locale objects\n", stderr)
-        exit(1)
-    }
-
-    for (localeID, fieldValue) in locales {
-        guard let fields = fieldValue as? [String: Any], !fields.isEmpty else {
-            fputs("FAIL: \(agentID).\(localeID) should map to localized display fields\n", stderr)
-            exit(1)
-        }
-
-        for key in fields.keys {
-            require(allowedFields.contains(key), "\(agentID).\(localeID) contains unsupported field \(key); runtime content must not be localized")
-        }
-    }
+require(!zhAgentsI18n.isEmpty, "unified zh-Hans agents i18n resource should not be empty")
+for key in [
+    "agents.search.placeholder",
+    "agents.empty.noMatching",
+    "agents.detail.vibe",
+    "agents.detail.personaContent",
+    "agents.action.recruit",
+    "agents.action.recruiting",
+    "agents.action.recruited",
+    "agents.alert.recruitFailed"
+] {
+    require(zhAgentsI18n[key]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false, "missing AgentsMarket UI i18n key: \(key)")
 }
 
-let requiredLocales = ["zh-Hans", "zh-Hant"]
-let requiredFields = ["name", "division", "description", "vibe", "specialty", "whenToUse"]
+func slug(_ value: String) -> String {
+    let lower = value.lowercased()
+    var result = ""
+    var previousWasSeparator = true
+    for scalar in lower.unicodeScalars {
+        if CharacterSet.alphanumerics.contains(scalar) {
+            result.unicodeScalars.append(scalar)
+            previousWasSeparator = false
+        } else if !previousWasSeparator {
+            result.append(".")
+            previousWasSeparator = true
+        }
+    }
+    let trimmed = result.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    return trimmed.isEmpty ? "item" : trimmed
+}
+
+let requiredFields = ["name", "division", "description", "vibe", "specialty", "whenToUse", "content"]
 
 for agent in agents {
     guard let agentID = agent["id"] as? String else {
         fputs("FAIL: every marketplace agent must have an id\n", stderr)
         exit(1)
     }
-    guard let locales = overlay[agentID] as? [String: Any] else {
-        fputs("FAIL: \(agentID) is missing marketplace i18n translations\n", stderr)
-        exit(1)
-    }
-
-    for localeID in requiredLocales {
-        guard let fields = locales[localeID] as? [String: Any] else {
-            fputs("FAIL: \(agentID) is missing \(localeID) marketplace i18n translations\n", stderr)
+    let prefix = "agents.\(slug(agentID))"
+    for field in requiredFields {
+        guard let sourceValue = agent[field] as? String, !sourceValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            continue
+        }
+        let key = "\(prefix).\(field)"
+        guard let localizedValue = zhAgentsI18n[key], !localizedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            fputs("FAIL: unified agents i18n is missing \(key)\n", stderr)
             exit(1)
         }
-
-        for field in requiredFields {
-            guard let sourceValue = agent[field] as? String, !sourceValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-            guard let localizedValue = fields[field] as? String, !localizedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                fputs("FAIL: \(agentID).\(localeID).\(field) is missing localized display text\n", stderr)
-                exit(1)
-            }
-            require(localizedValue != sourceValue, "\(agentID).\(localeID).\(field) still matches the English source text")
+        if field != "content" {
+            require(localizedValue != sourceValue, "\(key) still matches the English source text")
         }
     }
 }
 
 let model = read("OpenClawInstaller/Models/MarketplaceAgent.swift")
 require(model.contains("localizedDisplay(localeID:"), "MarketplaceAgent should expose localizedDisplay(localeID:) for views")
-require(model.contains("marketplace_agents.i18n"), "MarketplaceCatalog should load marketplace_agents.i18n.json")
-require(!model.contains("localizedContent"), "Marketplace i18n must not introduce localized runtime content")
+require(model.contains("I18n.agentDisplay"), "MarketplaceCatalog should localize display through unified I18n")
+require(!model.contains("marketplace_agents.i18n"), "MarketplaceCatalog should not load marketplace_agents.i18n.json directly")
+require(model.contains("localeID: String"), "Marketplace content conversion should accept an explicit locale")
 
 let overview = read("OpenClawInstaller/Views/Dashboard/MarketplaceOverviewView.swift")
 let detail = read("OpenClawInstaller/Views/Dashboard/MarketplaceDetailView.swift")
 let dashboard = read("OpenClawInstaller/Views/Dashboard/DashboardView.swift")
+require(overview.contains("I18n.t(\"agents.search.placeholder\")"), "MarketplaceOverviewView should localize search placeholder through I18n")
+require(overview.contains("I18n.t(\"agents.empty.noMatching\")"), "MarketplaceOverviewView should localize empty state through I18n")
+require(detail.contains("I18n.t(\"agents.action.recruit\")"), "MarketplaceDetailView should localize recruit action through I18n")
+require(detail.contains("display.content"), "MarketplaceDetailView should show localized persona display content")
 
 for (path, source) in [
     ("MarketplaceOverviewView.swift", overview),
@@ -129,6 +135,6 @@ for (path, source) in [
 }
 
 let project = read("OpenClawInstaller.xcodeproj/project.pbxproj")
-require(project.contains("marketplace_agents.i18n.json in Resources"), "Xcode project should bundle marketplace_agents.i18n.json")
+require(project.contains("I18n in Resources"), "Xcode project should bundle unified I18n resources")
 
 print("Marketplace i18n and DesignSystems workspace verification passed")
